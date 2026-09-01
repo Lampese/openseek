@@ -571,7 +571,7 @@ priv enum TurnStage {
   // not number their steps).
   AtStep(Int?)
   // A Stop was sent and the engine has not yet honored it.
-  Cancelling
+  Cancelling(attempt_id~ : String)
 } derive(Eq)
 
 ///|
@@ -2195,11 +2195,15 @@ priv enum DeviceMsg {
   // The addressed run was already absent when Stop reached the host. This is
   // success for the user's intent, but no future Finished notification can
   // retire a stale local Cancelling phase, so the reply itself must do it.
-  CancelNotOpen(run_id~ : String)
-  // A cancellation that could not be delivered must put the exact run back
-  // into a stoppable phase. A lifecycle resync follows in case the response
-  // failed after the run independently ended.
-  CancelFailed(run_id~ : String, message~ : String)
+  CancelNotOpen(run_id~ : String, attempt_id~ : String)
+  // A cancellation definitively refused before delivery may put this exact
+  // attempt back into a stoppable phase. A lifecycle resync follows in case
+  // the run independently ended.
+  CancelRejected(run_id~ : String, attempt_id~ : String, message~ : String)
+  // Delivery became ambiguous after the request may have reached the host.
+  // Keep this exact attempt non-steerable until terminal lifecycle evidence;
+  // resending or treating a live snapshot as proof of non-delivery is unsafe.
+  CancelUndelivered(run_id~ : String, attempt_id~ : String, message~ : String)
   SessionsLoaded(
     Array[@transcript.SessionListItem],
     connection_generation~ : Int,
@@ -3020,7 +3024,7 @@ fn Model::display_status(self : Model) -> Status {
         Some(Starting(..)) => Starting
         Some(Open(stage=Opened, ..)) => Running
         Some(Open(stage=AtStep(step), ..)) => Step(step)
-        Some(Open(stage=Cancelling, ..)) => Cancelling
+        Some(Open(stage=Cancelling(..), ..)) => Cancelling
       }
   }
 }
@@ -3775,7 +3779,7 @@ fn Conversation::run_heartbeat(self : Conversation) -> @composer.RunHeartbeat? {
     Open(stage=Opened, ..) => Thinking
     Open(stage=AtStep(Some(step)), ..) => AtStep(step)
     Open(stage=AtStep(None), ..) => Working
-    Open(stage=Cancelling, ..) => Stopping
+    Open(stage=Cancelling(..), ..) => Stopping
   }
   // A pending retry replaces the step wording; a Stop already sent still wins.
   let stage : @composer.RunStage = if self.turn.retrying is Some(retrying) &&
