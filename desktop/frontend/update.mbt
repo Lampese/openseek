@@ -6069,7 +6069,10 @@ fn update_device_msg(
       // then ask for the saved settlement so the ordinary Finished path can
       // recover its outcome and refresh the transcript. A successor that won
       // the race has another id and is left untouched by the guard above.
-      let closed = conv.clear_streams().forget_steers_for_run(run_id)
+      let closed = conv
+        .clear_streams()
+        .forget_steers_for_run(run_id)
+        .retire_run(run_id)
       let closed = if closed.pending_approval
         is Some({ run_id: Some(owner), .. }) &&
         owner == run_id {
@@ -7343,6 +7346,13 @@ fn update_device_msg(
         // belongs to the session list.
         None => existing
       }
+      // A terminal run can still have its Started notification queued behind
+      // the RPC response that closed it. Once retired, that id must never take
+      // lifecycle ownership back from an idle state or a newer Starting/Open
+      // successor.
+      if existing.retired_run_ids.contains(run_id) {
+        return (@cmd.none, model)
+      }
       // An automatically promoted follow-up is still transient until this
       // ordinary Started boundary. Retire its in-memory queue row here; the
       // corresponding User commit is the first durable representation of it.
@@ -7722,7 +7732,10 @@ fn update_device_msg(
                 // no longer acquire a receipt, so they end with it; the
                 // transcript, not a local notice, says what the run recorded.
                 {
-                  ..conv.clear_streams().forget_steers_for_run(run_id),
+                  ..conv
+                  .clear_streams()
+                  .forget_steers_for_run(run_id)
+                  .retire_run(run_id),
                   run: NoRun(ended=None),
                   last_run_id: Some(run_id),
                 }
@@ -8153,7 +8166,10 @@ fn update_device_msg(
         // Whether each submission reached the store is the record's question;
         // the transcript answers it without a local placeholder.
         let outcome = RunOutcome::parse(status)
-        let settled_inputs = conv.clear_streams().forget_steers_for_run(run_id)
+        let settled_inputs = conv
+          .clear_streams()
+          .forget_steers_for_run(run_id)
+          .retire_run(run_id)
         // A dead/aborted serve process loses its controller-owned queue. A
         // normal terminal keeps it for the Started boundary that immediately
         // promotes the next ordinary prompt.
@@ -12745,6 +12761,56 @@ test "a predecessor Finished cannot erase a successor Starting phase" {
     current == submission_id,
   )
   assert_true(after_old_finish.active().has_initial_submission(submission_id))
+}
+
+///|
+test "a retired predecessor Started cannot reclaim a Starting or Open successor" {
+  let dispatch = test_dispatch()
+  let stopping = running_model().replace_conversation({
+    ..running_conversation(),
+    run: Open(run_id="r7", stage=Cancelling(attempt_id="cancel-1")),
+  })
+  let (_, idle) = update_dev(
+    dispatch,
+    CancelNotOpen(run_id="r7", attempt_id="cancel-1"),
+    stopping,
+  )
+  assert_true(idle.active().retired_run_ids.contains("r7"))
+  let drafted = idle.replace_conversation({ ..idle.active(), task: "next run", })
+  let (_, starting) = update(dispatch, Send, drafted)
+  guard starting.active().run is Starting(submission_id~) else {
+    fail("the successor did not enter Starting")
+  }
+  let predecessor = Started(
+    run_id="r7",
+    session="desktop-test",
+    model=High,
+    max_steps=1000,
+    session_root=None,
+    submission_id=Some("old-submission"),
+  )
+  let (_, still_starting) = update_dev(dispatch, predecessor, starting)
+  assert_true(
+    still_starting.active().run is Starting(submission_id=current) &&
+    current == submission_id,
+  )
+  assert_true(still_starting.active().has_initial_submission(submission_id))
+  let (_, opened) = update_dev(
+    dispatch,
+    Started(
+      run_id="r8",
+      session="desktop-test",
+      model=High,
+      max_steps=1000,
+      session_root=None,
+      submission_id=Some(submission_id),
+    ),
+    still_starting,
+  )
+  assert_true(opened.active().run is Open(run_id="r8", ..))
+  let (_, still_open) = update_dev(dispatch, predecessor, opened)
+  assert_true(still_open.active().run is Open(run_id="r8", ..))
+  assert_true(still_open.active().has_initial_submission(submission_id))
 }
 
 ///|
