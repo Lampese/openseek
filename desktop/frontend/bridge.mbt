@@ -644,12 +644,22 @@ fn runs_payload(frontier : Array[RunSnapshotFrontier]) -> @protocol.RunsPayload 
         })
         Some(submission_id)
       }
-      SnapshotOpen(run_id~) | SnapshotIdle(last_run_id=Some(run_id)) => {
+      SnapshotOpen(run_id~) => {
         known.push({
           session: captured.session,
           run_id: Some(run_id),
           submission_id: None,
         })
+        None
+      }
+      SnapshotIdle(last_run_id=Some(run_id)) => {
+        if !captured.reconciled_run_ids.contains(run_id) {
+          known.push({
+            session: captured.session,
+            run_id: Some(run_id),
+            submission_id: None,
+          })
+        }
         None
       }
       SnapshotIdle(last_run_id=None) => None
@@ -687,6 +697,7 @@ test "runs payload carries an unreconciled predecessor beside its successor" {
       session: "desktop-test",
       state: SnapshotOpen(run_id="r8"),
       unreconciled_run_ids: ["r7"],
+      reconciled_run_ids: [],
       initial_ids: [],
       pending_approval_id: None,
     },
@@ -703,6 +714,22 @@ test "runs payload carries an unreconciled predecessor beside its successor" {
     .iter()
     .any(item => item.session == "desktop-test" && item.run_id == Some("r8")),
   )
+}
+
+///|
+test "runs payload omits an already reconciled idle lifecycle" {
+  let payload = runs_payload([
+    {
+      session: "desktop-test",
+      state: SnapshotIdle(last_run_id=Some("r7")),
+      unreconciled_run_ids: [],
+      reconciled_run_ids: ["r7"],
+      initial_ids: [],
+      pending_approval_id: None,
+    },
+  ])
+  guard payload.known is Some(known) else { fail("missing known selectors") }
+  inspect(known.length(), content="0")
 }
 
 ///|
@@ -1483,7 +1510,7 @@ fn cancel_reply_msg(
     None => Some(CancelNotOpen(run_id~, attempt_id~))
     Some(cancelled) if cancelled != run_id =>
       Some(
-        CancelRejected(
+        CancelUndelivered(
           run_id~,
           attempt_id~,
           message="Host cancelled unexpected run \{cancelled}",
@@ -1494,10 +1521,10 @@ fn cancel_reply_msg(
 }
 
 ///|
-test "a mismatched successful cancel reply reopens the requested attempt" {
+test "a mismatched successful cancel reply remains ambiguous" {
   assert_true(
     cancel_reply_msg("r1", "cancel-1", Some("r2"))
-    is Some(CancelRejected(run_id="r1", attempt_id="cancel-1", message=_)),
+    is Some(CancelUndelivered(run_id="r1", attempt_id="cancel-1", message=_)),
   )
   assert_true(cancel_reply_msg("r1", "cancel-1", Some("r1")) is None)
 }
