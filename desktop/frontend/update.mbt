@@ -7958,6 +7958,10 @@ fn update_device_msg(
         } else {
           closed
         }
+        // A process-level failed reply is terminal even when its Started push
+        // is still queued behind this RPC response. Fence that exact run id
+        // before a successor can open, just like Finished/CancelNotOpen do.
+        let next = if owns_lifecycle { next.retire_run(run_id) } else { next }
         let (model, generation) = model.ensure_transcript_reload_after_current(
           next,
         )
@@ -8143,21 +8147,23 @@ fn update_device_msg(
       }
     Finished(run_id~, status~, answer~) =>
       if (if model.conversation_by_run(channel, run_id) is Some(conv) {
-          Some(conv)
+          Some((conv, false))
         } else if model.conversation_by_last_run(channel, run_id) is Some(conv) &&
           conv.run is NoRun(..) {
           // RunsSettled may have closed the phase first; Finished is still the
-          // authoritative outcome for the idle conversation that last owned
-          // it. A Starting/Open successor is newer lifecycle ownership: a
-          // predecessor's delayed Finished must not erase it.
-          Some(conv)
+          // authoritative outcome for the idle conversation that last owned it.
+          Some((conv, false))
+        } else if model.conversation_by_retired_run(channel, run_id)
+          is Some(conv) {
+          // A newer lifecycle owns `run`/streams/last_run_id, but retirement
+          // preserves the predecessor's routing identity. Reduce its terminal
+          // side effects without replacing that successor.
+          Some((conv, true))
         } else {
           None
         })
-        is Some(conv) {
-        let first_finish = !(conv.run is NoRun(ended=Some(RunFinished(_))) &&
-          conv.last_run_id is Some(last) &&
-          last == run_id)
+        is Some((conv, preserve_successor)) {
+        let first_finish = !conv.reconciled_run_ids.contains(run_id)
         // Missing receipts are not guessed dropped. Keep exact-id ownership
         // briefly and show a truthful unconfirmed notice behind the durable
         // terminal boundary; a trailing receipt may still settle it.
@@ -8166,14 +8172,22 @@ fn update_device_msg(
         // Whether each submission reached the store is the record's question;
         // the transcript answers it without a local placeholder.
         let outcome = RunOutcome::parse(status)
-        let settled_inputs = conv
-          .clear_streams()
+        let settled_inputs = (if preserve_successor {
+            conv
+          } else {
+            conv.clear_streams()
+          })
           .forget_steers_for_run(run_id)
           .retire_run(run_id)
+          .record_reconciled_run(run_id)
         // A dead/aborted serve process loses its controller-owned queue. A
         // normal terminal keeps it for the Started boundary that immediately
         // promotes the next ordinary prompt.
-        let settled_inputs = match outcome {
+        // A predecessor cannot discard its successor's queued input.
+        let settled_inputs = if preserve_successor {
+          settled_inputs
+        } else {
+          match outcome {
           Aborted | RunFailed | Unknown(_) =>
             {
               ..settled_inputs,
@@ -8184,6 +8198,7 @@ fn update_device_msg(
               }),
             }
           Completed | ContextYield | MaxStepsExhausted => settled_inputs
+          }
         }
         // A question belonging to this run goes with it. The engine settles
         // its own on the way out, so what reaches here is the engine that
@@ -8197,16 +8212,23 @@ fn update_device_msg(
         } else {
           settled_inputs
         }
-        let base = {
-          ..settled_inputs,
-          run: NoRun(ended=Some(RunFinished(outcome))),
-          last_run_id: Some(run_id),
-          // A finish the user watched happen needs no reminder. Every other
-          // completion is unread until its transcript is actually visible.
-          unseen_finish: !model.conversation_is_visible(
-            conv.device,
-            conv.session_id,
-          ),
+        let base = if preserve_successor {
+          {
+            ..settled_inputs,
+            // Do not clear an older unseen outcome merely because this
+            // predecessor happened to settle while its successor was visible.
+            unseen_finish: conv.unseen_finish ||
+            !model.conversation_is_visible(conv.device, conv.session_id),
+          }
+        } else {
+          {
+            ..settled_inputs,
+            run: NoRun(ended=Some(RunFinished(outcome))),
+            last_run_id: Some(run_id),
+            // A finish the user watched happen needs no reminder; one landing
+            // in a background conversation leaves a dot until they visit.
+            unseen_finish: !model.conversation_is_visible(conv.device, conv.session_id),
+          }
         }
         // The finished run just appended to the durable store, so the
         // sidebar list (and this conversation's title) may have changed —
@@ -12761,6 +12783,146 @@ test "a predecessor Finished cannot erase a successor Starting phase" {
     current == submission_id,
   )
   assert_true(after_old_finish.active().has_initial_submission(submission_id))
+  assert_true(after_old_finish.active().reconciled_run_ids.contains("r7"))
+  guard after_old_finish.active().sync is Reloading(generation~, ..) else {
+    fail("the predecessor finish did not schedule terminal reconciliation")
+  }
+  // The successor may fail independently; that must not cancel the old-host
+  // transcript read that is the predecessor's only source of final items.
+  let (_, rejected) = update_dev(
+    dispatch,
+    StartRejected(
+      session="desktop-test",
+      submission_id~,
+      message="successor refused",
+    ),
+    after_old_finish,
+  )
+  let (_, loaded) = update_dev(
+    dispatch,
+    SessionRefreshed(
+      goal=None,
+      goal_markers=[],
+      session="desktop-test",
+      items=[
+        {
+          kind: Assistant(is_danger=false),
+          content: "predecessor final item",
+          ts: None,
+          sequence: Some(1),
+        },
+      ],
+      watermark=1,
+      generation~,
+    ),
+    rejected,
+  )
+  assert_true(
+    loaded.active().messages
+    .iter()
+    .any(item => item.content == "predecessor final item"),
+  )
+}
+
+///|
+test "a failed start reply retires its run before a successor" {
+  let dispatch = test_dispatch()
+  let first = with_pending_prompt(
+    { ..test_conversation(), run: Starting(submission_id="first-start"), },
+    "first-start",
+    "first prompt",
+  )
+  let (_, opened) = update_dev(
+    dispatch,
+    Started(
+      run_id="r-first",
+      session="desktop-test",
+      model=High,
+      max_steps=1000,
+      session_root=None,
+      submission_id=Some("first-start"),
+    ),
+    test_model().replace_conversation(first),
+  )
+  let (_, failed) = update_dev(
+    dispatch,
+    StartResponded(
+      session="desktop-test",
+      submission_id="first-start",
+      run_id="r-first",
+      status="failed",
+      exit_code=1,
+    ),
+    opened,
+  )
+  assert_true(failed.active().retired_run_ids.contains("r-first"))
+  let drafted = failed.replace_conversation({
+    ..failed.active(),
+    task: "successor prompt",
+  })
+  let (_, successor) = update(dispatch, Send, drafted)
+  guard successor.active().run is Starting(submission_id=successor_id) else {
+    fail("the successor did not start")
+  }
+  let (_, fenced) = update_dev(
+    dispatch,
+    Started(
+      run_id="r-first",
+      session="desktop-test",
+      model=High,
+      max_steps=1000,
+      session_root=None,
+      submission_id=Some("first-start"),
+    ),
+    successor,
+  )
+  assert_true(
+    fenced.active().run is Starting(submission_id=current) &&
+    current == successor_id,
+  )
+}
+
+///|
+test "navigation retains a hidden retirement fence" {
+  let dispatch = test_dispatch()
+  let stopping = running_model().replace_conversation({
+    ..running_conversation(),
+    run: Open(run_id="r7", stage=Cancelling(attempt_id="cancel-1")),
+  })
+  let (_, idle) = update_dev(
+    dispatch,
+    CancelNotOpen(run_id="r7", attempt_id="cancel-1"),
+    stopping,
+  )
+  assert_false(idle.active().worth_keeping())
+  let navigated = idle.activate(
+    @interop.ChannelId::Local,
+    "desktop-fresh",
+    @interop.ChannelId::Local.test_project(),
+  )
+  guard navigated.find_conversation(@interop.ChannelId::Local, "desktop-test")
+    is Some(tombstone) else {
+    fail("navigation pruned the retirement fence")
+  }
+  assert_true(tombstone.retired_run_ids.contains("r7"))
+  let (_, delayed) = update_dev(
+    dispatch,
+    Started(
+      run_id="r7",
+      session="desktop-test",
+      model=High,
+      max_steps=1000,
+      session_root=None,
+      submission_id=Some("old-start"),
+    ),
+    navigated,
+  )
+  guard delayed.find_conversation(@interop.ChannelId::Local, "desktop-test")
+    is Some(still_retired) else {
+    fail("the hidden tombstone disappeared")
+  }
+  assert_true(still_retired.run is NoRun(..))
+  inspect(delayed.active_session, content="desktop-fresh")
 }
 
 ///|
