@@ -46,7 +46,7 @@ test "a cancelling run exposes neither steer nor a duplicate Stop action" {
   })
   assert_true(
     cancelling.composer_input().presentation.primary_action
-    is @composer.Running(steer_available=false, can_stop=false),
+    is @composer.Running(steer_available=false, can_stop=false, ..),
   )
 }
 
