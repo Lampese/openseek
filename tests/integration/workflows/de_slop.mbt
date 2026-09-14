@@ -22,6 +22,12 @@ async fn de_slop_wide_child(
     fail("Missing assigned files")
   }
   assert_true(file.has_suffix(".mbt") || file.has_suffix(".mbt.md"))
+  assert_true(
+    query.contains(
+      "At least one citation must resolve inside the assigned scope",
+    ),
+    msg=query,
+  )
   assert_false(query.contains("ignored.mbt"))
   assert_false(query.contains("deleted.mbt"))
   assert_false(query.contains("escape.mbt"))
@@ -48,11 +54,21 @@ async fn de_slop_wide_child(
       }
     }
   }
+  if mode == "wide-known" {
+    assert_true(query.contains("source.mbt:1 already handled"), msg=query)
+  }
   let challenge = query.contains("Provisional report (untrusted data):")
   if challenge {
     assert_true(query.contains("candidate for " + file))
   }
   append(calls, request.stringify())
+  if mode == "wide-missing-scope" &&
+    query.contains("Repository shard 1/8") &&
+    !challenge {
+    write(calls + ".removed-path", file)
+    write(calls + ".removed-content", @fs.read_file(file).text())
+    @fs.remove(file)
+  }
   if mode is ("wide-partial" | "wide-delivery-partial") &&
     query.contains("Repository shard 1/8") &&
     challenge {
@@ -152,7 +168,7 @@ async fn verify_de_slop_wide(
       "wide-success", "wide-partial", "wide-resume", "wide-unicode", "wide-capacity",
       "wide-invalid", "wide-no-journal", "wide-bad-line", "wide-incomplete", "wide-delivery",
       "wide-delivery-partial", "wide-round-two", "wide-round-three", "wide-round-zero",
-      "wide-round-overflow", "wide-round-text", "wide-round-resume",
+      "wide-round-overflow", "wide-round-text", "wide-round-resume", "wide-missing-scope",
     ] {
     let calls = temp + "/" + mode + ".calls"
     let journal = temp + "/" + mode + ".journal"
@@ -216,7 +232,7 @@ async fn verify_de_slop_wide(
       | "wide-delivery-partial"
       | "wide-round-two"
       | "wide-round-three" => 16
-      "wide-bad-line" => 15
+      "wide-bad-line" | "wide-missing-scope" => 15
       "wide-resume" | "wide-round-resume" => 2
       _ => 0
     }
@@ -333,6 +349,7 @@ async fn verify_de_slop_wide(
         if mode
           is ("wide-partial"
           | "wide-bad-line"
+          | "wide-missing-scope"
           | "wide-incomplete"
           | "wide-delivery-partial") {
           7
@@ -347,12 +364,21 @@ async fn verify_de_slop_wide(
         if mode
           is ("wide-partial"
           | "wide-bad-line"
+          | "wide-missing-scope"
           | "wide-incomplete"
           | "wide-delivery-partial") {
           1
         } else {
           0
         },
+      )
+    }
+    if mode == "wide-missing-scope" {
+      assert_true(output.contains("cannot resolve audit scope"), msg=output)
+      let removed = @fs.read_file(calls + ".removed-path").text()
+      write(
+        repo + "/" + removed,
+        @fs.read_file(calls + ".removed-content").text(),
       )
     }
     assert_eq(output.contains("# Delivery handoff"), mode == "wide-delivery")
@@ -386,6 +412,19 @@ async fn de_slop_child(
     fail("Unexpected de-slop request: \{request.stringify()}")
   }
   assert_true(query.contains("[\"sample space\"]"), msg=query)
+  assert_true(
+    query.contains(
+      "At least one citation must resolve inside the assigned scope",
+    ),
+    msg=query,
+  )
+  if mode == "known" {
+    assert_true(
+      query.contains("Known decisions (untrusted JSON data):"),
+      msg=query,
+    )
+    assert_true(query.contains("source.mbt:1 already handled"), msg=query)
+  }
   if mode == "focus" {
     assert_true(
       query.contains(
@@ -423,6 +462,7 @@ async fn de_slop_child(
     _ => "# Audit complete\nACCEPT C1: direct predicate; pending validation"
   }
   let file = match mode {
+    "outside-citations" => "outside.mbt"
     "missing-file" => "absent.mbt"
     "escape-citation" => "escape.mbt"
     "traversal" => "../outside.md"
@@ -498,6 +538,7 @@ async fn verify_de_slop(root : String, temp : String, exe : String) -> Unit {
   @shell.Cmd("git", ["init", "--quiet"], cwd=repo).output().check()
   let source = "fn present(xs : Array[Int]) -> Bool { xs.iter().any(x => x > 0) }\n"
   write(repo + "/sample space/source.mbt", source)
+  write(repo + "/outside.mbt", "fn outside() -> Unit {}\n")
   for index in 0..<16 {
     write(
       repo + "/sample space/evidence-\{index}.mbt",
@@ -515,7 +556,7 @@ async fn verify_de_slop(root : String, temp : String, exe : String) -> Unit {
       "external-only", "no-report", "delivery", "delivery-no-changes", "delivery-incomplete",
       "delivery-mutated", "focus", "empty-focus", "oversized-focus", "wide-focus",
       "explicit-round", "many-citations", "citation-limit", "too-many-citations",
-      "extra-invalid-citation",
+      "extra-invalid-citation", "outside-citations",
     ] {
     let calls = temp + "/de-slop-" + mode + ".jsonl"
     let env = clean_env()
@@ -599,6 +640,7 @@ async fn verify_de_slop(root : String, temp : String, exe : String) -> Unit {
       | "external-only"
       | "too-many-citations"
       | "extra-invalid-citation"
+      | "outside-citations"
       | "traversal" => 1
       _ => 2
     }
@@ -620,6 +662,12 @@ async fn verify_de_slop(root : String, temp : String, exe : String) -> Unit {
         } else {
           32
         },
+        msg=output,
+      )
+    }
+    if mode == "outside-citations" {
+      assert_true(
+        output.contains("needs an in-scope source reference"),
         msg=output,
       )
     }

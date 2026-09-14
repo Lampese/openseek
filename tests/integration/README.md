@@ -35,7 +35,9 @@ The hosted tests cover success, partial failure, missing handoff, insufficient
 capacity, empty answers, bounded context, nested-package discovery, and citation
 validation (including escaping symlinks, invalid line numbers, 10/16-citation
 reports, the hard 17-citation rejection, and invalid references beyond the
-preferred eight-citation size); the review
+preferred eight-citation size and reports citing only outside their scope).
+Known-decision fixtures verify clean-HEAD binding, bounded/valid input, both
+scout prompts and unchanged source enumeration; the review
 script's criteria resolution (arguments, the engine's standing goal, or both),
 baseline forwarding and override, the failing exit on blockers, and usage
 errors. De-slop tests cover sequential discovery/challenge handoff, explicit

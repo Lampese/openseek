@@ -59,6 +59,26 @@ as **all** hits and their roles; a lexical role is a heuristic, not a parser cla
 It needs two reserved child slots per shard, up to sixteen for a full sweep.
 There are no automatic retries that silently multiply model spend.
 
+Repeated campaigns can pass `--known .moonagent/de-slop-known.json` to give
+both scouts a compact record of handled candidates. The file must resolve
+inside the workspace and contain JSON such as:
+
+```json
+{"head":"<full current Git HEAD>","decisions":"path: function — PR URL, or rejection/defer reason and counterexample"}
+```
+
+Use an ignored artifact directory (or `.git`) so the worktree stays clean.
+The script rejects a dirty tree, stale HEAD, malformed data, more than 8,000
+file characters, or blank/over-6,000-character decisions before launching children.
+After rebasing, revalidate the sites and their dependencies before updating the
+record's HEAD. HEAD binding does not freeze the toolchain, dependency environment
+or PR state; revalidate when those assumptions change too. The record is
+untrusted context, not proof or a source exclusion:
+all files remain inventoried, same-file new candidates remain eligible, and an
+explicit `--focus` still requests re-examination. The inventory stores the exact
+normalized record. This reduces repeated suggestions only when scouts follow
+it; it is not persistent coverage or a guarantee of novelty.
+
 The host journal's `.inventory.json` sidecar contains every source path and
 all lexical hit locations; `.report.json` contains successful challenged
 reports and failed shard IDs. Raw discovery and challenge reports stay in the
@@ -114,8 +134,10 @@ It rejects empty/oversized answers, missing workspace citations, malformed local
 line numbers, unreadable/escaping local references, and lines beyond EOF.
 Explore reports may also cite installed dependency sources or API links;
 external references are printed as **not checked**, never opened, and cannot
-replace the required workspace evidence. Reference checks
-prove only that the location exists. Decisions, semantic equivalence, scope
+replace the required workspace evidence. At least one checked citation must
+resolve inside the assigned source scope; a report citing only other shards
+fails. This does not prove that every proposed edit is in scope. Reference
+checks establish location, not semantics; decisions, individual candidate scope
 adherence, and the three-candidate limit remain model judgments. KEEP claims
 require API evidence too: names do not establish Unicode or allocation behavior.
 When auditing core itself, use the checked-out source, follow target-specific
@@ -157,6 +179,9 @@ has already requested the cleanup.
    just that edit and record why it was kept.
 4. Run the smallest relevant compiler/test checks first. Use `moon ide doc`
    for API/receiver uncertainty and `moon check` for type/ownership evidence.
+   Preserve callback `#locals` and effect contracts: forwarding a local callback
+   to another local method can still be rejected by the current compiler. Do
+   not remove the annotation to force a proposed delegation to compile.
    A type-correct rewrite can still recurse: removing a typed intermediate in
    core's ArrayView shrink changed trait inference, and its apparent identity
    map actually converted arrays to views. Run existing behavioral tests with
@@ -287,3 +312,6 @@ Reports should prefer eight citations, with a hard limit of sixteen. Every
 repository location is validated, including extra citations; none are silently
 truncated. Invalid shape, answer length and citation count have separate errors
 so the caller can correct a bounded submission without guessing.
+
+The [2026-09-14 repeated core campaign](de-slop-core-evaluation.md) records
+HEAD-bound prior decisions, recovery, compiler counterexamples and further PRs.

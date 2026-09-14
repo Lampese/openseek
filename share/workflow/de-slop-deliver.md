@@ -48,7 +48,11 @@ failing required checks as successful delivery. No summary after a published PR.
    unknown scope, or `--focus` carrying a concrete candidate verbatim, e.g.
    `args=["--deliver","--focus","reuse difference in symmetric_difference",
    "hashset/hashset.mbt"]`. For repeated exploration, advance `--round N` on a
-   recorded stable inventory; preserve the round with `--shard` retries. Use
+   recorded stable inventory; preserve the round with `--shard` retries. Pass
+   a revalidated `--known` record of existing PR sites and concrete rejected or
+   deferred sketches to both scouts (see [its schema](de-slop.md)). Record the
+   exact current clean HEAD; do not merely change the hash after rebasing.
+   Keep all source files eligible for different same-file candidates. Use
    `subrun=true`, wait for actual job completion and inspect its ledger; outer
    CLI exit zero is not evidence it succeeded. Use `job_wait` while a child
    runs, budget the caller for the full delivery rather than just launching,

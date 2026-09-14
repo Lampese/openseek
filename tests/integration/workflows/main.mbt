@@ -16,6 +16,7 @@ async fn main {
             verify_hosted(root, temp, exe)
             verify_review(root, temp, exe)
             verify_de_slop(root, temp, exe)
+            verify_de_slop_known(root, temp, exe)
             verify_ci(root, temp, exe)
           })
         }
