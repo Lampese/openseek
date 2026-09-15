@@ -9,6 +9,7 @@ After this module is published, scripts can import a pinned version:
 ```mbtx
 import {
   "bobzhang/openseek_tools@0.1.0" @tools,
+  "moonbitlang/async",
 }
 
 async fn main {
