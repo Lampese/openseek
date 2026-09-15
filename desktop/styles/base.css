@@ -497,3 +497,39 @@ html.native-titlebar-overlay .app .window-titlebar-drag-strip {
 .content.panel-expanded .editor-tabsbar {
   padding-inline-start: var(--main-titlebar-leading-inset);
 }
+
+.custom-select-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.custom-select-group-action {
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 3px 7px;
+  font: inherit;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.custom-select-group-action:hover:not([aria-disabled="true"]) {
+  background: var(--color-bg-subtle);
+}
+.custom-select-group-action:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+}
+.custom-select-group-action[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+.custom-select-action-detail {
+  padding: 4px 10px 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow: auto;
+}

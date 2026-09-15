@@ -1155,3 +1155,31 @@ pub extend CodexTurnSteerPayload with Eq::{equal, not_equal}
 
 ///|
 pub extend CodexTurnSteerPayload with ToJson::{to_json}
+
+///|
+pub(all) struct CodexCliUpdateReply {
+  version : String
+} derive(Debug, Eq)
+
+///|
+pub impl FromJson for CodexCliUpdateReply with fn from_json(value, path) {
+  let object = JsonObject::decode(value, path, "Codex CLI update reply")
+  { version: object.required_string("version"), }
+}
+
+///|
+pub impl ToJson for CodexCliUpdateReply with fn to_json(self) {
+  { "version": Json(self.version) }
+}
+
+///|
+pub extend CodexCliUpdateReply with Eq::{equal, not_equal}
+
+///|
+pub extend CodexCliUpdateReply with Debug::{to_repr}
+
+///|
+pub extend CodexCliUpdateReply with FromJson::{from_json}
+
+///|
+pub extend CodexCliUpdateReply with ToJson::{to_json}

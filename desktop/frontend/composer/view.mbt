@@ -58,6 +58,7 @@ fn ModelGroup::select_group(self : ModelGroup) -> @select_control.Group {
 pub(all) struct ModelSelect {
   id : String
   groups : Array[ModelGroup]
+  cli_update : CliUpdateControl?
   selected : String
   disabled : Bool
   open : Bool
@@ -82,8 +83,24 @@ fn ModelSelect::render(
     title: self.title,
     aria_label: "Model",
     presentation: Composer("✦", false),
-  }.render()
+  }.render(
+    header_action?=self.cli_update.map(update => @select_control.HeaderAction::{
+      group: "Codex",
+      name: "Update Codex CLI",
+      label: update.label,
+      disabled: update.disabled,
+      detail: update.detail,
+      command: action_emit(CodexCliUpdateRequested(identity~)),
+    }),
+  )
 }
+
+///|
+pub(all) struct CliUpdateControl {
+  label : String
+  disabled : Bool
+  detail : String?
+} derive(Eq)
 
 ///|
 /// The shared reasoning selector used by both OpenSeek and Codex composers.
@@ -1014,3 +1031,6 @@ pub extend WorktreeChoice with Eq::{equal, not_equal}
 #deprecated("Use `==` or the `Eq` trait directly", skip_current_package=true)
 #doc(hidden)
 pub extend WorktreeControl with Eq::{equal, not_equal}
+
+///|
+pub extend CliUpdateControl with Eq::{equal, not_equal}

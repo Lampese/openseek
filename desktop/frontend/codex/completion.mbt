@@ -457,6 +457,8 @@ fn State::apply_composer_action(
       )
     @composer.SlashCommand(command~, ..) =>
       self.run_composer_command(dispatch, channel, command)
+    @composer.CodexCliUpdateRequested(..) =>
+      update(dispatch, UpdateCli, self, channel, _ => @cmd.none)
     @composer.StopRequested(..) => (self.interrupt(dispatch, channel), self)
     @composer.ModelSelected(value~, ..) =>
       (@cmd.none, self.with_selected_model(value))
@@ -560,6 +562,7 @@ test "Codex projects app-server facts into the shared composer contract" {
     channel: @interop.ChannelId::Local,
     model_control: {
       id: "codex-model-picker",
+      cli_update: None,
       groups: [],
       selected: "",
       disabled: true,

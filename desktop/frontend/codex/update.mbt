@@ -11,6 +11,20 @@ pub fn update(
   open_external : (String) -> @cmd.Cmd,
 ) -> (@cmd.Cmd, State) {
   match msg {
+    UpdateCli => {
+      guard !state.cli_update_control().disabled else {
+        return (@cmd.none, state)
+      }
+      (
+        CodexCliUpdateReply.request(
+          dispatch,
+          channel,
+          @commands.codex_cli_update,
+          @protocol.NoPayload,
+        ),
+        { ..state, cli_updating: true, cli_update_result: None, },
+      )
+    }
     Refresh => {
       let (command, next) = state.refresh(dispatch, channel)
       (command, { ..next, notice: "", })
@@ -276,6 +290,26 @@ pub fn update(
         CodexRequestsReply => next = next.with_requests(value)
         CodexAccountReply => next = next.with_account(value)
         CodexModelsReply => next = next.with_models(value)
+        CodexCliUpdateReply => {
+          guard value is { "version": String(version), .. } else {
+            return (
+              @cmd.none,
+              {
+                ..next,
+                cli_updating: false,
+                cli_update_result: Some("Invalid CLI update reply"),
+              },
+            )
+          }
+          next = {
+            ..next,
+            cli_updating: false,
+            cli_update_result: Some("Updated: " + version),
+          }
+          let (refresh, refreshed) = next.refresh(dispatch, channel)
+          cmd = refresh
+          next = refreshed
+        }
         CodexThreadsReply(context) =>
           next = next.with_threads(
             value,
@@ -407,6 +441,16 @@ pub fn update(
       (cmd, next)
     }
     Failed(kind~, message~) => {
+      if kind is CodexCliUpdateReply {
+        return (
+          @cmd.none,
+          {
+            ..state,
+            cli_updating: false,
+            cli_update_result: Some("Update failed: " + message),
+          },
+        )
+      }
       if !state.accepts_reply(kind) {
         return (@cmd.none, state)
       }
@@ -415,6 +459,7 @@ pub fn update(
         CodexRequestsReply => "Codex requests"
         CodexAccountReply => "Codex account"
         CodexModelsReply => "Codex models"
+        CodexCliUpdateReply => "Codex CLI update"
         CodexThreadsReply(context) =>
           if context.archived {
             "Archived Codex threads"

@@ -40,6 +40,7 @@ pub async fn Actor::requests(Self) -> Json
 pub async fn Actor::respond(Self, request_id~ : Json, result~ : Json) -> Json
 pub async fn Actor::run(Self, (String, Json) -> Unit) -> Unit
 pub fn Actor::status(Self) -> Json
+pub async fn Actor::update_cli(Self) -> Json
 
 pub struct CodexSettings {
   command : String

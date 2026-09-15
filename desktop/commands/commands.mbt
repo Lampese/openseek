@@ -797,3 +797,9 @@ pub let schedules_action : Command[
   @protocol.ScheduleActionPayload,
   @protocol.SchedulesReply,
 ] = Command("schedules.action")
+
+///|
+pub let codex_cli_update : Command[
+  @protocol.EmptyPayload,
+  @protocol.CodexCommandReply[@protocol.CodexCliUpdateReply],
+] = Command("codex.cli.update")

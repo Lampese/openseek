@@ -316,6 +316,7 @@ priv enum CodexReplyKind {
   CodexRequestsReply
   CodexAccountReply
   CodexModelsReply
+  CodexCliUpdateReply
   CodexThreadsReply(CodexCatalogReplyContext)
   CodexThreadReply(String, CodexActivityFrontier)
   CodexResumeReply(String)
@@ -364,6 +365,7 @@ priv enum CodexForeground {
 /// one variant of its own Msg, but it never inspects app-server replies or
 /// mutates Codex's account, thread, turn, item, or approval state directly.
 enum Msg {
+  UpdateCli
   Refresh
   // Only deliberate operations leave the shared Rabbita component. Raw
   // keystrokes, completion navigation, and async search replies remain local
@@ -630,6 +632,8 @@ struct State {
   request_generation : Int
   loading : Bool
   foreground : CodexForeground?
+  cli_updating : Bool
+  cli_update_result : String?
   notice : String
 } derive(Eq)
 
@@ -669,6 +673,8 @@ pub fn State::State(loading? : Bool = false) -> State {
     request_generation: 0,
     loading,
     foreground: None,
+    cli_updating: false,
+    cli_update_result: None,
     notice: "",
   }
 }
@@ -961,6 +967,7 @@ fn CodexReplyKind::foreground(self : CodexReplyKind) -> CodexForeground? {
     | CodexRequestsReply
     | CodexAccountReply
     | CodexModelsReply
+    | CodexCliUpdateReply
     | CodexThreadsReply(_)
     | CodexInterruptReply
     | CodexApprovalReply => None
@@ -3354,3 +3361,28 @@ test "Codex editor annotations stay in chips and preserve model context" {
 
 ///|
 pub extend State with Eq::{equal, not_equal}
+
+///|
+pub fn Msg::update_cli() -> Msg {
+  UpdateCli
+}
+
+///|
+pub fn State::cli_update_control(self : State) -> @composer.CliUpdateControl {
+  let busy = self.foreground is Some(_) ||
+    self.activity.entries.values().any(entry => entry.running) ||
+    self.is_running()
+  {
+    label: if self.cli_updating {
+      "Updating…"
+    } else {
+      "Update CLI"
+    },
+    disabled: self.cli_updating || busy,
+    detail: if busy {
+      Some("Finish running Codex tasks before updating")
+    } else {
+      self.cli_update_result
+    },
+  }
+}

@@ -2131,6 +2131,17 @@ fn update_msg(
     // apply it once the last write settles.
     CodexComposerAction(action) =>
       match action {
+        @composer.CodexCliUpdateRequested(identity~) => {
+          guard model.screen is Codex &&
+            model.codex.accepts_composer_identity(identity, model.focused) else {
+            return (@cmd.none, model)
+          }
+          update_msg(
+            dispatch,
+            Codex(channel=model.focused, @codex.Msg::update_cli()),
+            model,
+          )
+        }
         @composer.ModelMenuToggled(identity~) => {
           guard model.screen is Codex &&
             model.codex.accepts_composer_identity(identity, model.focused) else {
@@ -2208,7 +2219,8 @@ fn update_msg(
       }
     ComposerAction(action) =>
       match action {
-        @composer.ModelMenuToggled(..)
+        @composer.CodexCliUpdateRequested(..)
+        | @composer.ModelMenuToggled(..)
         | @composer.ReasoningMenuToggled(..)
         | @composer.SelectMenuDismissed(..)
         | @composer.ModelSelected(..)
@@ -2236,6 +2248,12 @@ fn update_msg(
             return (@cmd.none, model)
           }
           match action {
+            @composer.CodexCliUpdateRequested(..) =>
+              update_msg(
+                dispatch,
+                Codex(channel=model.focused, @codex.Msg::update_cli()),
+                model,
+              )
             @composer.ModelMenuToggled(..) =>
               update_msg(dispatch, ToggleSelectMenu(OpenSeekModelMenu), model)
             @composer.ReasoningMenuToggled(..) =>

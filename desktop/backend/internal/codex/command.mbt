@@ -19,9 +19,18 @@ fn app_server_launch(
   command : String,
   windows~ : Bool,
 ) -> (String, Array[String]) {
+  cli_launch(command, ["app-server"], windows~)
+}
+
+///|
+fn cli_launch(
+  command : String,
+  args : Array[String],
+  windows~ : Bool,
+) -> (String, Array[String]) {
   if windows && command == DefaultCodexCommand {
-    ("cmd.exe", ["/d", "/c", "codex", "app-server"])
+    ("cmd.exe", ["/d", "/c", "codex", ..args])
   } else {
-    (command, ["app-server"])
+    (command, args)
   }
 }

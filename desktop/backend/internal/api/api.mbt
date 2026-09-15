@@ -364,6 +364,12 @@ pub fn endpoints(
       )
       reply
     }),
+    @endpoint.Endpoint::codex(@commands.codex_cli_update, async fn(_) {
+      let reply : @protocol.CodexCliUpdateReply = @json.from_json(
+        state.codex.update_cli(),
+      )
+      reply
+    }),
     @endpoint.Endpoint::codex(@commands.codex_config_open, async fn(_) {
       @host.open_codex_config(state.codex.config_home())
       Acknowledged

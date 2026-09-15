@@ -35,6 +35,7 @@ pub(all) enum Action {
   GoalSubmitted(identity~ : Identity, draft~ : String, prompt_present~ : Bool)
   StopRequested(identity~ : Identity)
   FileIndexEnsured(identity~ : Identity)
+  CodexCliUpdateRequested(identity~ : Identity)
   ModelMenuToggled(identity~ : Identity)
   ReasoningMenuToggled(identity~ : Identity)
   SelectMenuDismissed(identity~ : Identity)
@@ -64,6 +65,14 @@ pub(all) struct ApprovalNotice {
   body : String?
   answered : Bool
 } derive(Eq)
+
+pub(all) struct CliUpdateControl {
+  label : String
+  disabled : Bool
+  detail : String?
+} derive(Eq)
+pub fn CliUpdateControl::equal(Self, Self) -> Bool
+pub fn CliUpdateControl::not_equal(Self, Self) -> Bool
 
 pub(all) struct CodexRequestInput {
   request_key : String
@@ -224,6 +233,7 @@ pub(all) struct ModelOption {
 pub(all) struct ModelSelect {
   id : String
   groups : Array[ModelGroup]
+  cli_update : CliUpdateControl?
   selected : String
   disabled : Bool
   open : Bool

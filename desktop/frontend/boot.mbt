@@ -439,7 +439,7 @@ pub fn boot() -> Unit {
             subs.push(
               @dismiss.on_outside_click(
                 "custom-select-dismiss",
-                trigger=".custom-select-button",
+                trigger=".custom-select-button, .custom-select-group-action, .custom-select-action-detail",
                 emit.map((_ : Unit) => CloseSelectMenu),
               ),
             )

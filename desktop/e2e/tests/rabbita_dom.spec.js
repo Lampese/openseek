@@ -1718,14 +1718,14 @@ test('a covering modal dismisses an open custom select', async ({ page }) => {
 
   const model = page.getByRole('button', { name: 'Model', exact: true });
   await model.click();
-  await expect(page.getByRole('listbox', { name: 'Model' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Model' })).toBeVisible();
   app.notify('settings.changed', {
     ...app.hostSettings,
     revision: app.hostSettings.revision + 1,
     has_deepseek_key: false,
   });
   await expect(page.getByText('Set up your DeepSeek API key')).toBeVisible();
-  await expect(page.getByRole('listbox', { name: 'Model' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Model' })).toHaveCount(0);
   await expect(model).toHaveAttribute('aria-expanded', 'false');
   expect(app.pageErrors).toEqual([]);
 });
@@ -1738,7 +1738,7 @@ test('a bottom select flips above and yields to the narrow sidebar', async ({ pa
 
   const trigger = page.getByRole('button', { name: 'Model', exact: true });
   await trigger.click();
-  const menu = page.getByRole('listbox', { name: 'Model' });
+  const menu = page.getByRole('dialog', { name: 'Model' });
   await expect(menu).toBeVisible();
   const geometry = await page.evaluate(() => {
     const triggerRect = document.querySelector('#openseek-model-picker').getBoundingClientRect();

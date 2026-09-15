@@ -251,7 +251,10 @@ fn Control::option_attrs(
 }
 
 ///|
-pub fn Control::render(self : Control) -> @html.Html {
+pub fn Control::render(
+  self : Control,
+  header_action? : HeaderAction,
+) -> @html.Html {
   let mut selected_label = self.selected
   let mut selected_index = 0
   let mut option_count = 0
@@ -271,13 +274,21 @@ pub fn Control::render(self : Control) -> @html.Html {
       title=self.title,
       disabled=self.disabled,
       on_click=self.toggle_menu(),
-      attrs=self.trigger_attrs(selected_index, option_count),
+      attrs=self
+        .trigger_attrs(selected_index, option_count)
+        .aria_haspopup(
+          if header_action is Some(_) {
+            "dialog"
+          } else {
+            "listbox"
+          },
+        ),
       self.presentation.trigger_contents(selected_label),
     ),
   ]
   if self.open && !self.disabled {
     let menu : Array[@html.Html] = []
-    let flat = self.groups.length() <= 1
+    let flat = self.groups.length() <= 1 && header_action is None
     let mut index = 0
     for group in self.groups {
       let rows : Array[@html.Html] = []
@@ -326,7 +337,65 @@ pub fn Control::render(self : Control) -> @html.Html {
           @html.div(
             class="custom-select-group",
             attrs=@html.Attrs::build().role("group").aria_label(group.label),
-            [@html.div(class="custom-select-group-label", group.label), ..rows],
+            if header_action is Some(action) {
+              let heading : Array[@html.Html] = [@html.span(group.label)]
+              let content : Array[@html.Html] = []
+              if action.group == group.label {
+                heading.push(
+                  @html.button(
+                    class="custom-select-group-action",
+                    type_="button",
+                    on_click=if action.disabled {
+                      @cmd.none
+                    } else {
+                      action.command
+                    },
+                    attrs=@html.Attrs::build()
+                      .aria_label(action.name)
+                      .aria_disabled(action.disabled.to_string())
+                      .on_blur(event => self.dismiss_on_blur(event))
+                      .on_keydown(event => {
+                        if event.key() == "Escape" {
+                          event.prevent_default()
+                          @cmd.batch([self.dismiss, self.focus(None, true)])
+                        } else {
+                          @cmd.none
+                        }
+                      }),
+                    action.label,
+                  ),
+                )
+              }
+              content.push(
+                @html.div(
+                  class="custom-select-group-label custom-select-group-heading",
+                  heading,
+                ),
+              )
+              if action.group == group.label && action.detail is Some(detail) {
+                content.push(
+                  @html.div(
+                    class="custom-select-action-detail",
+                    attrs=@html.Attrs::build().role("status"),
+                    detail,
+                  ),
+                )
+              }
+              content.push(
+                @html.div(
+                  attrs=@html.Attrs::build()
+                    .role("listbox")
+                    .aria_label(group.label),
+                  rows,
+                ),
+              )
+              content
+            } else {
+              [
+                @html.div(class="custom-select-group-label", group.label),
+                ..rows,
+              ]
+            },
           ),
         )
       }
@@ -336,7 +405,7 @@ pub fn Control::render(self : Control) -> @html.Html {
         class=self.presentation.menu_class(),
         attrs=@html.Attrs::build()
           .id(self.menu_id())
-          .role("listbox")
+          .role(if header_action is Some(_) { "dialog" } else { "listbox" })
           .aria_label(self.aria_label)
           .popover("manual"),
         menu,
@@ -348,4 +417,15 @@ pub fn Control::render(self : Control) -> @html.Html {
     attrs=@html.Attrs::build().id(self.root_id()),
     children,
   )
+}
+
+///|
+/// An action belongs beside a group heading, outside its listbox options.
+pub(all) struct HeaderAction {
+  group : String
+  name : String
+  label : String
+  disabled : Bool
+  detail : String?
+  command : @cmd.Cmd
 }

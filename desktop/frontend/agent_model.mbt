@@ -213,6 +213,11 @@ fn Model::openseek_model_chip(
   }
   {
     id: "openseek-model-picker",
+    cli_update: if self.composing_new_chat() {
+      Some(self.codex.cli_update_control())
+    } else {
+      None
+    },
     groups,
     selected: ModelChoice::OpenSeekModel(conv.engine_model).wire(),
     disabled: false,
@@ -268,6 +273,7 @@ fn Model::codex_model_chip(self : Model) -> @composer.ModelSelect {
   }
   {
     id: "codex-model-picker",
+    cli_update: Some(self.codex.cli_update_control()),
     groups,
     selected,
     disabled: false,

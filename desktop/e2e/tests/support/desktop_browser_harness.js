@@ -659,6 +659,9 @@ export class DesktopBrowserHarness {
         return {};
       case 'codex.server_request.list':
         return { data: [], generation: 1 };
+      case 'codex.cli.update':
+        this.codexModels = [{ id: 'gpt-6-astra', displayName: 'GPT-6 Astra' }];
+        return { version: 'codex-cli fixture-new' };
       case 'codex.model.list':
         return { data: this.codexModels };
       case 'codex.thread.list':

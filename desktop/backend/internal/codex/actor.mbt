@@ -109,6 +109,7 @@ priv enum ActorInput {
   Call(String, Json, @async.Queue[Result[Json, CodexError]])
   Respond(Json, Json, @async.Queue[Result[Json, CodexError]])
   ListRequests(@async.Queue[Result[Json, CodexError]])
+  UpdateCli(@async.Queue[Result[Json, CodexError]])
 }
 
 ///|
@@ -208,6 +209,9 @@ const ActorWakeCapacity : Int = 1
 /// only request-side handles shared with API dispatch tasks.
 struct Actor {
   settings : CodexSettings
+  pending_calls : Ref[Int]
+  active_threads : Map[String, Bool]
+  mut updating : Bool
   inputs : @async.Queue[ActorInput]
   // Inputs and connection events signal after they are safely queued. The
   // single slot deliberately coalesces wakes: the actor drains real queues,
@@ -228,6 +232,9 @@ pub fn Actor::config_home(self : Actor) -> @pathx.Path? {
 pub fn Actor::Actor(settings : CodexSettings) -> Actor {
   {
     settings,
+    pending_calls: Ref(0),
+    active_threads: Map([]),
+    updating: false,
     inputs: Queue(kind=Blocking(ActorInputCapacity)),
     wake: Queue(kind=Blocking(ActorWakeCapacity)),
     state: Starting,
@@ -313,17 +320,41 @@ pub async fn Actor::run(self : Actor, emit : (String, Json) -> Unit) -> Unit {
     } else {
       Some(self.inputs.get())
     }
-    @async.with_task_group(group => self.run_connection(group, pending, emit)) catch {
-      // App shutdown must still cancel the actor and every owned child. A
-      // child-process failure, however, only ends this connection attempt;
-      // keeping the loop alive lets the next API input retry the app-server.
-      error if @async.is_being_cancelled() => raise error
-      error =>
-        self.report_unavailable(
-          "Codex app-server stopped unexpectedly: \{error}",
-          pending,
-          emit,
-        )
+    let update_reply = match pending {
+      Some(UpdateCli(reply)) => Some(reply)
+      _ =>
+        @async.with_task_group(group => {
+          self.run_connection(group, pending, emit)
+        }) catch {
+          // App shutdown must still cancel the actor and every owned child. A
+          // child-process failure, however, only ends this connection attempt;
+          // keeping the loop alive lets the next API input retry the app-server.
+          error if @async.is_being_cancelled() => raise error
+          error => {
+            self.report_unavailable(
+              "Codex app-server stopped unexpectedly: \{error}",
+              pending,
+              emit,
+            )
+            None
+          }
+        }
+    }
+    if update_reply is Some(reply) {
+      let result = Ok(self.settings.update_cli()) catch {
+        error if @async.is_being_cancelled() => raise error
+        @async.TimeoutError =>
+          Err(
+            CodexError::RequestFailed(
+              method_="cli/update",
+              detail="Codex CLI update timed out after 5 minutes",
+            ),
+          )
+        error => Err(RequestFailed(method_="cli/update", detail="\{error}"))
+      }
+      self.updating = false
+      (reply.try_put(result) catch { _ => false }) |> ignore
+      first = true
     }
   }
 }
@@ -353,8 +384,9 @@ async fn[G] Actor::run_connection(
   group : @async.TaskGroup[G],
   pending : ActorInput?,
   emit : (String, Json) -> Unit,
-) -> Unit {
+) -> @async.Queue[Result[Json, CodexError]]? {
   self.state = Starting
+  self.active_threads.clear()
   // A reconnect invalidates every request owned by the previous JSON-RPC
   // peer. Advancing the same lifetime generation also lets the next empty
   // snapshot clear stale approvals in already-attached frontends.
@@ -369,6 +401,7 @@ async fn[G] Actor::run_connection(
     home=self.settings.home,
     version="0.1.0",
     notification_handler=(method_, params) => {
+      self.record_activity(method_, params)
       if !(events.try_put(Notification(method_, params)) catch { _ => false }) {
         // Losing a completion notification is not recoverable from deltas.
         // Close the event lane; the actor reconnects and the UI resyncs from
@@ -390,7 +423,12 @@ async fn[G] Actor::run_connection(
   self.state = Ready
   emit("codex.status_changed", self.status())
   if pending is Some(input) {
-    connection.dispatch_input(group, self.reverse_requests, input)
+    connection.dispatch_input(
+      group,
+      self.reverse_requests,
+      self.pending_calls,
+      input,
+    )
   }
   for ;; {
     let next = self.next_step(events) catch {
@@ -398,8 +436,28 @@ async fn[G] Actor::run_connection(
       _ => break
     }
     match next {
+      Input(UpdateCli(reply)) => {
+        if self.pending_calls.val > 0 ||
+          !self.active_threads.is_empty() ||
+          !self.reverse_requests.requests.is_empty() {
+          self.updating = false
+          UpdateCli(reply).reject(
+            Unavailable("Finish running Codex tasks before updating the CLI"),
+          )
+          continue
+        }
+        connection.shutdown()
+        self.state = Starting
+        emit("codex.status_changed", self.status())
+        return Some(reply)
+      }
       Input(input) =>
-        connection.dispatch_input(group, self.reverse_requests, input)
+        connection.dispatch_input(
+          group,
+          self.reverse_requests,
+          self.pending_calls,
+          input,
+        )
       Event(Notification(method_, params)) => {
         if method_ == "serverRequest/resolved" &&
           params is { "requestId": request_id, .. } {
@@ -451,6 +509,7 @@ async fn[G] Actor::run_connection(
   connection.shutdown()
   self.state = Unavailable("Codex app-server disconnected")
   emit("codex.status_changed", self.status())
+  None
 }
 
 ///|
@@ -476,7 +535,10 @@ async fn Actor::next_step(
 ///|
 fn ActorInput::reject(self : ActorInput, error : CodexError) -> Unit {
   match self {
-    Call(_, _, reply) | Respond(_, _, reply) | ListRequests(reply) =>
+    Call(_, _, reply)
+    | Respond(_, _, reply)
+    | ListRequests(reply)
+    | UpdateCli(reply) =>
       (reply.try_put(Err(error)) catch { _ => false }) |> ignore
   }
 }
@@ -499,11 +561,20 @@ fn[G] Connection::dispatch_input(
   self : Connection,
   group : @async.TaskGroup[G],
   reverse_requests : ReverseRequestRegistry,
+  pending_calls : Ref[Int],
   input : ActorInput,
 ) -> Unit {
   match input {
-    Call(method_, params, reply) =>
+    UpdateCli(_) =>
+      input.reject(
+        Unavailable("CLI update requires exclusive connection ownership"),
+      )
+    Call(method_, params, reply) => {
+      pending_calls.val += 1
       group.spawn_bg(allow_failure=true, () => {
+        defer {
+          pending_calls.val -= 1
+        }
         let outcome = try self.request(method_~, params~) catch {
           error if @async.is_being_cancelled() => {
             // The connection task group is cancelled on disconnect. Settle
@@ -534,6 +605,7 @@ fn[G] Connection::dispatch_input(
         }
         (reply.try_put(outcome) catch { _ => false }) |> ignore
       })
+    }
     Respond(request_id, result, reply) => {
       let key = request_id.stringify()
       guard reverse_requests.take(key) is Some(request) else {
