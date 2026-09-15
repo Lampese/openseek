@@ -64,6 +64,23 @@ class OracleTests(unittest.TestCase):
         self.events(json.dumps(answer), results)
         self.assertTrue(run.analyze('search', self.workspace, expected, 0)['passed'])
 
+    def test_baseline_search_bullets_have_equivalent_provenance(self):
+        _, expected = run.fixture('search', self.workspace)
+        answer = {'python': ['https://docs.python.org/3/library/asyncio-task.html'],
+                  'rust': ['https://doc.rust-lang.org/std/thread/fn.scope.html']}
+        results = [{'tool_name': 'web_search', 'content': f'Sources:\n- [Official]({urls[0]})\n',
+                    'is_error': False} for urls in answer.values()]
+        self.events(json.dumps(answer), results)
+        self.assertTrue(run.analyze('search', self.workspace, expected, 0)['passed'])
+        self.assertEqual(run.source_urls({'content': 'Unobserved https://docs.python.org/'}), set())
+        self.assertEqual(run.source_urls(dict(results[0], data={'sources': []})), set())
+
+    def test_byte_oracle_rejects_changed_line_endings(self):
+        _, expected = run.fixture('single_edit', self.workspace)
+        (self.workspace / 'note.txt').write_bytes(expected['note.txt'].replace('\n', '\r\n').encode())
+        self.events('Done')
+        self.assertFalse(run.analyze('single_edit', self.workspace, expected, 0)['passed'])
+
     def test_required_ptc_cannot_pass_with_only_correct_files(self):
         _, expected = run.fixture('single_edit', self.workspace)
         (self.workspace / 'note.txt').write_text(expected['note.txt'])

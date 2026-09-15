@@ -7,9 +7,9 @@ and scores nested PTC metadata, which the general prompt-task harness does not
 currently score. API credentials are inherited from `DEEPSEEK`, never copied
 into commands or reports.
 
-## Capability A/B (next release step)
+## Capability A/B
 
-Publish SDK 0.1.0 and pass the host's real-script tests first. Build a baseline
+SDK 0.1.0 is published and the host's real-script tests pass. Build a baseline
 engine from the SDK-only PR (#1518, original host tools) and a candidate from
 the host bridge (#1519). Then compare free tool choice with an identical prompt:
 
@@ -22,9 +22,8 @@ python3 eval/ptc_prompt/run.py \
 
 The runner uses the current rendered prompt for **both** variants and records
 both binary hashes and equal prompt hashes. Supplying `--require-ptc` is rejected
-in capability mode because the baseline does not offer it. Package publication
-and this capability comparison are still pending; the historical results below
-must not be presented as results for this mode.
+in capability mode because the baseline does not offer it. Keep these results separate from the historical prompt-only comparison below.
+The current release comparison is recorded in `capability-results-2026-09-15.md`.
 
 All trials share model, fixture bytes, step cap (24), and timeout (600s). Pair
 launch order alternates across repetitions. Output directories must be new.
@@ -82,3 +81,31 @@ Review traces for unnecessary retries, unchecked results, detached work,
 verification before finish, and unsupported final claims. A passing file oracle
 alone does not prove that the agent followed the requested editing tool policy.
 Do not promote a prompt merely because it increases PTC usage or wins one run.
+
+## YAML parser coding comparison
+
+`yaml_benchmark.py` compares the same two engines with free tool choice on a
+larger implementation task. Each fresh MoonBit project contains an API stub,
+a written contract, and six visible smoke tests. The contract defines a
+JSON-compatible YAML subset; it is not a claim of full YAML conformance.
+
+```sh
+python3 eval/ptc_prompt/yaml_benchmark.py \
+  --baseline-engine /absolute/path/to/sdk-only-openseek \
+  --engine /absolute/path/to/ptc-openseek \
+  --out /absolute/path/to/new-yaml-results --runs 2 --concurrency 2 --timeout 900
+```
+
+Both sides receive identical system prompts, tasks, model settings, and a
+64-step allowance. After each run, a separate grading project compiles the
+implementation against 30 valid-input and 16 rejection tests. Candidate tests
+are excluded; the grader supplies the module manifest and selects only its own
+oracle cases. The fixture manifest and visible tests must remain unchanged.
+The oracle is authored independently of the generated implementations.
+
+Record byte-identical prompt/spec/oracle hashes and distinct binary hashes.
+Report valid and invalid cases separately: a parser that rejects everything
+can pass the rejection cases without implementing any parsing. Report tool
+errors, actual PTC use, wall time, and token usage alongside correctness.
+Two repetitions per variant are exploratory evidence, not a statistical
+non-regression guarantee. Raw code and transcripts remain in the run directory.

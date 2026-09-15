@@ -5,6 +5,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -58,6 +59,18 @@ def session_items(workspace):
     return [record['item'] for record in records if 'item' in record]
 
 
+def source_urls(result):
+    data = result.get('data')
+    if isinstance(data, dict) and 'sources' in data:
+        return {source['url'] for source in data['sources']
+                if isinstance(source, dict) and isinstance(source.get('url'), str)}
+    # The SDK-only baseline predates structured search metadata. Its source
+    # bullets contain the same URLs the model sees. Normalize that format so
+    # provenance scoring does not require a candidate-only feature.
+    return set(re.findall(r'(?m)^- \[[^\n]*\]\((https?://[^\s]+)\)$',
+                          result.get('content', '')))
+
+
 def analyze(case, workspace, expected, exit_code, require_ptc=False):
     items = session_items(workspace)
     assistants = [i['payload'] for i in items if i['kind'] == 'assistant']
@@ -72,7 +85,7 @@ def analyze(case, workspace, expected, exit_code, require_ptc=False):
         failures.append('run did not finish successfully')
     for name, content in expected.items():
         path = workspace / name
-        if not path.exists() or path.read_text() != content:
+        if not path.exists() or path.read_bytes() != content.encode('utf-8'):
             failures.append(f'byte oracle failed: {name}')
     final = terminals[-1]['message'] if terminals else None
     if case == 'search':
@@ -80,8 +93,7 @@ def analyze(case, workspace, expected, exit_code, require_ptc=False):
         search_results = [r for r in results if r['tool_name'] == 'web_search']
         search_results += [c['result'] for c in nested
                            if c['name'] == 'web_search' and c.get('result') is not None]
-        observed_urls = {source['url'] for r in search_results
-                         for source in (r.get('data') or {}).get('sources', [])}
+        observed_urls = {url for result in search_results for url in source_urls(result)}
         try:
             answer = json.loads(final)
             if not isinstance(answer, dict) or set(answer) != {'python', 'rust'}:
