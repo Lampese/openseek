@@ -3,53 +3,95 @@ import {
   "moonbitlang/async",
   "moonbitlang/async/fs",
   "moonbitlang/async/shell",
+  "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
 }
 
-// This recipe knows one migration: old_greet() -> greet(). Run in the demo
-// module's directory. Never infer executable edits from diagnostic messages.
+struct MigrationLine {
+  path : String
+  number : Int
+  original : String
+  offsets : Array[Int]
+}
+
 async fn main {
-  let edits : Array[Json] = []
-  let seen : Map[String, Bool] = Map([])
+  guard @env.args()[1:] is [old, new] else {
+    fail("Usage: fix-deprecations.mbtx OLD NEW (exact deprecated symbol spelling)")
+  }
+  guard !old.is_empty() && !new.is_empty() && old != new &&
+    !old.contains("\n") && !new.contains("\n") &&
+    !old.contains("\r") && !new.contains("\r") else {
+    fail("OLD and NEW must be distinct, nonempty, single-line strings")
+  }
+  let selected : Map[String, MigrationLine] = Map([])
   let code = @shell.Cmd(
     "moon", ["check", "--output-json", "--warn-list", "+deprecated"],
   ).each_line(line => {
     let diagnostic = @json.parse(line) catch { _ => return }
     guard diagnostic is {
       "level": "warning", "error_code": 20,
-      "path": String(path), "loc": String(loc),
-      "message": "Warning (deprecated): Use greet instead", ..
+      "path": String(path), "loc": String(loc), ..
     } else { return }
-    guard loc.split(":").next() is Some(first) else {
+    guard loc.split_once("-") is Some((start, end)) &&
+      start.split_once(":") is Some((start_row, start_col)) &&
+      end.split_once(":") is Some((end_row, end_col)) else {
       fail("Invalid diagnostic location: \{loc}")
     }
-    let line_number = @string.parse_int(first)
-    let key = "\{path}:\{line_number}"
-    if seen.contains(key) { return }
-    let lines = @fs.read_file(path).text().split("\n").to_array()
-    guard line_number > 0 && lines.get(line_number - 1) is Some(old_line) else {
-      fail("Diagnostic no longer identifies a source line: \{key}")
+    let row = @string.parse_int(start_row)
+    guard row > 0 && row == @string.parse_int(end_row) else {
+      fail("Expected a single-line deprecated symbol: \{path}:\{loc}")
     }
-    guard old_line.contains("old_greet()") else {
-      fail("Migration needs manual review: \{key}")
+    let key = "\{path}:\{row}"
+    let source = match selected.get(key) {
+      Some(source) => source
+      None => {
+        let lines = @fs.read_file(path).text().split("\n").to_array()
+        guard lines.get(row - 1) is Some(original) else {
+          fail("Diagnostic no longer identifies a source line: \{key}")
+        }
+        { path, number: row, original: original.to_owned(), offsets: [] }
+      }
     }
-    edits.push({
-      "file": path,
-      "start_line": line_number, "end_line": line_number,
-      "old_string": old_line.to_owned(),
-      "new_string": old_line.to_owned().replace(old="old_greet()", new="greet()"),
-    })
-    seen[key] = true
+    // Compiler columns count Unicode characters; String slices use UTF-16 offsets.
+    let first = @string.parse_int(start_col) - 1
+    let last = @string.parse_int(end_col) - 1
+    let end_offset = if last == source.original.char_length() {
+      Some(source.original.length())
+    } else {
+      source.original.offset_of_nth_char(last)
+    }
+    guard first >= 0 && last > first &&
+      source.original.offset_of_nth_char(first) is Some(offset) &&
+      end_offset is Some(limit) else {
+      fail("Diagnostic no longer identifies a source span: \{key}")
+    }
+    if source.original[offset:limit] != old { return }
+    if !source.offsets.contains(offset) { source.offsets.push(offset) }
+    selected[key] = source
   })
   if code != 0 { fail("moon check failed before any edits (exit=\{code})") }
+  let edits : Array[Json] = []
+  for _, source in selected {
+    source.offsets.sort()
+    let mut updated = source.original
+    // Work right to left so replacement length cannot shift later offsets.
+    for i = source.offsets.length() - 1; i >= 0; i = i - 1 {
+      let offset = source.offsets[i]
+      updated = "\{updated[:offset]}\{new}\{updated[offset + old.length():]}"
+    }
+    edits.push({
+      "file": source.path,
+      "start_line": source.number, "end_line": source.number,
+      "old_string": source.original, "new_string": updated,
+    })
+  }
   if !edits.is_empty() {
     let result = @tools.call("multi_edit", { "edits": edits.to_json() })
     if result.is_error { fail(result.content) }
     println(result.content)
   }
   // A transport failure escapes without retrying: the edit may have executed.
-  // The host checks exact old lines and validates the batch before committing.
   for args in [["check", "--deny-warn"], ["test"]] {
     let exit_code = @shell.Cmd("moon", args).each_line(line => println(line))
     if exit_code != 0 { fail("Verification failed (exit=\{exit_code})") }

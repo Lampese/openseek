@@ -221,69 +221,119 @@ async test "PTC leaves the script namespace and source unchanged" {
 }
 
 ///|
-async test "PTC deprecation example fixes warnings and is idempotent" {
+async test "PTC deprecation example accepts migrations and is idempotent" {
   let filename = @fs.realpath("agent_tool/ptc/examples/fix-deprecations.mbtx")
-  let original = @fs.read_file(
+  let fixture = @fs.read_file(
     "agent_tool/ptc/examples/deprecation-demo/greeting.mbt",
   ).text()
-  @vfs.with_tmpdir(ws => {
-    @vfs.FileSystem({
-      "moon.mod": "name = \"example/deprecation_demo\"\n",
-      "moon.work": "members = [\".\"]\n",
-      "moon.pkg": "",
-      "greeting.mbt": original,
-    }).write_to(ws)
-    @async.with_task_group(group => {
-      let state = @agent_tool.FileStateMap()
-      let service = @ptc.Service::start(
-        group,
-        Tools([
-          state.serialize(
-            @multi_edit.definition(workspace_root=ws, file_state=state),
+  for (old, new) in [("old_greet", "greet"), ("legacy_hello", "welcome")] {
+    let call = "assert_eq(\{old}(), \"hello\")"
+    let original = fixture
+      .replace_all(old="old_greet", new=old)
+      .replace_all(old="greet()", new="\{new}()")
+      .replace(
+        old=call,
+        new="let _ = \"👋\{old}\"; \{call}; \{call} // \{old}",
+      )
+      .replace(old="  \{call}\n", new="  let _ = \{old}\n")
+    @vfs.with_tmpdir(ws => {
+      @vfs.FileSystem({
+        "moon.mod": "name = \"example/deprecation_demo\"\n",
+        "moon.work": "members = [\".\"]\n",
+        "moon.pkg": "",
+        "greeting.mbt": original,
+      }).write_to(ws)
+      @async.with_task_group(group => {
+        let state = @agent_tool.FileStateMap()
+        let service = @ptc.Service::start(
+          group,
+          Tools([
+            state.serialize(
+              @multi_edit.definition(workspace_root=ws, file_state=state),
+            ),
+          ]),
+        )
+        let tool = @mbtx.definition(
+          workspace_root=ws,
+          file_state=state,
+          program_service=service,
+          foreground_timeout_ms=60000,
+        )
+        let args : Json = {
+          "filename": filename,
+          "ptc": true,
+          "args": [old, new],
+        }
+        let result = dispatch(tool, args)
+        assert_false(result.is_error, msg=result.content)
+        assert_true(
+          result.content.contains(
+            "Fixed 2 deprecated call-site lines; check and tests passed.",
           ),
-        ]),
-      )
-      let tool = @mbtx.definition(
-        workspace_root=ws,
-        file_state=state,
-        program_service=service,
-        foreground_timeout_ms=60000,
-      )
-      let result = dispatch(tool, { "filename": filename, "ptc": true })
-      assert_false(result.is_error, msg=result.content)
-      assert_true(
-        result.content.contains(
-          "Fixed 2 deprecated call-site lines; check and tests passed.",
-        ),
-        msg=result.content,
-      )
-      assert_eq(
-        @fs.read_file("\{ws}/greeting.mbt").text(),
-        original.replace_all(
-          old="assert_eq(old_greet()",
-          new="assert_eq(greet()",
-        ),
-      )
-      assert_true(
-        result.data
-        is Some(
-          {
-            "ptc_calls": [
-              {
-                "name": "multi_edit",
-                "status": "done",
-                "result": { "is_error": false, .. },
-                ..
-              },
-            ],
-            ..
-          }
-        ),
-      )
-      let again = dispatch(tool, { "filename": filename, "ptc": true })
-      assert_false(again.is_error, msg=again.content)
-      assert_true(again.content.contains("Fixed 0 deprecated call-site lines;"))
-      assert_true(again.data is Some({ "ptc_calls": [], .. }))
+          msg=result.content,
+        )
+        assert_eq(
+          @fs.read_file("\{ws}/greeting.mbt").text(),
+          original
+          .replace_all(old="assert_eq(\{old}()", new="assert_eq(\{new}()")
+          .replace(old="let _ = \{old}\n", new="let _ = \{new}\n"),
+        )
+        assert_true(
+          result.data
+          is Some(
+            {
+              "ptc_calls": [
+                {
+                  "name": "multi_edit",
+                  "status": "done",
+                  "result": { "is_error": false, .. },
+                  ..
+                },
+              ],
+              ..
+            }
+          ),
+        )
+        let again = dispatch(tool, args)
+        assert_false(again.is_error, msg=again.content)
+        assert_true(
+          again.content.contains("Fixed 0 deprecated call-site lines;"),
+        )
+        assert_true(again.data is Some({ "ptc_calls": [], .. }))
+      })
+    })
+  }
+}
+
+///|
+async test "PTC deprecation example rejects invalid arguments before tools" {
+  let filename = @fs.realpath("agent_tool/ptc/examples/fix-deprecations.mbtx")
+  @vfs.with_tmpdir(ws => {
+    @async.with_task_group(group => {
+      let service = @ptc.Service::start(group, Tools([]))
+      let tool = @mbtx.definition(workspace_root=ws, program_service=service)
+      for
+        args in [
+          [],
+          ["old"],
+          ["", "new"],
+          ["old", ""],
+          ["old", "old"],
+          ["old", "new\nline"],
+        ] {
+        let result = dispatch(tool, {
+          "filename": filename,
+          "ptc": true,
+          "args": args.to_json(),
+        })
+        assert_true(result.is_error)
+        assert_true(
+          result.content.contains("Usage:") ||
+          result.content.contains("must be distinct, nonempty, single-line"),
+          msg=result.content,
+        )
+        assert_true(result.data is Some({ "ptc_calls": [], .. }))
+      }
     })
   })
 }
