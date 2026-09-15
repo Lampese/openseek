@@ -1,0 +1,58 @@
+import {
+  "bobzhang/openseek_tools@0.1.0" @tools,
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/shell",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+}
+
+// This recipe knows one migration: old_greet() -> greet(). Run in the demo
+// module's directory. Never infer executable edits from diagnostic messages.
+async fn main {
+  let edits : Array[Json] = []
+  let seen : Map[String, Bool] = Map([])
+  let code = @shell.Cmd(
+    "moon", ["check", "--output-json", "--warn-list", "+deprecated"],
+  ).each_line(line => {
+    let diagnostic = @json.parse(line) catch { _ => return }
+    guard diagnostic is {
+      "level": "warning", "error_code": 20,
+      "path": String(path), "loc": String(loc),
+      "message": "Warning (deprecated): Use greet instead", ..
+    } else { return }
+    guard loc.split(":").next() is Some(first) else {
+      fail("Invalid diagnostic location: \{loc}")
+    }
+    let line_number = @string.parse_int(first)
+    let key = "\{path}:\{line_number}"
+    if seen.contains(key) { return }
+    let lines = @fs.read_file(path).text().split("\n").to_array()
+    guard line_number > 0 && lines.get(line_number - 1) is Some(old_line) else {
+      fail("Diagnostic no longer identifies a source line: \{key}")
+    }
+    guard old_line.contains("old_greet()") else {
+      fail("Migration needs manual review: \{key}")
+    }
+    edits.push({
+      "file": path,
+      "start_line": line_number, "end_line": line_number,
+      "old_string": old_line.to_owned(),
+      "new_string": old_line.to_owned().replace(old="old_greet()", new="greet()"),
+    })
+    seen[key] = true
+  })
+  if code != 0 { fail("moon check failed before any edits (exit=\{code})") }
+  if !edits.is_empty() {
+    let result = @tools.call("multi_edit", { "edits": edits.to_json() })
+    if result.is_error { fail(result.content) }
+    println(result.content)
+  }
+  // A transport failure escapes without retrying: the edit may have executed.
+  // The host checks exact old lines and validates the batch before committing.
+  for args in [["check", "--deny-warn"], ["test"]] {
+    let exit_code = @shell.Cmd("moon", args).each_line(line => println(line))
+    if exit_code != 0 { fail("Verification failed (exit=\{exit_code})") }
+  }
+  println("Fixed \{edits.length()} deprecated call-site lines; check and tests passed.")
+}

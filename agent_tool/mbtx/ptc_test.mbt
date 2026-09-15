@@ -27,13 +27,13 @@ async test "PTC real script edits and receives reply without deadlock" {
           "source": (
             #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
             #|async fn main {
-            #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "old", "new_string": "new" })
+            #|  let result = @tools.call("edit", { "path": "note.txt", "start_line": 1, "old_string": "old", "new_string": "new" })
             #|  if result.is_error { fail(result.content) }
-            #|  let batch = @tools.multi_edit({ "edits": [
+            #|  let batch = @tools.call("multi_edit", { "edits": [
             #|    { "file": "note.txt", "start_line": 1, "old_string": "new", "new_string": "final" },
             #|  ] })
             #|  if batch.is_error { fail(batch.content) }
-            #|  let rejected = @tools.multi_edit({ "edits": [
+            #|  let rejected = @tools.call("multi_edit", { "edits": [
             #|    { "file": "note.txt", "start_line": 1, "old_string": "final", "new_string": "wrong" },
             #|    { "file": "note.txt", "start_line": 2, "old_string": "missing", "new_string": "wrong" },
             #|  ] })
@@ -98,7 +98,7 @@ async test "PTC real script preserves imports and structured results" {
           #|///|
           #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async", "moonbitlang/async/fs" @files, }
           #|async fn main {
-          #|  let result = @tools.web_search({ "query": "query" })
+          #|  let result = @tools.call("web_search", { "query": "query" })
           #|  guard result.data is Some({ "sources": [{ "url": String(url), .. }], .. }) else { fail("missing data") }
           #|  println(url)
           #|  let denied = @tools.call("mbtx", {})
@@ -216,6 +216,74 @@ async test "PTC leaves the script namespace and source unchanged" {
       assert_true(output.content.contains("user-owned name"))
       assert_eq(@fs.read_file("\{ws}/unchanged.mbtx").text(), source)
       assert_true(output.data is Some({ "ptc_calls": [], .. }))
+    })
+  })
+}
+
+///|
+async test "PTC deprecation example fixes warnings and is idempotent" {
+  let filename = @fs.realpath("tools_sdk/examples/fix-deprecations.mbtx")
+  let original = @fs.read_file(
+    "tools_sdk/examples/deprecation-demo/greeting.mbt",
+  ).text()
+  @vfs.with_tmpdir(ws => {
+    @vfs.FileSystem({
+      "moon.mod": "name = \"example/deprecation_demo\"\n",
+      "moon.work": "members = [\".\"]\n",
+      "moon.pkg": "",
+      "greeting.mbt": original,
+    }).write_to(ws)
+    @async.with_task_group(group => {
+      let state = @agent_tool.FileStateMap()
+      let service = @ptc.Service::start(
+        group,
+        Tools([
+          state.serialize(
+            @multi_edit.definition(workspace_root=ws, file_state=state),
+          ),
+        ]),
+      )
+      let tool = @mbtx.definition(
+        workspace_root=ws,
+        file_state=state,
+        program_service=service,
+        foreground_timeout_ms=60000,
+      )
+      let result = dispatch(tool, { "filename": filename, "ptc": true })
+      assert_false(result.is_error, msg=result.content)
+      assert_true(
+        result.content.contains(
+          "Fixed 2 deprecated call-site lines; check and tests passed.",
+        ),
+        msg=result.content,
+      )
+      assert_eq(
+        @fs.read_file("\{ws}/greeting.mbt").text(),
+        original.replace_all(
+          old="assert_eq(old_greet()",
+          new="assert_eq(greet()",
+        ),
+      )
+      assert_true(
+        result.data
+        is Some(
+          {
+            "ptc_calls": [
+              {
+                "name": "multi_edit",
+                "status": "done",
+                "result": { "is_error": false, .. },
+                ..
+              },
+            ],
+            ..
+          }
+        ),
+      )
+      let again = dispatch(tool, { "filename": filename, "ptc": true })
+      assert_false(again.is_error, msg=again.content)
+      assert_true(again.content.contains("Fixed 0 deprecated call-site lines;"))
+      assert_true(again.data is Some({ "ptc_calls": [], .. }))
     })
   })
 }
