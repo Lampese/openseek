@@ -3,6 +3,7 @@ package "bobzhang/openseek/agent_tool/ptc"
 
 import {
   "bobzhang/openseek/agent_tool",
+  "moonbitlang/async",
 }
 
 // Values
@@ -13,6 +14,17 @@ pub async fn run(@agent_tool.Tools, async (Map[String, String]) -> @agent_tool.T
 // Errors
 
 // Types and methods
+type Program
+pub async fn Program::close(Self) -> Unit
+pub fn Program::env(Self) -> Map[String, String]
+pub fn Program::interrupted(Self) -> Bool
+pub fn Program::observe(Self, async (Json) -> Unit) -> Unit
+pub fn Program::trace(Self) -> Json
+
+type Service
+pub async fn Service::close(Self) -> Unit
+pub fn Service::register(Self, on_trace? : (Json) -> Unit) -> Program raise
+pub async fn[X] Service::start(@async.TaskGroup[X], @agent_tool.Tools) -> Self
 
 // Type aliases
 

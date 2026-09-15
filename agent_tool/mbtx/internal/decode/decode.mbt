@@ -35,7 +35,7 @@ pub struct MbtxInput {
   /// without its children.
   subrun : Bool
   /// Enable run-scoped programmatic access to explicitly registered leaf tools.
-  ptc : Bool
+  ptc : Bool?
 } derive(Debug)
 
 ///|
@@ -168,8 +168,9 @@ pub fn decode(arguments : Json) -> MbtxInput raise {
         _ => false
       }
       let ptc = match fields.get("ptc") {
-        Some(True) => true
-        None | Some(False) | Some(Null) => false
+        Some(True) => Some(true)
+        Some(False) => Some(false)
+        None => None
         _ => fail("arguments.ptc to be a boolean")
       }
       {

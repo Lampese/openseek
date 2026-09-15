@@ -1,4 +1,10 @@
 ///|
+priv struct ProgramRun {
+  registration : @ptc.Program
+  mut adopted : Bool
+}
+
+///|
 /// How long a runtime-backed run stays inline before it is adopted as a job.
 /// Five seconds keeps quick probes inline while moving builds, suites, and
 /// watchers out of the turn without asking the model to predict their duration.
@@ -130,6 +136,7 @@ pub fn definition(
   approval? : @agent_runtime.ApprovalChannel,
   subrun? : @host.SubrunInjection,
   program_tools? : @agent_tool.Tools,
+  program_service? : @ptc.Service,
   on_program_trace? : (Json) -> Unit = _ => (),
 ) -> @agent_tool.AgentToolDefinition {
   // Per cache key, the generation a stopped build retired (see
@@ -150,18 +157,36 @@ pub fn definition(
         foreground_timeout_ms~,
         build_timeout_ms~,
       ) +
-      (if program_tools is Some(_) { @ptc.description() } else { "" }),
+      (if program_service is Some(_) || program_tools is Some(_) {
+        @ptc.description()
+      } else {
+        ""
+      }),
     schema=JsonSchema(
       schema(
         escalation=approval is Some(_),
         hosting=subrun is Some(_),
-        programmatic=program_tools is Some(_),
+        programmatic=program_service is Some(_) || program_tools is Some(_),
       ),
     ),
     execute=Async(arguments => {
       let saved : Ref[String?] = Ref(None)
+      let input = @decode.decode(arguments) catch {
+        error =>
+          return @agent_tool.respond(
+            "error: mbtx requires \{@tool_error.failure_message("\{error}")}",
+            is_error=true,
+          )
+      }
+      let compatible = input.target == "wasm" &&
+        !input.escalated &&
+        !input.subrun
+      let enabled = input.ptc.unwrap_or(
+        compatible && program_service is Some(_),
+      )
       async fn run(
         program_env : Map[String, String]?,
+        program : ProgramRun?,
       ) -> @agent_tool.ToolAction {
         execute(
           workspace_root,
@@ -170,7 +195,11 @@ pub fn definition(
           file_state~,
           write_scope?,
           saved~,
-          bg_runtime?=if program_env is Some(_) { None } else { bg_runtime },
+          bg_runtime?=if program_env is Some(_) && program is None {
+            None
+          } else {
+            bg_runtime
+          },
           job_dir?,
           scratch_dir?,
           worker_sandbox?,
@@ -181,33 +210,63 @@ pub fn definition(
           approval?,
           subrun?,
           program_env?,
+          program?,
         )
       }
-      let action = if arguments is { "ptc": true, .. } {
-        let input = @decode.decode(arguments) catch {
-          error =>
-            return @agent_tool.respond("error: mbtx \{error}", is_error=true)
-        }
-        guard input.target == "wasm" && !input.escalated && !input.subrun else {
+      let action = if enabled {
+        guard compatible else {
           return @agent_tool.respond(
             "PTC requires the default wasm target and cannot combine with escalated or subrun",
             is_error=true,
           )
         }
-        guard program_tools is Some(tools) else {
-          return @agent_tool.respond(
-            "PTC is unavailable in this tool registry",
-            is_error=true,
+        if program_service is Some(service) {
+          let active : ProgramRun = {
+            registration: service.register(on_trace=on_program_trace),
+            adopted: false,
+          }
+          errdefer active.registration.close()
+          defer (if !active.adopted { active.registration.close() })
+          let action = run(Some(active.registration.env()), Some(active))
+          if !active.adopted {
+            active.registration.close()
+          }
+          match action {
+            Respond(output) =>
+              @agent_tool.respond(
+                if active.registration.interrupted() {
+                  "\{output.content}\nPTC stopped unfinished calls; changes may have occurred."
+                } else {
+                  output.content
+                },
+                is_error=output.is_error || active.registration.interrupted(),
+                brief?=output.brief,
+                data=active.registration.trace(),
+              )
+            Control(_) => action
+          }
+        } else {
+          guard program_tools is Some(tools) else {
+            return @agent_tool.respond(
+              "PTC is unavailable in this tool registry",
+              is_error=true,
+            )
+          }
+          @ptc.run(
+            tools,
+            env => run(Some(env), None),
+            on_trace=on_program_trace,
           )
         }
-        @ptc.run(tools, env => run(Some(env)), on_trace=on_program_trace)
       } else {
-        run(None)
+        run(None, None)
       }
       match (saved.val, action) {
         (Some(filename), Respond(output)) => {
-          let retry : Json = if arguments is { "ptc": true, .. } {
+          let retry : Json = if enabled {
             { "filename": filename, "ptc": true }
+          } else if input.ptc is Some(false) {
+            { "filename": filename, "ptc": false }
           } else {
             { "filename": filename }
           }
@@ -271,6 +330,7 @@ async fn execute(
   approval? : @agent_runtime.ApprovalChannel,
   subrun? : @host.SubrunInjection,
   program_env? : Map[String, String],
+  program? : ProgramRun,
 ) -> @agent_tool.ToolAction {
   let input = @decode.decode(arguments) catch {
     error =>
@@ -907,6 +967,11 @@ async fn execute(
         dir
       }
       let terminal_cleanup : async () -> Unit = () => {
+        // Revoke and join RPC calls before deleting scratch space or reporting
+        // the process as completed. The listener itself stays session-owned.
+        if program is Some(active) {
+          active.registration.close()
+        }
         // The workflow bracket closes when the JOB ends — not when this call
         // returned at adoption, which was while the run was still going.
         if reservation is Some(r) {
@@ -917,6 +982,13 @@ async fn execute(
             _ => ()
           }
         })
+        if program is Some(active) &&
+          active.registration.interrupted() &&
+          exec.status() is Exited(0) {
+          fail(
+            "PTC script exited with unfinished tool calls; changes may have occurred",
+          )
+        }
       }
       // A staged job's label carries the phase marker: the notice and the job
       // listing then say on their face that the build already succeeded, so a
@@ -934,8 +1006,15 @@ async fn execute(
         output_rewrites=temp_path_rewrites([real, build_dir], source_name~),
         moonrun_policy_active=policy_active,
         on_terminal=terminal_cleanup,
+        data?=program.map(active => () => active.registration.trace()),
       )
       job_owns_cleanup = true
+      if program is Some(active) {
+        active.adopted = true
+        active.registration.observe(_ => runtime.metadata_changed(id))
+        // Capture calls that completed while job registration was suspended.
+        runtime.metadata_changed(id)
+      }
       let handoff = if staged {
         "mbtx: the build succeeded and the RUNNING PROGRAM was still going after \{duration_label(auto_background_after_ms)}, so it moved to the background as job \{id} (nothing was lost; any later nonzero exit is the program's own). Read its output with job_output (job_id=\"\{id}\") and stop it with job_stop (job_id=\"\{id}\")."
       } else {
@@ -1619,7 +1698,7 @@ fn schema(escalation~ : Bool, hosting~ : Bool, programmatic~ : Bool) -> Json {
                 "ptc",
                 Json({
                   "type": "boolean",
-                  "description": "Enable @tools.edit(arguments), @tools.multi_edit(arguments), @tools.web_search(arguments), and @tools.call(name, arguments) through an explicit SDK import. Each arguments value is the same JSON object as for the direct tool. Uses registered host tools and structured results. PTC runs stay foreground up to 300s; they never auto-detach. Default wasm only; cannot combine with escalated or subrun.",
+                  "description": "Enable @tools.edit(arguments), @tools.multi_edit(arguments), @tools.web_search(arguments), and @tools.call(name, arguments) through an explicit SDK import. Each arguments value is the same JSON object as for the direct tool. Uses registered host tools and structured results. Defaults to true for supported wasm runs; false opts out. Normal foreground/background timing is unchanged. Explicit true cannot combine with other targets, escalated, or subrun.",
                 }),
               ),
             ]

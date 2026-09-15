@@ -26,6 +26,9 @@ warnings = "+unnecessary_annotation"
 supported_targets = "+wasm+native"
 
 import {
+  "bobzhang/openseek/agent_tool/ptc",
+  "bobzhang/openseek/agent_tool/job_output",
+  "bobzhang/openseek_protocol",
   "moonbitlang/async",
   "moonbitlang/core/json",
   "bobzhang/openseek/agent_runtime",

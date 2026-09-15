@@ -20,7 +20,7 @@ async test "PTC real script edits and receives reply without deadlock" {
       dispatch(tool, {
         "ptc": true,
         "source": (
-          #|import { "bobzhang/openseek_tools@0.1.0" @tools }
+          #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
           #|async fn main {
           #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "old", "new_string": "new" })
           #|  if result.is_error { fail(result.content) }
@@ -104,7 +104,7 @@ async test "PTC real script preserves imports and structured results" {
 }
 
 ///|
-async test "PTC stays foreground with a background runtime and saves reusable original source" {
+async test "standalone PTC bracket stays foreground and saves reusable original source" {
   @vfs.with_tmpdir(ws => {
     @async.with_task_group(group => {
       let bg = @bgjobs.BgJobRuntime(AgentTaskScope(group), spill_dir=ws)
@@ -176,7 +176,7 @@ async test "PTC foreground timeout stops the active host call before returning" 
         ),
         {
           "ptc": true,
-          "source": "import { \"bobzhang/openseek_tools@0.1.0\" @tools }\nasync fn main { @tools.call(\"block\", {}).content |> println }",
+          "source": "import { \"bobzhang/openseek_tools@0.1.0\" @tools, \"moonbitlang/async\" }\nasync fn main { @tools.call(\"block\", {}).content |> println }",
         },
       )
     })

@@ -9,28 +9,33 @@ fn artifact_basename(path : String) -> String {
 
 ///|
 fn BgJob::record(self : BgJob, runtime : BgJobRuntime) -> @protocol.JobRecord {
-  let state : @protocol.JobState = match self.exec.status() {
-    Running | Backgrounded =>
-      if self.requested_stop {
-        Stopping
-      } else {
-        Running
-      }
-    Exited(code) => Exited(code)
-    Killed =>
-      Stopped(
-        if self.exec.output_error() is Some(_) {
-          "capture_failed"
-        } else if self.exec.killed_by_output_limit() {
-          "output_limit"
-        } else if self.exec.killed_by_time_limit() {
-          "time_limit"
-        } else if self.requested_stop {
-          "user"
+  let state : @protocol.JobState = if !self.cleanup_finished &&
+    self.exec.status() is (Exited(_) | Killed) {
+    Stopping
+  } else {
+    match self.exec.status() {
+      Running | Backgrounded =>
+        if self.requested_stop {
+          Stopping
         } else {
-          "session_ended"
-        },
-      )
+          Running
+        }
+      Exited(code) => Exited(code)
+      Killed =>
+        Stopped(
+          if self.exec.output_error() is Some(_) {
+            "capture_failed"
+          } else if self.exec.killed_by_output_limit() {
+            "output_limit"
+          } else if self.exec.killed_by_time_limit() {
+            "time_limit"
+          } else if self.requested_stop {
+            "user"
+          } else {
+            "session_ended"
+          },
+        )
+    }
   }
   {
     generation: runtime.generation,
@@ -53,6 +58,7 @@ fn BgJob::record(self : BgJob, runtime : BgJobRuntime) -> @protocol.JobRecord {
     output_error: self.exec.output_error(),
     persistence_error: self.persistence_error,
     cleanup_error: self.cleanup_error,
+    data: self.data.map(get => get()),
   }
 }
 
@@ -81,6 +87,9 @@ async fn BgJobRuntime::publish(
   self.publish_lock.acquire()
   defer self.publish_lock.release()
   guard self.jobs.get(id) is Some(job) else { return }
+  if kind == Updated && job.completion_published {
+    return
+  }
   if kind != Started {
     job.revision += 1
   }
@@ -131,12 +140,20 @@ async fn BgJobRuntime::finish_job(self : BgJobRuntime, id : String) -> Unit {
     guard self.jobs.get(id) is Some(job) && !job.completion_published else {
       return
     }
+    if job.finishing {
+      while !job.completion_published {
+        self.settled.wait()
+      }
+      return
+    }
+    job.finishing = true
     if job.on_terminal is Some(cleanup) {
       job.on_terminal = None
       cleanup() catch {
         error => job.cleanup_error = Some("\{error}")
       }
     }
+    job.cleanup_finished = true
     let record = job.record(self)
     let failed = match record.state {
       Exited(code) => code != 0
@@ -173,4 +190,14 @@ pub async fn BgJobRuntime::finalize(self : BgJobRuntime) -> Unit {
   for id, _ in self.jobs {
     self.finish_job(id)
   }
+}
+
+///|
+/// Publish fresh launcher metadata under the owning job. Terminal records have
+/// the final snapshot and never receive a later Updated event.
+pub async fn BgJobRuntime::metadata_changed(
+  self : BgJobRuntime,
+  id : String,
+) -> Unit {
+  self.publish(id, Updated)
 }

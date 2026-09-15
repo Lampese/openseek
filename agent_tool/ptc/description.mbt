@@ -7,10 +7,10 @@ pub fn description() -> String {
     #|
     #|## Programmatic tool calls (PTC)
     #|
-    #|Set ptc=true to allow host tool calls for this foreground run. Explicitly
-    #|import the published SDK in the script; the host does not rewrite source:
+    #|PTC defaults on for supported wasm runs. Set ptc=false to opt out. Explicitly
+    #|import the SDK and async runtime; the host does not rewrite source:
     #|
-    #|  import { "bobzhang/openseek_tools@0.1.0" @tools }
+    #|  import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
     #|
     #|Use ordinary MoonBit async functions, with no await keyword:
     #|
@@ -34,15 +34,18 @@ pub fn description() -> String {
     #|fields are absent, not empty strings. Keep selected URLs when printing
     #|sources so the final answer can cite them.
     #|
-    #|PTC scripts stay foreground up to the run timeout (normally 300s). They
-    #|do not auto-detach, and cannot combine with subrun, escalated, or another
-    #|target. Up to 64 calls per script, 64 KiB per request, 64K characters per
-    #|result, and four requests in flight. Stateful calls serialize; independent
+    #|Normal background handoff is unchanged: the script can keep calling tools
+    #|after receiving a job ID. job_stop revokes its capability and joins active
+    #|calls. Explicit ptc=true cannot combine with subrun, escalated, or another
+    #|target; omitted ptc stays off in those modes. Up to 64 calls per script,
+    #|64 KiB per request, 64K characters per result, four active calls per script,
+    #|and 512 KiB retained trace plus framing. Stateful calls serialize; independent
     #|searches can overlap using a MoonBit task group. Batch related edits with
     #|multi_edit to retain its validation and rollback semantics. finish, goal,
     #|plan, job controls, and recursive mbtx calls are unavailable.
     #|
-    #|Nested calls are recorded as metadata under this mbtx result; only the
+    #|Foreground calls are recorded under the mbtx result. Background calls are
+    #|retained with the job and returned as metadata by job_output. Only the
     #|script's printed output returns to model context. Print concise selected
     #|results, handle is_error explicitly, and stop when further steps require
     #|model judgment.
