@@ -100,6 +100,9 @@ async test "agent cancellation persists interrupted PTC metadata before terminal
         ptc_payload(
           "import { \"bobzhang/openseek_tools@0.1.0\" @tools }\nasync fn main { @tools.call(\"block\", {}).content |> println }",
         ),
+        // A build failure (for example, an unpublished SDK) can lead to one
+        // more model request. End it without exhausting the mock responses.
+        final_answer_payload("PTC script did not start"),
       ])
       is Some(url) else {
       fail("test server unavailable")
