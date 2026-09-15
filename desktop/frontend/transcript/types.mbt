@@ -57,6 +57,8 @@ pub(all) struct ToolCall {
   name : String
   arguments : String?
   outcome : ToolOutcome
+  /// Programmatic calls recorded beneath this model-issued call.
+  children : Array[ToolCall]
 } derive(Eq)
 
 ///|

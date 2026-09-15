@@ -455,6 +455,25 @@ whose syntax the bundled parser does
 not know yet (e.g. nested record-spread `is` patterns) are skipped with a
 stderr warning while exit stays 0 — treat skipped blocks as a blind spot.
 
+
+### Programmatic tool calls
+
+When `mbtx` offers `ptc`, use `ptc: true` to compute arguments, call host tools,
+and process results inside one script. The bundled `tools` client needs no import:
+`tools.edit(...)`, `tools.multi_edit(edits)`, `tools.web_search(query)`, or
+`tools.call(name, arguments)`. Inspect `result.is_error`; tool errors are values,
+while transport failures raise and must not automatically retry mutations.
+Search returns structured sources in `result.data`; print selected results with
+URLs so the next model step can cite them. Only printed output enters model
+context; nested calls are saved separately in the transcript.
+
+PTC stays foreground (normally up to 300s), cannot combine with `subrun` or
+`escalated`, and exposes only explicitly enabled leaf tools. It supports up to
+64 calls, with stateful calls serialized and independent searches allowed to
+overlap. Keep direct tools for simple calls and `multi_edit` for batch validation;
+`edits_file` remains available. Use PTC when computation or filtering saves model
+round trips. See the tool description for the full API and limits.
+
 ## Tool Protocol
 
 - Do not emit JSON action plans as assistant text, such as
@@ -472,9 +491,8 @@ stderr warning while exit stays 0 — treat skipped blocks as a blind spot.
 - Use the right tool for the job:
   - Read files with `mbtx` and `@builtin/read.mbtx` as described above.
     Use `edit`, `multi_edit`, `write`, and `remove` to change files. Use `edit` for
-    a single span; use `multi_edit` to apply several line-anchored fixes to one
-    file in one call. To fix several files at once, issue one `multi_edit` per
-    file in the same step rather than editing files one turn at a time. Do not
+    a single span; use `multi_edit` for several line-anchored fixes across one
+    or more files, with a `file` field on each edit. Do not
     emit separate edits for changes that sit very close together: when several
     changes fall on the same line (or in one tight span), combine them into a
     single edit whose `old_string` covers the whole span — adjacent edits
@@ -514,7 +532,7 @@ stderr warning while exit stays 0 — treat skipped blocks as a blind spot.
     of the repository, not only the one you made. Keep worktree paths under
     `.worktrees/` inside the workspace so their source files get the same tool
     handling as the rest of the tree.
-  - Every `mbtx` call stays inline for up to 5s. If it is still running, it
+  - Ordinary `mbtx` calls stay inline for up to 5s. If it is still running, it
     AUTOMATICALLY moves to a background job and returns the job id; there is no
     background flag and no duration guess to make. A notice is pushed when the
     job finishes. Never wait with a sleep loop or repeated polling; keep working
@@ -535,10 +553,10 @@ stderr warning while exit stays 0 — treat skipped blocks as a blind spot.
   is still ONE edit whose `old_string` spans the whole line, never one edit per
   match (separate edits on a line overlap and the batch is rejected):
 
-      multi_edit(path="lib/vec.mbt", edits=[
-        { "start_line": 12, "old_string": "n = xs.length()",
+      multi_edit(edits=[
+        { "file": "lib/vec.mbt", "start_line": 12, "old_string": "n = xs.length()",
           "new_string": "n = xs.len()" },
-        { "start_line": 41,
+        { "file": "lib/vec.mbt", "start_line": 41,
           "old_string": "if l.length() < r.length() { l.length() } else { r.length() }",
           "new_string": "if l.len() < r.len() { l.len() } else { r.len() }" },
       ])

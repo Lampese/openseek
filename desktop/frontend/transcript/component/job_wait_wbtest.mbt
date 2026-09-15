@@ -2,6 +2,7 @@
 test "pending job wait labels expose targets and clear on result" {
   let call : @transcript.ToolCall = {
     call_id: "wait",
+    children: [],
     name: "job_wait",
     arguments: Some("{\"job_ids\":[\"bg-1\",\"bg-2\",\"bg-1\"]}"),
     outcome: Pending(output=None),
@@ -22,6 +23,7 @@ test "pending job wait labels expose targets and clear on result" {
 test "waiting labels reuse recorded job descriptions and keep unknown IDs" {
   let start : @transcript.ToolCall = {
     call_id: "start",
+    children: [],
     name: "mbtx",
     arguments: Some("{\"description\":\"Watch CI on rebased PR 27\"}"),
     outcome: Done(
@@ -32,6 +34,7 @@ test "waiting labels reuse recorded job descriptions and keep unknown IDs" {
   }
   let wait : @transcript.ToolCall = {
     call_id: "wait",
+    children: [],
     name: "job_wait",
     arguments: Some("{\"job_ids\":[\"bg-10\",\"bg-11\",\"bg-10\"]}"),
     outcome: Pending(output=None),
@@ -55,6 +58,7 @@ test "waiting labels reuse recorded job descriptions and keep unknown IDs" {
   assert_eq(pending_job_wait_label(wait), Some("Waiting for bg-10, bg-11"))
   let output : @transcript.ToolCall = {
     call_id: "output",
+    children: [],
     name: "job_output",
     arguments: Some("{\"job_id\":\"bg-11\"}"),
     outcome: Done(
@@ -107,6 +111,7 @@ test "waiting labels reuse recorded job descriptions and keep unknown IDs" {
 test "waiting labels distinguish duplicate call IDs by position" {
   let first : @transcript.ToolCall = {
     call_id: "duplicate",
+    children: [],
     name: "job_wait",
     arguments: Some("{\"job_ids\":[\"bg-1\"]}"),
     outcome: Pending(output=None),

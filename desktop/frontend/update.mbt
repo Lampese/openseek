@@ -18543,6 +18543,7 @@ test "tool decode semantics wait for their durable error tool result" {
     sequence=2,
     ts=None,
     item=@protocol.ToolResult({
+      data: None,
       tool_call_id: "c1",
       tool_name: "edit",
       content: "invalid arguments",
@@ -18625,6 +18626,7 @@ test "a committed tool result visibly changes its existing call row" {
   let (changed, completed) = called.apply_commit(
     2,
     @protocol.ToolResult({
+      data: None,
       tool_call_id: "c1",
       tool_name: "read",
       content: "module contents",

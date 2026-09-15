@@ -392,6 +392,19 @@ fn tool_request_view(
       )
     }
   }
+  if !call.children.is_empty() {
+    let nested : Array[@html.Html] = [
+      @html.div(
+        class="tool-call-section-label",
+        "Program tool calls (\{call.children.length()})",
+      ),
+    ]
+    for child in call.children {
+      nested.push(tool_request_view(child, sequence?))
+      nested.push(tool_result_view(child, sequence?))
+    }
+    body.push(@html.div(class="tool-call-section", nested))
+  }
   if body.is_empty() {
     @html.div(class="tool-call-label" + error_class, line)
   } else {
