@@ -125,6 +125,9 @@ priv struct BgJob {
   // observers are added later.
   mut on_terminal : (async () -> Unit)?
   // True only after launcher cleanup and the existing completion notification.
+  mut finishing : Bool
+  mut cleanup_finished : Bool
+  mut data : (() -> Json)?
   mut completion_published : Bool
   // A terminal denial scan may read a large retained log. Cache its
   // classification so repeated job_output calls do not repeat that allocation.
@@ -137,6 +140,8 @@ priv struct BgJob {
 /// (the first inline-budget characters); the *full* output — when `over_inline_cap`
 /// — is read with `BgJobRuntime::read_output`.
 pub struct BgJobSnapshot {
+  data : Json?
+  cleanup_error : String?
   id : String
   command : String
   description : String?
@@ -310,6 +315,7 @@ pub async fn BgJobRuntime::start(
     output_rewrites~,
     moonrun_policy_active~,
     on_terminal=None,
+    data=None,
   )
   id
 }
@@ -329,6 +335,7 @@ pub async fn BgJobRuntime::adopt(
   output_rewrites? : Array[(String, String)] = [],
   moonrun_policy_active? : Bool = false,
   on_terminal? : async () -> Unit,
+  data? : () -> Json,
 ) -> String {
   errdefer exec.request_stop()
   self.prepare_output()
@@ -345,6 +352,7 @@ pub async fn BgJobRuntime::adopt(
     output_rewrites~,
     moonrun_policy_active~,
     on_terminal~,
+    data~,
   )
   id
 }
@@ -362,6 +370,7 @@ async fn BgJobRuntime::register(
   output_rewrites~ : Array[(String, String)],
   moonrun_policy_active~ : Bool,
   on_terminal~ : (async () -> Unit)?,
+  data~ : (() -> Json)?,
 ) -> Unit {
   self.jobs[id] = {
     id,
@@ -380,6 +389,9 @@ async fn BgJobRuntime::register(
     moonrun_policy_active,
     on_terminal,
     completion_published: false,
+    finishing: false,
+    cleanup_finished: false,
+    data,
     denial_scanned: false,
     denial_feedback: None,
   }
@@ -421,7 +433,13 @@ fn BgJob::to_snapshot(self : BgJob, persistent_logs : Bool) -> BgJobSnapshot {
     id: self.id,
     command: self.command,
     description: self.description,
-    status: bg_status(self.exec.status()),
+    status: if !self.cleanup_finished {
+      Running
+    } else {
+      bg_status(self.exec.status())
+    },
+    data: self.data.map(get => get()),
+    cleanup_error: self.cleanup_error,
     output: self.exec.head(),
     output_file: self.exec.spill_path(),
     output_persistent: persistent_logs,

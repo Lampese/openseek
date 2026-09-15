@@ -65,7 +65,9 @@ async test "pending covers terminal cleanup and notice publication" {
         release.get()
       })
       entered.get()
-      assert_true(jobs.snapshot(id) is Some(job) && job.status is Exited(0))
+      defer release.put(())
+      assert_true(jobs.snapshot(id) is Some(job) && job.status is Running)
+      assert_true(jobs.records() is [record] && record.state is Stopping)
       assert_eq(jobs.pending().length(), 1)
       assert_eq(notices, 0)
       release.put(())
@@ -100,6 +102,72 @@ async test "cancelled wait does not cancel a job or consume later completion" {
       release.close()
       jobs.wait_any([id])
       assert_true(jobs.snapshot(id) is Some(job) && job.status is Exited(0))
+    })
+  })
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "terminal jobs freeze metadata and release the live supplier" {
+  @async.with_task_group(group => {
+    let live = Ref(1)
+    let reads = Ref(0)
+    let jobs = BgJobRuntime(AgentTaskScope(group))
+    let exec = @shell_exec.ShellExecution::start(
+      AgentTaskScope(group),
+      program="/usr/bin/true",
+      args=[],
+    )
+    let id = jobs.adopt(exec, command="metadata snapshot", data=() => {
+      reads.val += 1
+      { "value": live.val }
+    })
+    jobs.wait_any([id])
+    let final_reads = reads.val
+    live.val = 2
+    assert_true(
+      jobs.snapshot(id) is Some({ data: Some({ "value": 1, .. }), .. }),
+    )
+    assert_true(jobs.records() is [{ data: Some({ "value": 1, .. }), .. }])
+    assert_eq(reads.val, final_reads)
+  })
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "stalled persistence reports failure and releases publication for other jobs" {
+  @async.with_timeout(1000, () => {
+    @async.with_task_group(group => {
+      let errors : Array[String] = []
+      let jobs = BgJobRuntime(AgentTaskScope(group), on_job_event=(_, record) => {
+        if record.persistence_error is Some(error) {
+          errors.push(error)
+        }
+      })
+      let (input, release) = @process.write_to_process()
+      defer release.close()
+      let id = jobs.start(
+        program="/bin/cat",
+        args=[],
+        command="persistence test",
+        stdin=input,
+      )
+      let entered : @async.Queue[Unit] = Queue(kind=Unbounded)
+      let blocked : @async.Queue[Unit] = Queue(kind=Unbounded)
+      let first = group.spawn(() => {
+        jobs.publish_record(id, Updated, 20, _ => {
+          entered.put(())
+          blocked.get()
+        })
+      })
+      entered.get()
+      let next = group.spawn(() => jobs.metadata_changed(id))
+      first.wait()
+      next.wait()
+      assert_true(errors is [error] && error.contains("Timeout"))
+      release.close()
+      jobs.wait_any([id])
+      assert_true(jobs.snapshot(id) is Some({ status: Exited(0), .. }))
     })
   })
 }
