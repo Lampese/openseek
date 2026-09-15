@@ -176,12 +176,17 @@ export class Release {
     if (!/^\d+\.\d+\.\d+$/.test(version)) {
       throw new Error(`release version must be three dot-separated numbers: ${version}`);
     }
-    // OpenSeek's shared build program reads moon.mod, while Proton 0.2 reads
-    // package.version from the project config; both must agree before packaging.
-    const modulePath = join(this.desktop, "moon.mod");
-    const module = await readFile(modulePath, "utf8");
-    if (!/^version = "[^"]+"$/m.test(module)) throw new Error("moon.mod has no version line");
-    await writeFile(modulePath, module.replace(/^version = "[^"]+"$/m, `version = "${version}"`));
+    // The three modules ship together. Keep their shared-module imports at
+    // the same version so release builds resolve the workspace consistently.
+    for (const name of ["moon.mod", "backend/moon.mod", "frontend/moon.mod"]) {
+      const modulePath = join(this.desktop, name);
+      const module = await readFile(modulePath, "utf8");
+      if (!/^version = "[^"]+"$/m.test(module)) throw new Error(`${name} has no version line`);
+      await writeFile(modulePath, module
+        .replace(/^version = "[^"]+"$/m, `version = "${version}"`)
+        .replace(/"openseek_desktop@[^"]+"/g, `"openseek_desktop@${version}"`));
+    }
+    // Proton reads package.version from the project config.
     const configPath = join(this.desktop, "proton.project.json");
     const config = JSON.parse(await readFile(configPath, "utf8"));
     config.package.version = version;

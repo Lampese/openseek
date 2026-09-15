@@ -39,9 +39,9 @@ shows the automatic checkpoint consistently with a reloaded durable session.
 
 ## Target Files And Surfaces
 
-- `desktop/internal/event/event.mbt`, `decode.mbt`, and `decode_test.mbt`:
+- `desktop/backend/internal/event/event.mbt`, `decode.mbt`, and `decode_test.mbt`:
   represent and decode the host-side `ContextYield` terminal.
-- `desktop/internal/engine/api.mbt`, `engine.mbt`, and `engine_wbtest.mbt`:
+- `desktop/backend/internal/engine/api.mbt`, `engine.mbt`, and `engine_wbtest.mbt`:
   emit the distinct run status, close the serve-engine run, and cover terminal
   classification.
 - `desktop/frontend/transcript/engine_event.mbt` and
@@ -59,7 +59,7 @@ shows the automatic checkpoint consistently with a reloaded durable session.
 
 ## API And Interface Diff
 
-- `desktop/internal/event.AgentEvent` gains `ContextYield(String)`.
+- `desktop/backend/internal/event.AgentEvent` gains `ContextYield(String)`.
 - `desktop/frontend/transcript.EngineEvent` gains
   `AutoCompactionFinished(String)` and `ContextYield(String)`.
 - The host's private `RunStatus` and frontend's private `RunOutcome` each gain a

@@ -8,6 +8,30 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Release } from "./release.mjs";
 
+test("stamp keeps all desktop modules and shared imports at the release version", async t => {
+  const release = new Release();
+  const scratch = join(release.desktop, "../.tmp");
+  await fs.mkdir(scratch, { recursive: true });
+  const fixture = await fs.mkdtemp(join(scratch, "desktop-release-"));
+  t.after(() => fs.rm(fixture, { recursive: true, force: true }));
+  for (const name of ["moon.mod", "backend/moon.mod", "frontend/moon.mod", "proton.project.json"]) {
+    const destination = join(fixture, name);
+    await fs.mkdir(join(destination, ".."), { recursive: true });
+    await fs.copyFile(join(release.desktop, name), destination);
+  }
+  release.desktop = fixture;
+  await release.stamp("9.8.7");
+  assert.equal(await release.moduleVersion(), "9.8.7");
+  for (const name of ["backend/moon.mod", "frontend/moon.mod"]) {
+    const module = await fs.readFile(join(fixture, name), "utf8");
+    assert.match(module, /^version = "9\.8\.7"$/m);
+    assert.match(module, /"openseek_desktop@9\.8\.7"/);
+  }
+  const config = JSON.parse(await fs.readFile(join(fixture, "proton.project.json"), "utf8"));
+  assert.equal(config.package.version, "9.8.7");
+  assert.equal(config.backend.package, "backend");
+});
+
 async function server(t, respond) {
   const server = createServer(respond);
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
