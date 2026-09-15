@@ -4,7 +4,7 @@ Replace the source-injecting implementation in #1516 with four reviewable steps.
 The SDK is a normal package import; host execution, presentation, and prompt
 behavior are separate concerns.
 
-## 1. SDK — #1518
+## 1. SDK — #1518 (merged)
 
 Independent module `bobzhang/openseek_tools@0.1.0` under `tools_sdk/` exposes
 `@tools.call`, `@tools.edit`, `@tools.multi_edit`, and `@tools.web_search`, plus
@@ -13,14 +13,16 @@ speaks wire protocol v1. No agent implementation or shared mutable host state
 is pulled into the SDK. No SDK source is appended to user scripts.
 
 Native and wasm tests cover capability/response validation, structured results,
-HTTP authentication/schema, no retries, and cancellation. Both targets pass six
-tests, and packaging succeeds. A dedicated CI job checks the SDK independently.
+HTTP authentication/schema, no retries, cancellation, and public calls through
+environment discovery to a mock HTTP host. Both targets pass seven tests, and
+packaging succeeds. A dedicated CI job checks the SDK independently.
 
-**Release boundary:** merge and publish the SDK, run `moon update`, then verify a pinned import in
-a fresh `.mbtx` process. The package has not been published by this task.
+**Release boundary:** #1518 is merged. Publish the SDK, run `moon update`, then
+verify a pinned import in a fresh `.mbtx` process. The package has not been published by this task.
 
 ## 2. Host bridge — #1519
 
+#1519 is based directly on main after the SDK merge.
 `mbtx(ptc=true)` supplies a run-scoped connection capability in `OPENSEEK_PTC`.
 The script imports the published SDK explicitly. No source, import, namespace,
 or line-number rewriting occurs. PTC initially stays foreground and cannot be
@@ -52,11 +54,12 @@ fallback. A direct pinned import currently reports a missing registry module.
 
 Carry optional structured result metadata into Desktop's explicit JSON codec,
 decode bounded child calls, and render existing tool cards and edit diffs.
-Interrupted calls and nested results survive reload. No prompt changes belong
+Interrupted calls and nested results survive reload in full and minimal modes.
+Minimal mode retains nested edit previews and failure status. No prompt changes belong
 in this step.
 
-Validation: 76 native protocol tests, 40 JS transcript tests, browser build,
-and the PTC reload/diff browser test pass.
+Validation includes 38 JS component tests, 41 JS transcript tests, browser
+build, and PTC reload/diff tests in both presentation modes after rebasing.
 
 ## 4. Prompt guidance and capability evaluation
 
@@ -79,7 +82,7 @@ those numbers as SDK or PTC performance claims.
 
 ## Merge order
 
-1. Merge/release SDK, verify registry import.
+1. SDK merged; publish version 0.1.0 and verify the registry import.
 2. Run full host integration suite and merge bridge.
 3. Merge Desktop integration after host.
 4. Run capability A/B against the released SDK; review prompt/eval changes last.
@@ -94,3 +97,12 @@ Named calls (`@tools.edit(arguments)`, `@tools.multi_edit(arguments)`, and
 tool's arguments. The SDK forwards it unchanged, including optional fields;
 the host owns validation and defaults. `@tools.call(name, arguments)` remains
 the escape hatch for other enabled tools. Results remain typed `CallResult`.
+
+### Default activation
+
+Keep PTC opt-in in this stack. Today `ptc=true` also disables automatic
+background handoff and bounds execution to the foreground timeout. Simply
+defaulting it on would change long commands and watchers from background jobs
+into foreground work that eventually times out. Default-on tool availability
+should be considered separately from that execution policy, while preserving
+explicit opt-out and compatibility with other targets, escalation, and subrun.
