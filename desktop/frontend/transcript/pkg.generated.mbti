@@ -16,7 +16,7 @@ pub fn decode_engine_event(@protocol.AgentStreamEvent) -> EngineEvent?
 
 pub fn goal_marker(String) -> GoalMarker?
 
-pub fn program_calls(Json?, String) -> Array[ToolCall]
+pub fn program_calls(Json?, String, terminal? : Bool) -> Array[ToolCall]
 
 pub fn session_from_reply(@protocol.LoadSessionReply) -> SessionLoadView
 
