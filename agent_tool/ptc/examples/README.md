@@ -20,7 +20,7 @@ repository root, copy the fixture to a disposable workspace directory:
 
 ```sh
 mkdir -p .moonagent/ptc-deprecation-demo
-cp tools_sdk/examples/deprecation-demo/* .moonagent/ptc-deprecation-demo/
+cp agent_tool/ptc/examples/deprecation-demo/* .moonagent/ptc-deprecation-demo/
 moon -C .moonagent/ptc-deprecation-demo check --warn-list +deprecated
 ```
 
@@ -29,7 +29,7 @@ with these JSON arguments, from an OpenSeek session rooted at this checkout:
 
 ```json
 {
-  "filename": "tools_sdk/examples/fix-deprecations.mbtx",
+  "filename": "agent_tool/ptc/examples/fix-deprecations.mbtx",
   "cwd": ".moonagent/ptc-deprecation-demo",
   "ptc": true
 }

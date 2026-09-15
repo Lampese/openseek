@@ -222,9 +222,9 @@ async test "PTC leaves the script namespace and source unchanged" {
 
 ///|
 async test "PTC deprecation example fixes warnings and is idempotent" {
-  let filename = @fs.realpath("tools_sdk/examples/fix-deprecations.mbtx")
+  let filename = @fs.realpath("agent_tool/ptc/examples/fix-deprecations.mbtx")
   let original = @fs.read_file(
-    "tools_sdk/examples/deprecation-demo/greeting.mbt",
+    "agent_tool/ptc/examples/deprecation-demo/greeting.mbt",
   ).text()
   @vfs.with_tmpdir(ws => {
     @vfs.FileSystem({

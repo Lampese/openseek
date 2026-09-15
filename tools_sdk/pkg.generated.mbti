@@ -4,6 +4,12 @@ package "bobzhang/openseek_tools"
 // Values
 pub async fn call(String, Json) -> CallResult
 
+pub async fn edit(Json) -> CallResult
+
+pub async fn multi_edit(Json) -> CallResult
+
+pub async fn web_search(Json) -> CallResult
+
 // Errors
 pub suberror TransportError {
   TransportError(String)

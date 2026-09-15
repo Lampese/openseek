@@ -3,7 +3,7 @@
 The implementation is submitted as one standalone PR on `codex/ptc-standalone`,
 based on `main` after the Desktop backend/frontend module split.
 The published SDK remains `bobzhang/openseek_tools@0.1.0`; wire v1 and its public
-JSON arguments are unchanged. SDK 0.2.0 is now prepared with only the dynamic
+JSON arguments are unchanged. [SDK PR #1535](https://github.com/moonbitlang/openseek/pull/1535) prepares 0.2.0 with only the dynamic
 `call` API; named wrappers are removed. Examples still pin published 0.1.0, whose
 `call` contract is identical. This replaces the #1519/#1520/#1522 stack.
 Merging awaits agreement after review.
@@ -27,10 +27,11 @@ Merging awaits agreement after review.
    the non-runtime diff and are not production inputs.
 
 Commits are ordered for cumulative review, with dependent constructor/codec
-updates beside their owning layer. Follow-up commits make `call(name, arguments)`
-the sole SDK entry point, align prompt guidance, and add a complete tested
-[deprecation migration](../../tools_sdk/examples/README.md). SDK 0.2.0 is not yet
-published; the wire protocol and transport implementation are unchanged.
+updates beside their owning layer. Follow-up commits align prompt guidance with `call(name, arguments)` and add a
+complete tested
+[deprecation migration](../../agent_tool/ptc/examples/README.md). The SDK cleanup is reviewed independently in #1535; this host PR has no SDK source
+changes and works with published 0.1.0. The wire protocol and transport
+implementation are unchanged.
 
 ## Design
 

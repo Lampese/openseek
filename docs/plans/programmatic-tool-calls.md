@@ -4,7 +4,7 @@
 
 1. **SDK — #1518, merged and published.** `bobzhang/openseek_tools@0.1.0`
    uses `@tools.call(name, arguments)` as the canonical entry point for all enabled
-   tools. SDK 0.2.0 removes the named wrappers; its dynamic API remains compatible
+   tools. The separate [SDK 0.2.0 PR #1535](https://github.com/moonbitlang/openseek/pull/1535) removes the named wrappers; its dynamic API remains compatible
    with published 0.1.0. New host tools require no SDK wrapper or release.
    Every arguments value is the same JSON object used by the direct tool.
    Validation and defaults belong to the host. `CallResult` has `content`,

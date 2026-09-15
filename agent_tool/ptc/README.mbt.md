@@ -43,7 +43,7 @@ The SDK forwards arguments unchanged; validation and defaults stay in the host.
 
 This single dynamic API keeps tool schemas and validation in the host. SDK 0.2.0
 removes named wrappers; `call` also works with the published 0.1.0 used here.
-See the [complete deprecation-fix example](../../tools_sdk/examples/README.md).
+See the [complete deprecation-fix example](examples/README.md).
 
 For search, `data` is `{sources: [{url, title?, snippet?, published_at?}],
 truncated: Bool}`. Optional source fields are absent when unavailable.
