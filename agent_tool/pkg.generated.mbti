@@ -5,6 +5,7 @@ import {
   "bobzhang/openseek/agent_tool/bgjobs",
   "bobzhang/openseek/deepseek",
   "moonbitlang/core/debug",
+  "moonbitlang/core/ref",
 }
 
 // Values
@@ -16,7 +17,7 @@ pub fn content_digest(String) -> String
 
 pub async fn execute_tool_call(AgentToolCall, Tools) -> ToolAction
 
-pub fn respond(String, is_error? : Bool, brief? : String) -> ToolAction
+pub fn respond(String, is_error? : Bool, brief? : String, data? : Json) -> ToolAction
 
 // Errors
 
@@ -32,6 +33,7 @@ pub struct AgentToolCall {
   arguments : Json
 }
 pub fn AgentToolCall::AgentToolCall(@deepseek.ToolCall) -> Self raise
+pub fn AgentToolCall::from_arguments(String, Json) -> Self
 
 pub struct AgentToolDefinition {
   name : String
@@ -41,9 +43,10 @@ pub struct AgentToolDefinition {
   control : Bool
   // private fields
 } derive(@debug.Debug)
-pub fn AgentToolDefinition::AgentToolDefinition(name~ : String, description~ : String, schema~ : JsonSchema, execute~ : ToolExecutor, control? : Bool, concurrent_safe? : Bool) -> Self
+pub fn AgentToolDefinition::AgentToolDefinition(name~ : String, description~ : String, schema~ : JsonSchema, execute~ : ToolExecutor, control? : Bool, concurrent_safe? : Bool, program_callable? : Bool) -> Self
 pub fn AgentToolDefinition::is_concurrent_safe(Self) -> Bool
 pub fn AgentToolDefinition::is_control(Self) -> Bool
+pub fn AgentToolDefinition::is_program_callable(Self) -> Bool
 
 pub enum FileState {
   Created
@@ -58,6 +61,8 @@ pub fn FileStateMap::get(Self, String) -> FileState?
 pub fn FileStateMap::record_created(Self, String, String) -> Unit
 pub fn FileStateMap::record_edited(Self, String, String, String) -> Unit
 pub fn FileStateMap::record_modified(Self, String, String) -> Unit
+pub fn FileStateMap::serialize(Self, AgentToolDefinition) -> AgentToolDefinition
+pub async fn[T] FileStateMap::with_access(Self, async () -> T) -> T
 
 pub(all) struct JsonSchema(Json) derive(@debug.Debug)
 
@@ -77,13 +82,16 @@ pub struct ToolOutput {
   content : String
   is_error : Bool
   brief : String?
+  data : Json?
 } derive(@debug.Debug)
 
 type Tools
-pub fn Tools::Tools(Array[AgentToolDefinition], background_jobs? : @bgjobs.BgJobRuntime) -> Self raise
+pub fn Tools::Tools(Array[AgentToolDefinition], background_jobs? : @bgjobs.BgJobRuntime, program_trace? : @ref.Ref[Json?]) -> Self raise
 pub fn Tools::background_job_runtime(Self) -> @bgjobs.BgJobRuntime?
 pub fn Tools::find(Self, String) -> AgentToolDefinition?
 pub fn Tools::function_tools(Self) -> Array[@deepseek.ToolDefinition]
+pub fn Tools::program_tools(Self) -> Self raise
+pub fn Tools::take_program_trace(Self) -> Json?
 
 // Type aliases
 

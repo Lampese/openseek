@@ -129,6 +129,8 @@ pub fn definition(
   build_timeout_ms? : Int = BuildTimeoutMs,
   approval? : @agent_runtime.ApprovalChannel,
   subrun? : @host.SubrunInjection,
+  program_tools? : @agent_tool.Tools,
+  on_program_trace? : (Json) -> Unit = _ => (),
 ) -> @agent_tool.AgentToolDefinition {
   // Per cache key, the generation a stopped build retired (see
   // `open_generation`). Session memory, deliberately: see there.
@@ -141,43 +143,79 @@ pub fn definition(
   AgentToolDefinition(
     name="mbtx",
     description=description(
-      background=bg_runtime is Some(_),
-      escalation=approval is Some(_),
-      hosting=subrun is Some(_),
-      auto_background_after_ms~,
-      foreground_timeout_ms~,
-      build_timeout_ms~,
-    ),
-    schema=JsonSchema(
-      schema(escalation=approval is Some(_), hosting=subrun is Some(_)),
-    ),
-    execute=Async(arguments => {
-      let saved : Ref[String?] = Ref(None)
-      let action = execute(
-        workspace_root,
-        arguments,
-        read_only~,
-        file_state~,
-        write_scope?,
-        saved~,
-        bg_runtime?,
-        job_dir?,
-        scratch_dir?,
-        worker_sandbox?,
+        background=bg_runtime is Some(_),
+        escalation=approval is Some(_),
+        hosting=subrun is Some(_),
         auto_background_after_ms~,
         foreground_timeout_ms~,
         build_timeout_ms~,
-        generations~,
-        approval?,
-        subrun?,
-      )
+      ) +
+      (if program_tools is Some(_) { @ptc.description() } else { "" }),
+    schema=JsonSchema(
+      schema(
+        escalation=approval is Some(_),
+        hosting=subrun is Some(_),
+        programmatic=program_tools is Some(_),
+      ),
+    ),
+    execute=Async(arguments => {
+      let saved : Ref[String?] = Ref(None)
+      async fn run(
+        program_env : Map[String, String]?,
+      ) -> @agent_tool.ToolAction {
+        execute(
+          workspace_root,
+          arguments,
+          read_only~,
+          file_state~,
+          write_scope?,
+          saved~,
+          bg_runtime?=if program_env is Some(_) { None } else { bg_runtime },
+          job_dir?,
+          scratch_dir?,
+          worker_sandbox?,
+          auto_background_after_ms~,
+          foreground_timeout_ms~,
+          build_timeout_ms~,
+          generations~,
+          approval?,
+          subrun?,
+          program_env?,
+        )
+      }
+      let action = if arguments is { "ptc": true, .. } {
+        let input = @decode.decode(arguments) catch {
+          error =>
+            return @agent_tool.respond("error: mbtx \{error}", is_error=true)
+        }
+        guard input.target == "wasm" && !input.escalated && !input.subrun else {
+          return @agent_tool.respond(
+            "PTC requires the default wasm target and cannot combine with escalated or subrun",
+            is_error=true,
+          )
+        }
+        guard program_tools is Some(tools) else {
+          return @agent_tool.respond(
+            "PTC is unavailable in this tool registry",
+            is_error=true,
+          )
+        }
+        @ptc.run(tools, env => run(Some(env)), on_trace=on_program_trace)
+      } else {
+        run(None)
+      }
       match (saved.val, action) {
         (Some(filename), Respond(output)) => {
-          let retry : Json = { "filename": filename }
+          let retry : Json = if arguments is { "ptc": true, .. } {
+            { "filename": filename, "ptc": true }
+          } else {
+            { "filename": filename }
+          }
           @agent_tool.respond(
             "Script saved at \{filename}. For subsequent runs, call mbtx with \{retry.stringify()} and omit source.\n\n\{output.content}",
             is_error=output.is_error,
             brief?=output.brief,
+            data?=output.data,
           )
         }
         _ => action
@@ -232,6 +270,7 @@ async fn execute(
   generations~ : Map[String, Int],
   approval? : @agent_runtime.ApprovalChannel,
   subrun? : @host.SubrunInjection,
+  program_env? : Map[String, String],
 ) -> @agent_tool.ToolAction {
   let input = @decode.decode(arguments) catch {
     error =>
@@ -251,14 +290,16 @@ async fn execute(
           is_error=true,
         )
       }
-      save_script(
-        workspace_root,
-        filename,
-        source,
-        read_only~,
-        file_state~,
-        write_scope?,
-      ) catch {
+      file_state.with_access(() => {
+        save_script(
+          workspace_root,
+          filename,
+          source,
+          read_only~,
+          file_state~,
+          write_scope?,
+        )
+      }) catch {
         error if @async.is_being_cancelled() => raise error
         error =>
           return @agent_tool.respond(
@@ -633,13 +674,19 @@ async fn execute(
   defer (if reservation is Some(r) && !job_owns_cleanup {
     @emit.emit(WorkflowFinished(id="wf-\{r.base()}"))
   })
+  let injected = reservation.map(r => r.env()).unwrap_or(Map([]))
+  if program_env is Some(env) {
+    for key, value in env {
+      injected[key] = value
+    }
+  }
   let policy = wasm_policy_document(
     tmp_dir=snippet_tmp,
     extra_roots=[
       ..scratch_dir.map(l => [l]).unwrap_or([]),
       ..reservation.map(r => [r.dir()]).unwrap_or([]),
     ],
-    inject=reservation.map(r => r.env()).unwrap_or(Map([])),
+    inject=injected,
     spawnable=match (reservation, subrun) {
       (Some(_), Some(injection)) =>
         Some((injection.exe(), injection.launch_prefix()))
@@ -1529,7 +1576,7 @@ async fn read_capped(path : String) -> String {
 /// The `mbtx` argument schema. `escalation` adds `escalated` only when an
 /// approval channel is wired; otherwise every use would come back refused, and
 /// the cheapest way not to waste a turn is for the argument not to exist.
-fn schema(escalation~ : Bool, hosting~ : Bool) -> Json {
+fn schema(escalation~ : Bool, hosting~ : Bool, programmatic~ : Bool) -> Json {
   {
     "type": "object",
     "properties": Json(
@@ -1566,6 +1613,19 @@ fn schema(escalation~ : Bool, hosting~ : Bool) -> Json {
               "description": "Short human-readable description of this call for the transcript. Inherited by any background job; does not affect execution.",
             },
           ),
+          ..if programmatic {
+            [
+              (
+                "ptc",
+                Json({
+                  "type": "boolean",
+                  "description": "Enable tools.call(name, arguments), tools.edit, tools.multi_edit, and tools.web_search in this script. Uses registered host tools and structured results. PTC runs stay foreground up to 300s; they never auto-detach. Default wasm only; cannot combine with escalated or subrun.",
+                }),
+              ),
+            ]
+          } else {
+            []
+          },
           (
             "target",
             {

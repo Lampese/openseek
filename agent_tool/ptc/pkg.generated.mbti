@@ -1,0 +1,19 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "bobzhang/openseek/agent_tool/ptc"
+
+import {
+  "bobzhang/openseek/agent_tool",
+}
+
+// Values
+pub fn description() -> String
+
+pub async fn run(@agent_tool.Tools, async (Map[String, String]) -> @agent_tool.ToolAction, on_trace? : (Json) -> Unit) -> @agent_tool.ToolAction
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
