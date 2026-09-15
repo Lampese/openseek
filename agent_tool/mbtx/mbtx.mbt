@@ -1619,7 +1619,7 @@ fn schema(escalation~ : Bool, hosting~ : Bool, programmatic~ : Bool) -> Json {
                 "ptc",
                 Json({
                   "type": "boolean",
-                  "description": "Enable tools.call(name, arguments), tools.edit, tools.multi_edit, and tools.web_search in this script. Uses registered host tools and structured results. PTC runs stay foreground up to 300s; they never auto-detach. Default wasm only; cannot combine with escalated or subrun.",
+                  "description": "Enable @tools.edit(arguments), @tools.multi_edit(arguments), @tools.web_search(arguments), and @tools.call(name, arguments) through an explicit SDK import. Each arguments value is the same JSON object as for the direct tool. Uses registered host tools and structured results. PTC runs stay foreground up to 300s; they never auto-detach. Default wasm only; cannot combine with escalated or subrun.",
                 }),
               ),
             ]

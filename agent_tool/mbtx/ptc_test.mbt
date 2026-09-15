@@ -22,16 +22,16 @@ async test "PTC real script edits and receives reply without deadlock" {
         "source": (
           #|import { "bobzhang/openseek_tools@0.1.0" @tools }
           #|async fn main {
-          #|  let result = @tools.edit(path="note.txt", start_line=1, old_string="old", new_string="new")
+          #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "old", "new_string": "new" })
           #|  if result.is_error { fail(result.content) }
-          #|  let batch = @tools.multi_edit([
+          #|  let batch = @tools.multi_edit({ "edits": [
           #|    { "file": "note.txt", "start_line": 1, "old_string": "new", "new_string": "final" },
-          #|  ])
+          #|  ] })
           #|  if batch.is_error { fail(batch.content) }
-          #|  let rejected = @tools.multi_edit([
+          #|  let rejected = @tools.multi_edit({ "edits": [
           #|    { "file": "note.txt", "start_line": 1, "old_string": "final", "new_string": "wrong" },
           #|    { "file": "note.txt", "start_line": 2, "old_string": "missing", "new_string": "wrong" },
-          #|  ])
+          #|  ] })
           #|  if !rejected.is_error { fail("invalid batch accepted") }
           #|  println("reply received")
           #|}
@@ -90,7 +90,7 @@ async test "PTC real script preserves imports and structured results" {
         #|///|
         #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async", "moonbitlang/async/fs" @files, }
         #|async fn main {
-        #|  let result = @tools.web_search("query")
+        #|  let result = @tools.web_search({ "query": "query" })
         #|  guard result.data is Some({ "sources": [{ "url": String(url), .. }], .. }) else { fail("missing data") }
         #|  println(url)
         #|  let denied = @tools.call("mbtx", {})

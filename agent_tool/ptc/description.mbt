@@ -14,16 +14,18 @@ pub fn description() -> String {
     #|
     #|Use ordinary MoonBit async functions, with no await keyword:
     #|
-    #|  let result = @tools.edit(path="note.txt", start_line=1,
-    #|    old_string="before", new_string="after")
+    #|  let result = @tools.edit({
+    #|    "path": "note.txt", "start_line": 1,
+    #|    "old_string": "before", "new_string": "after",
+    #|  })
     #|  if result.is_error { fail(result.content) }
     #|
-    #|`@tools.multi_edit(edits)` takes an Array[Json] with the usual per-edit
-    #|file, old_string, new_string, start_line, optional end_line fields.
-    #|`@tools.web_search(query)` returns structured sources in result.data when
-    #|web_search is registered. `@tools.call(name, arguments)` accepts the same
-    #|JSON arguments as the named tool and supports explicitly PTC-enabled
-    #|tools only. edit, multi_edit, and web_search are initially enabled.
+    #|Named calls take the same JSON arguments as their direct host tools:
+    #|`@tools.edit(arguments)`, `@tools.multi_edit({ "edits": edits })`, and
+    #|`@tools.web_search({ "query": query })`. Arguments are forwarded unchanged;
+    #|validation and defaults stay in the host. multi_edit also accepts edits_file.
+    #|`@tools.call(name, arguments)` supports other explicitly PTC-enabled tools.
+    #|edit, multi_edit, and web_search (when registered) are initially enabled.
     #|
     #|Results have content : String, is_error : Bool, data : Json?. Tool errors
     #|are results; transport failures raise and MUST NOT automatically retry a

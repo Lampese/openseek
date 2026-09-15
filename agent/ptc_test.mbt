@@ -33,7 +33,7 @@ async test "agent PTC stores nested calls while only selected output reaches the
     let source =
       #|import { "bobzhang/openseek_tools@0.1.0" @tools }
       #|async fn main {
-      #|  let result = @tools.web_search("documentation")
+      #|  let result = @tools.web_search({ "query": "documentation" })
       #|  if result.is_error { fail(result.content) }
       #|  guard result.data is Some({ "url": String(url), .. }) else { fail("no data") }
       #|  println(url)

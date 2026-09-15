@@ -10,8 +10,10 @@ For example, pass this as `source` with `ptc: true`:
 import { "bobzhang/openseek_tools@0.1.0" @tools }
 
 async fn main {
-  let result = @tools.edit(path="note.txt", start_line=1,
-    old_string="before", new_string="after")
+  let result = @tools.edit({
+    "path": "note.txt", "start_line": 1,
+    "old_string": "before", "new_string": "after",
+  })
   if result.is_error { fail(result.content) }
   println(result.content)
 }
@@ -29,10 +31,13 @@ All calls return `@tools.CallResult { content : String, is_error : Bool, data : 
 Tool errors are values. Transport failures raise `@tools.TransportError`: the tool
 may already have executed, so never automatically retry a mutation.
 
-- `@tools.edit(path~, old_string~, new_string~, start_line~, end_line?, revert_on_parse_errors?)`
-- `@tools.multi_edit(edits : Array[Json], revert_when_errors_above?, revert_on_parse_errors?)`
-- `@tools.web_search(query : String)` when the host has registered web search
-- `@tools.call(name : String, arguments : Json)` for the complete tool schema
+Each named function accepts the same JSON arguments as its direct host tool.
+The SDK forwards arguments unchanged; validation and defaults stay in the host.
+
+- `@tools.edit(arguments : Json)`
+- `@tools.multi_edit(arguments : Json)`, e.g. `{ "edits": edits }` or `{ "edits_file": "edits.json" }`
+- `@tools.web_search(arguments : Json)`, e.g. `{ "query": query }`, when registered
+- `@tools.call(name : String, arguments : Json)` for other enabled tools
 
 For search, `data` is `{sources: [{url, title?, snippet?, published_at?}],
 truncated: Bool}`. Optional source fields are absent when unavailable.
@@ -41,7 +46,7 @@ truncated: Bool}`. Optional source fields are absent when unavailable.
 import { "bobzhang/openseek_tools@0.1.0" @tools }
 
 async fn main {
-  let result = @tools.web_search("MoonBit async task groups")
+  let result = @tools.web_search({ "query": "MoonBit async task groups" })
   if result.is_error { fail(result.content) }
   guard result.data is Some({ "sources": Array(sources), .. }) else {
     fail("search did not return structured sources")
