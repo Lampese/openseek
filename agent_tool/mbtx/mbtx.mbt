@@ -1013,7 +1013,9 @@ async fn execute(
         active.adopted = true
         active.registration.observe(_ => runtime.metadata_changed(id))
         // Capture calls that completed while job registration was suspended.
-        runtime.metadata_changed(id)
+        if active.registration.trace() is { "ptc_calls": [_, ..], .. } {
+          runtime.metadata_changed(id)
+        }
       }
       let handoff = if staged {
         "mbtx: the build succeeded and the RUNNING PROGRAM was still going after \{duration_label(auto_background_after_ms)}, so it moved to the background as job \{id} (nothing was lost; any later nonzero exit is the program's own). Read its output with job_output (job_id=\"\{id}\") and stop it with job_stop (job_id=\"\{id}\")."

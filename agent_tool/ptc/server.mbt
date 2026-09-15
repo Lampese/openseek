@@ -261,7 +261,9 @@ pub async fn Program::close(self : Program) -> Unit {
       }
     }
     self.active.clear()
-    (self.on_trace)(self.trace())
+    if !self.calls.is_empty() {
+      (self.on_trace)(self.trace())
+    }
   })
 }
 
