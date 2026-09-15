@@ -86,3 +86,11 @@ those numbers as SDK or PTC performance claims.
 
 Keep dependent PRs draft until their release prerequisites and required checks
 are satisfied. No publication, merge, or release is performed by splitting PRs.
+
+### SDK argument convention
+
+Named calls (`@tools.edit(arguments)`, `@tools.multi_edit(arguments)`, and
+`@tools.web_search(arguments)`) take one JSON object identical to the direct
+tool's arguments. The SDK forwards it unchanged, including optional fields;
+the host owns validation and defaults. `@tools.call(name, arguments)` remains
+the escape hatch for other enabled tools. Results remain typed `CallResult`.

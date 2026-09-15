@@ -279,7 +279,7 @@ async fn main {
 
 ### 程序化工具调用
 
-当 `mbtx` 提供 `ptc` 参数时，设置 `ptc: true` 可在脚本内调用宿主工具。当计算或结果筛选能减少模型往返时使用 PTC：读取数据、计算替换内容、调用 `@tools.multi_edit(edits)`，然后验证并打印摘要。简单调用直接使用工具；批量修改保留 `multi_edit` 的验证语义，`edits_file` 仍可使用。多次独立调用不构成一个原子批次。下一步需要判断时，返回模型继续处理。
+当 `mbtx` 提供 `ptc` 参数时，设置 `ptc: true` 可在脚本内调用宿主工具。当计算或结果筛选能减少模型往返时使用 PTC：读取数据、计算替换内容、调用 `@tools.multi_edit({ "edits": edits })`，然后验证并打印摘要。简单调用直接使用工具；批量修改保留 `multi_edit` 的验证语义，`edits_file` 仍可使用。多次独立调用不构成一个原子批次。下一步需要判断时，返回模型继续处理。
 
 在脚本中显式导入已发布、固定版本的 SDK：
 
@@ -289,7 +289,7 @@ import {
 }
 ```
 
-宿主仅提供本次运行的连接凭证，不改写源码。可调用：`@tools.edit(...)`、`@tools.multi_edit(edits)`、`@tools.web_search(query)` 或 `@tools.call(name, arguments)`。在 `async fn main` 中调用；MoonBit 异步调用直接挂起，不使用 `await` 关键字。进行依赖操作前检查每次返回的 `result.is_error`；工具错误作为值返回。传输失败会抛出异常，但修改可能已经完成：先重新读取受影响的文件，再决定是否重试；不要盲目重跑已经执行过修改的脚本。
+宿主仅提供本次运行的连接凭证，不改写源码。可调用：`@tools.edit(arguments)`、`@tools.multi_edit({ "edits": edits })`、`@tools.web_search({ "query": query })` 或 `@tools.call(name, arguments)`。每个具名函数接收与直接调用对应工具完全相同的 JSON 参数对象，由宿主应用默认值并验证参数。在 `async fn main` 中调用；MoonBit 异步调用直接挂起，不使用 `await` 关键字。进行依赖操作前检查每次返回的 `result.is_error`；工具错误作为值返回。传输失败会抛出异常，但修改可能已经完成：先重新读取受影响的文件，再决定是否重试；不要盲目重跑已经执行过修改的脚本。
 
 搜索在 `result.data` 返回结构化来源；显式处理缺失字段，并打印选中的证据及其 URL。只有打印输出进入模型上下文，嵌套调用另存于会话记录。即使筛选了成功结果，也要保留影响答案的错误或截断信息。
 

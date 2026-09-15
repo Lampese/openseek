@@ -484,7 +484,7 @@ fn default_prompt() -> String {
     #|
     #|When `mbtx` offers `ptc`, set `ptc: true` to call host tools inside a script.
     #|Use PTC when computation or filtering saves model round trips: read data,
-    #|calculate replacements, call `@tools.multi_edit(edits)`, then verify and print a
+    #|calculate replacements, call `@tools.multi_edit({ "edits": edits })`, then verify and print a
     #|summary. Keep direct tools for simple calls and `multi_edit` for batch
     #|validation; `edits_file` remains available. Separate calls are not one atomic
     #|batch. Return to the model when the next decision needs judgment.
@@ -497,8 +497,10 @@ fn default_prompt() -> String {
     #|}
     #|```
     #|
-    #|Use `@tools.edit(...)`, `@tools.multi_edit(edits)`, `@tools.web_search(query)`,
-    #|or `@tools.call(name, arguments)` inside `async fn main`. The host supplies a
+    #|Inside `async fn main`, call `@tools.edit(arguments)`,
+    #|`@tools.multi_edit({ "edits": edits })`, `@tools.web_search({ "query": query })`,
+    #|or `@tools.call(name, arguments)`. Each named call takes the same JSON object as
+    #|the direct tool; the host applies validation and defaults. The host supplies a
     #|run-scoped connection capability and leaves source unchanged. MoonBit async calls suspend
     #|directly, with no `await` keyword. Check each `result.is_error` before dependent
     #|work; tool errors are values. Transport failures raise and may follow a completed
