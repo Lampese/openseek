@@ -12,7 +12,7 @@ For example, pass this as `source` to mbtx:
 import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
 
 async fn main {
-  let result = @tools.edit({
+  let result = @tools.call("edit", {
     "path": "note.txt", "start_line": 1,
     "old_string": "before", "new_string": "after",
   })
@@ -33,13 +33,17 @@ All calls return `@tools.CallResult { content : String, is_error : Bool, data : 
 Tool errors are values. Transport failures raise `@tools.TransportError`: the tool
 may already have executed, so never automatically retry a mutation.
 
-Each named function accepts the same JSON arguments as its direct host tool.
+The dynamic entry point accepts the same JSON arguments as its direct host tool.
 The SDK forwards arguments unchanged; validation and defaults stay in the host.
 
-- `@tools.edit(arguments : Json)`
-- `@tools.multi_edit(arguments : Json)`, e.g. `{ "edits": edits }` or `{ "edits_file": "edits.json" }`
-- `@tools.web_search(arguments : Json)`, e.g. `{ "query": query }`, when registered
-- `@tools.call(name : String, arguments : Json)` for other enabled tools
+- `@tools.call("edit", arguments)`
+- `@tools.call("multi_edit", { "edits": edits })` (or `edits_file`)
+- `@tools.call("web_search", { "query": query })`, when registered
+- `@tools.call(name, arguments)` for every other enabled tool
+
+This single dynamic API keeps tool schemas and validation in the host. SDK 0.2.0
+removes named wrappers; `call` also works with the published 0.1.0 used here.
+See the [complete deprecation-fix example](../../tools_sdk/examples/README.md).
 
 For search, `data` is `{sources: [{url, title?, snippet?, published_at?}],
 truncated: Bool}`. Optional source fields are absent when unavailable.
@@ -48,7 +52,7 @@ truncated: Bool}`. Optional source fields are absent when unavailable.
 import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
 
 async fn main {
-  let result = @tools.web_search({ "query": "MoonBit async task groups" })
+  let result = @tools.call("web_search", { "query": "MoonBit async task groups" })
   if result.is_error { fail(result.content) }
   guard result.data is Some({ "sources": Array(sources), .. }) else {
     fail("search did not return structured sources")

@@ -461,7 +461,7 @@ stderr warning while exit stays 0 — treat skipped blocks as a blind spot.
 When `mbtx` offers `ptc`, host tool calls are enabled by default for supported
 wasm runs. Set `ptc: false` to opt out.
 Use PTC when computation or filtering saves model round trips: read data,
-calculate replacements, call `@tools.multi_edit({ "edits": edits })`, then verify and print a
+calculate replacements, call `@tools.call("multi_edit", { "edits": edits })`, then verify and print a
 summary. Keep direct tools for simple calls and `multi_edit` for batch
 validation; `edits_file` remains available. Separate calls are not one atomic
 batch. Return to the model when the next decision needs judgment.
@@ -475,9 +475,9 @@ import {
 }
 ```
 
-Inside `async fn main`, call `@tools.edit(arguments)`,
-`@tools.multi_edit({ "edits": edits })`, `@tools.web_search({ "query": query })`,
-or `@tools.call(name, arguments)`. Each named call takes the same JSON object as
+Inside `async fn main`, use `@tools.call(name, arguments)` for every enabled
+tool, for example `@tools.call("edit", arguments)` or
+`@tools.call("web_search", { "query": query })`. Arguments are the same JSON object as
 the direct tool; the host applies validation and defaults. The host supplies a
 run-scoped connection capability and leaves source unchanged. MoonBit async calls suspend
 directly, with no `await` keyword. Check each `result.is_error` before dependent

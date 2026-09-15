@@ -29,7 +29,7 @@ async test "default PTC survives background handoff and persists job-owned edit 
             #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
             #|async fn main {
             #|  @async.sleep(150)
-            #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "after" })
+            #|  let result = @tools.call("edit", { "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "after" })
             #|  if result.is_error { fail(result.content) }
             #|  println("background edit done")
             #|}
@@ -205,7 +205,7 @@ async test "background edits after foreground edits validate stale input and kee
             #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
             #|async fn main {
             #|  ignore(@tools.call("wait", {}))
-            #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "background" })
+            #|  let result = @tools.call("edit", { "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "background" })
             #|  if result.is_error { println("stale edit rejected") } else { fail("stale edit accepted") }
             #|}
           ),
@@ -226,7 +226,7 @@ async test "background edits after foreground edits validate stale input and kee
           "source": (
             #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
             #|async fn main {
-            #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "foreground" })
+            #|  let result = @tools.call("edit", { "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "foreground" })
             #|  if result.is_error { fail(result.content) }
             #|}
           ),
@@ -384,7 +384,7 @@ async test "handoff failure retains completed mutations and interrupts pending c
             "source": (
               #|import { "bobzhang/openseek_tools@0.1.0" @tools, "moonbitlang/async" }
               #|async fn main {
-              #|  let result = @tools.edit({ "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "after" })
+              #|  let result = @tools.call("edit", { "path": "note.txt", "start_line": 1, "old_string": "before", "new_string": "after" })
               #|  if result.is_error { fail(result.content) }
               #|  ignore(@tools.call("block", {}))
               #|}

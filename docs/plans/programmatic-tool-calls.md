@@ -3,11 +3,12 @@
 ## Architecture and standalone review
 
 1. **SDK — #1518, merged and published.** `bobzhang/openseek_tools@0.1.0`
-   exposes `@tools.edit(arguments)`, `@tools.multi_edit(arguments)`,
-   `@tools.web_search(arguments)`, and `@tools.call(name, arguments)`.
+   uses `@tools.call(name, arguments)` as the canonical entry point for all enabled
+   tools. SDK 0.2.0 removes the named wrappers; its dynamic API remains compatible
+   with published 0.1.0. New host tools require no SDK wrapper or release.
    Every arguments value is the same JSON object used by the direct tool.
    Validation and defaults belong to the host. `CallResult` has `content`,
-   `is_error`, and optional `data`. Wire protocol v1 and the SDK API are unchanged.
+   `is_error`, and optional `data`. Wire protocol v1 and the dynamic call contract are unchanged.
 2. **Host.** One session-owned loopback HTTP listener dispatches
    registered leaf tools. Each script receives a separate random capability,
    active-call set, and trace. The SDK discovers it through `OPENSEEK_PTC`.

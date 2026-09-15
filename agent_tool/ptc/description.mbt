@@ -14,17 +14,17 @@ pub fn description() -> String {
     #|
     #|Use ordinary MoonBit async functions, with no await keyword:
     #|
-    #|  let result = @tools.edit({
+    #|  let result = @tools.call("edit", {
     #|    "path": "note.txt", "start_line": 1,
     #|    "old_string": "before", "new_string": "after",
     #|  })
     #|  if result.is_error { fail(result.content) }
     #|
-    #|Named calls take the same JSON arguments as their direct host tools:
-    #|`@tools.edit(arguments)`, `@tools.multi_edit({ "edits": edits })`, and
-    #|`@tools.web_search({ "query": query })`. Arguments are forwarded unchanged;
+    #|Use `@tools.call(name, arguments)` for every enabled host tool:
+    #|`@tools.call("edit", arguments)`, `@tools.call("multi_edit", { "edits": edits })`, and
+    #|`@tools.call("web_search", { "query": query })`. Arguments are forwarded unchanged;
     #|validation and defaults stay in the host. multi_edit also accepts edits_file.
-    #|`@tools.call(name, arguments)` supports other explicitly PTC-enabled tools.
+    #|The SDK needs no new wrapper or release when another host tool is enabled.
     #|edit, multi_edit, and web_search (when registered) are initially enabled.
     #|
     #|Results have content : String, is_error : Bool, data : Json?. Tool errors

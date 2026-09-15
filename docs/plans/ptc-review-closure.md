@@ -3,7 +3,9 @@
 The implementation is submitted as one standalone PR on `codex/ptc-standalone`,
 based on `main` after the Desktop backend/frontend module split.
 The published SDK remains `bobzhang/openseek_tools@0.1.0`; wire v1 and its public
-JSON arguments are unchanged. This replaces the #1519/#1520/#1522 stack.
+JSON arguments are unchanged. SDK 0.2.0 is now prepared with only the dynamic
+`call` API; named wrappers are removed. Examples still pin published 0.1.0, whose
+`call` contract is identical. This replaces the #1519/#1520/#1522 stack.
 Merging awaits agreement after review.
 
 ## Commit review order
@@ -25,8 +27,10 @@ Merging awaits agreement after review.
    the non-runtime diff and are not production inputs.
 
 Commits are ordered for cumulative review, with dependent constructor/codec
-updates beside their owning layer. The SDK implementation is already on main;
-only its README import example changes here.
+updates beside their owning layer. Follow-up commits make `call(name, arguments)`
+the sole SDK entry point, align prompt guidance, and add a complete tested
+[deprecation migration](../../tools_sdk/examples/README.md). SDK 0.2.0 is not yet
+published; the wire protocol and transport implementation are unchanged.
 
 ## Design
 
