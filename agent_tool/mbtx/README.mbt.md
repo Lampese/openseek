@@ -251,7 +251,7 @@ async test "mbtx runs a pure-core probe" {
   debug_inspect(
     action,
     content=(
-      #|Respond({ content: "[1, 4, 9]\n", is_error: false, brief: None })
+      #|Respond({ content: "[1, 4, 9]\n", is_error: false, brief: None, data: None })
     ),
   )
 }
@@ -284,7 +284,7 @@ async test "mbtx reads a workspace file" {
     debug_inspect(
       action,
       content=(
-        #|Respond({ content: "lines=2\n", is_error: false, brief: None })
+        #|Respond({ content: "lines=2\n", is_error: false, brief: None, data: None })
       ),
     )
   })
@@ -304,7 +304,7 @@ async test "mbtx accepts an explicit target" {
   debug_inspect(
     action,
     content=(
-      #|Respond({ content: "42\n", is_error: false, brief: None })
+      #|Respond({ content: "42\n", is_error: false, brief: None, data: None })
     ),
   )
 }
@@ -428,3 +428,10 @@ hand-written workflow reaches the same child with
 scout-shaped `agent`. Without a durable session, hosted delegation is
 unavailable; the standalone `openseek review --base REF` still calls the review
 engine directly, without a workflow.
+
+## Programmatic tool calls
+
+Hosts that advertise `ptc` can run scripts with `ptc: true` and a bundled
+`tools.edit`, `tools.multi_edit`, `tools.web_search`, and `tools.call` client.
+See [the PTC guide](../ptc/README.mbt.md) for examples, structured results, and
+the foreground lifetime contract.

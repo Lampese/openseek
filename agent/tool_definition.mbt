@@ -167,12 +167,24 @@ pub async fn[X] build_tools(
       }
     })
   })
+  let file_tools = [
+    @edit.definition(workspace_root~, file_state~),
+    @multi_edit.definition(workspace_root~, file_state~),
+    @write.definition(workspace_root~, file_state~),
+    @remove.definition(workspace_root~, file_state~),
+  ].map(tool => file_state.serialize(tool))
+  let extras = extra_tools.map(tool => {
+    if tool.is_concurrent_safe() {
+      tool
+    } else {
+      file_state.serialize(tool)
+    }
+  })
+  let program_tools = @agent_tool.Tools(file_tools + extras).program_tools()
+  let program_trace : Ref[Json?] = Ref(None)
   Tools(
+    file_tools +
     [
-      @edit.definition(workspace_root~, file_state~),
-      @multi_edit.definition(workspace_root~, file_state~),
-      @write.definition(workspace_root~, file_state~),
-      @remove.definition(workspace_root~, file_state~),
       @plan.definition(),
       @goal.definition(),
       // The escalation argument exists for this registry only when the runtime
@@ -192,6 +204,8 @@ pub async fn[X] build_tools(
         job_dir=scratch,
         approval?=runtime.approval_channel(),
         subrun?=mbtx_subrun,
+        program_tools~,
+        on_program_trace=data => program_trace.val = Some(data),
       ),
       // Deliberately NOT told about escalation. It reports a job that already
       // ran — a policy refusal reaches it after minutes of real work — and the
@@ -202,8 +216,9 @@ pub async fn[X] build_tools(
       @job_wait.definition(),
       @finish.definition(),
     ] +
-    extra_tools,
+    extras,
     background_jobs=bg_runtime,
+    program_trace~,
   )
 }
 

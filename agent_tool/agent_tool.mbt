@@ -29,6 +29,15 @@ pub fn AgentToolCall::AgentToolCall(
 }
 
 ///|
+/// Construct a programmatic call from already-decoded arguments.
+pub fn AgentToolCall::from_arguments(
+  name : String,
+  arguments : Json,
+) -> AgentToolCall {
+  { name, arguments, }
+}
+
+///|
 /// A JSON Schema describing the arguments a tool accepts. Wraps a raw `Json`
 /// value so registry entries advertise schemas explicitly.
 pub(all) struct JsonSchema(Json) derive(Debug)
@@ -69,6 +78,9 @@ pub struct AgentToolDefinition {
   /// never set it on a definition built from dynamic input (MCP listings,
   /// config-supplied tools).
   priv concurrent_safe : Bool
+  /// Host-owned opt-in for leaf executors; never infer from dynamic listings.
+  /// Callable executors must not wait on agent-loop work. Loop control stays out.
+  priv program_callable : Bool
 } derive(Debug(ignore=ToolExecutor))
 
 ///|
@@ -81,12 +93,29 @@ pub fn AgentToolDefinition::AgentToolDefinition(
   execute~ : ToolExecutor,
   control? : Bool = false,
   concurrent_safe? : Bool = false,
+  program_callable? : Bool = false,
 ) -> AgentToolDefinition {
-  { name, description, schema, execute, control, concurrent_safe, }
+  {
+    name,
+    description,
+    schema,
+    execute,
+    control,
+    concurrent_safe,
+    program_callable,
+  }
 }
 
 ///|
-/// Whether this tool declared itself a control tool (see the field doc).
+/// Whether this tool explicitly permits program calls and is not loop control.
+pub fn AgentToolDefinition::is_program_callable(
+  self : AgentToolDefinition,
+) -> Bool {
+  self.program_callable && !self.control
+}
+
+///|
+/// Whether this tool declared itself a control tool.
 pub fn AgentToolDefinition::is_control(self : AgentToolDefinition) -> Bool {
   self.control
 }
@@ -129,6 +158,8 @@ pub struct ToolOutput {
   /// files`). Display-only: persisted on the `ToolResult` for the visualizer and
   /// never sent to the model. `None` when the tool supplies no brief.
   brief : String?
+  /// Optional machine-readable result; not appended to model messages.
+  data : Json?
 } derive(Debug)
 
 ///|
@@ -139,8 +170,9 @@ fn ToolOutput::ToolOutput(
   content : String,
   is_error? : Bool = false,
   brief? : String,
+  data? : Json,
 ) -> ToolOutput {
-  { content, is_error, brief, }
+  { content, is_error, brief, data, }
 }
 
 ///|
@@ -172,8 +204,9 @@ pub fn respond(
   content : String,
   is_error? : Bool = false,
   brief? : String,
+  data? : Json,
 ) -> ToolAction {
-  Respond(ToolOutput(content, is_error~, brief?))
+  Respond(ToolOutput(content, is_error~, brief?, data?))
 }
 
 ///|
@@ -235,6 +268,7 @@ struct Tools {
   by_name : Map[String, AgentToolDefinition]
   /// Shared execution registry, also used by the loop for wait/finish decisions.
   background_jobs : @bgjobs.BgJobRuntime?
+  program_trace : Ref[Json?]
 }
 
 ///|
@@ -245,6 +279,7 @@ struct Tools {
 pub fn Tools::Tools(
   definitions : Array[AgentToolDefinition],
   background_jobs? : @bgjobs.BgJobRuntime,
+  program_trace? : Ref[Json?] = Ref(None),
 ) -> Tools raise {
   let by_name : Map[String, AgentToolDefinition] = Map([])
   for definition in definitions {
@@ -253,7 +288,7 @@ pub fn Tools::Tools(
     }
     by_name[definition.name] = definition
   }
-  { by_name, background_jobs, }
+  { by_name, background_jobs, program_trace, }
 }
 
 ///|
@@ -564,4 +599,13 @@ pub fn ToolAction::wait_jobs(ids : Array[String]) -> ToolAction {
 /// Kept behind an accessor so the storage is not part of the public record.
 pub fn Tools::background_job_runtime(self : Tools) -> @bgjobs.BgJobRuntime? {
   self.background_jobs
+}
+
+///|
+/// Take nested-call metadata, including when a cancelled mbtx produced no
+/// normal result. Only the owning agent loop drains this session-local slot.
+pub fn Tools::take_program_trace(self : Tools) -> Json? {
+  let trace = self.program_trace.val
+  self.program_trace.val = None
+  trace
 }

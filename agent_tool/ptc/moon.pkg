@@ -1,0 +1,18 @@
+import {
+  "bobzhang/openseek/agent_tool",
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/x/crypto",
+}
+
+dev_build(
+  rule: "md_to_mbt_string",
+  input: "client_source.md",
+  output: "generated_client_source.mbt",
+)
+
+supported_targets = "+wasm+native"

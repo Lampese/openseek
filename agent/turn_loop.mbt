@@ -697,8 +697,26 @@ async fn AgentLoop::execute_tool_call(
     // Already executed concurrently with its batch siblings; recording and
     // accounting proceed exactly as for a fresh execution.
     Some(action) => action
-    None => @agent_tool.execute_tool_call(tool_call, self.tools)
+    None => {
+      errdefer (if self.tools.take_program_trace() is Some(data) {
+        @async.protect_from_cancel(() => {
+          self.record_tool_result(
+            session,
+            tool_call_id=native_call.id,
+            tool_name=tool_call.name,
+            content="programmatic tool call interrupted or failed",
+            is_error=true,
+            data~,
+          )
+          |> ignore
+        }) catch {
+          _ => ()
+        }
+      })
+      @agent_tool.execute_tool_call(tool_call, self.tools)
+    }
   }
+  ignore(self.tools.take_program_trace())
   match result {
     Control(WaitJobs(ids)) => {
       let (output, is_error) = if response.tool_calls.length() != 1 {
@@ -839,6 +857,7 @@ async fn AgentLoop::execute_tool_call(
         content~,
         is_error=output.is_error,
         brief?=output.brief,
+        data?=output.data,
       )
       self.plan_cadence.record_plan_success(tool_call, output)
       log_tool_result(
@@ -1070,11 +1089,14 @@ async fn AgentLoop::record_tool_result(
   content~ : String,
   is_error? : Bool = false,
   brief? : String,
+  data? : Json,
 ) -> @agent_session.Session {
   let content = clamp_tool_result_content(content)
   let session = self.append(
     session,
-    Tool(ToolResult(tool_call_id~, tool_name~, content~, is_error~, brief?)),
+    Tool(
+      ToolResult(tool_call_id~, tool_name~, content~, is_error~, brief?, data?),
+    ),
   )
   self.messages.push(ChatMessage(Tool(tool_call_id), content~))
   session

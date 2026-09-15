@@ -34,6 +34,8 @@ pub struct MbtxInput {
   /// asks on a session that cannot host must be told, not quietly run
   /// without its children.
   subrun : Bool
+  /// Enable run-scoped programmatic access to explicitly registered leaf tools.
+  ptc : Bool
 } derive(Debug)
 
 ///|
@@ -165,7 +167,22 @@ pub fn decode(arguments : Json) -> MbtxInput raise {
         { "subrun": _, .. } => fail("arguments.subrun to be a boolean")
         _ => false
       }
-      { program, args, description, target, cwd, warning, escalated, subrun, }
+      let ptc = match fields.get("ptc") {
+        Some(True) => true
+        None | Some(False) | Some(Null) => false
+        _ => fail("arguments.ptc to be a boolean")
+      }
+      {
+        program,
+        args,
+        description,
+        target,
+        cwd,
+        warning,
+        escalated,
+        subrun,
+        ptc,
+      }
     }
     _ => fail("object arguments")
   }
