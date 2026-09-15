@@ -1,5 +1,6 @@
 """Check benchmark isolation without making model calls."""
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -7,6 +8,21 @@ import yaml_benchmark as bench
 
 
 class YamlBenchmarkTests(unittest.TestCase):
+    def test_execution_checkpoint_survives_analysis_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def fake_run(command, cwd, env, log, timeout):
+                self.assertEqual(command[command.index('--max-steps') + 1], '128')
+                self.assertEqual(timeout, 1800)
+                return 0
+            with patch.object(bench, 'bounded', fake_run), patch.object(
+                    bench, 'analyze_trial', side_effect=ValueError('analysis failed')):
+                with self.assertRaisesRegex(ValueError, 'analysis failed'):
+                    bench.trial(Path('/fake/engine'), root, 'candidate', 1, 1800, 128)
+            checkpoint = json.loads((root / 'yaml-1-candidate-execution.json').read_text())
+            self.assertEqual(checkpoint['exit_code'], 0)
+            self.assertGreaterEqual(checkpoint['seconds'], 0)
+
     def test_fixture_contains_only_visible_tests(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / 'workspace'

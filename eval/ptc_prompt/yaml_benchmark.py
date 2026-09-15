@@ -168,7 +168,7 @@ def score(workspace, grading, log):
                 (workspace / 'visible_test.mbt').read_text() == tests(VISIBLE, prefix='visible')}
 
 
-def trial(engine, out, variant, repeat, timeout):
+def trial(engine, out, variant, repeat, timeout, max_steps=128):
     name = f'yaml-{repeat}-{variant}'
     workspace = out / 'workspaces' / name
     fixture(workspace)
@@ -177,14 +177,42 @@ def trial(engine, out, variant, repeat, timeout):
     env['OPENSEEK_REFERENCES'] = str(run.ROOT / 'share')
     started = time.monotonic()
     log = out / f'{name}.log'
-    code = bounded([str(engine), 'run', '--model', 'deepseek-v4-flash', '--max-steps', '64',
+    code = bounded([str(engine), 'run', '--model', 'deepseek-v4-flash', '--max-steps', str(max_steps),
                     '--dir', str(workspace), '--session', name,
                     '--system-prompt-file', str(out / f'{variant}.md'),
                     'Read TASK.md and implement the requested YAML parser completely.'],
                    run.ROOT, env, log, timeout)
     result = {'name': name, 'variant': variant, 'repeat': repeat,
               'seconds': round(time.monotonic() - started, 2), 'exit_code': code}
-    items = run.session_items(workspace)
+    (out / f'{name}-execution.json').write_text(json.dumps(result, indent=2) + '\n')
+    result = analyze_trial(out, variant, repeat, result)
+    print(json.dumps(result), flush=True)
+    return result
+
+
+def analyze_trial(out, variant, repeat, execution=None):
+    name = f'yaml-{repeat}-{variant}'
+    workspace = out / 'workspaces' / name
+    log = out / f'{name}.log'
+    if execution is None:
+        checkpoint = out / f'{name}-execution.json'
+        if checkpoint.exists():
+            execution = json.loads(checkpoint.read_text())
+        elif (out / f'{name}.json').exists():
+            previous = json.loads((out / f'{name}.json').read_text())
+            execution = {k: v for k, v in previous.items() if k in
+                         ('name', 'variant', 'repeat', 'exit_code', 'seconds',
+                          'exit_code_unrecorded', 'seconds_source')}
+        else:
+            # Recovery for the original reader's child-session ambiguity. Keep
+            # OS exit status unavailable and label reconstructed timing.
+            stat = log.stat()
+            execution = {'name': name, 'variant': variant, 'repeat': repeat,
+                         'exit_code': None, 'exit_code_unrecorded': True,
+                         'seconds': round(stat.st_mtime - stat.st_birthtime, 2) if hasattr(stat, 'st_birthtime') else None,
+                         'seconds_source': 'log creation to last write; excludes silent waits' if hasattr(stat, 'st_birthtime') else 'unavailable without execution checkpoint'}
+    result = dict(execution)
+    items = run.session_items(workspace, session_name=name)
     assistants = [i['payload'] for i in items if i['kind'] == 'assistant']
     outputs = [i['payload'] for i in items if i['kind'] == 'tool_result']
     nested = [c for r in outputs for c in (r.get('data') or {}).get('ptc_calls', [])]
@@ -193,24 +221,47 @@ def trial(engine, out, variant, repeat, timeout):
                   nested_calls=len(nested), tool_errors=sum(r['is_error'] for r in outputs),
                   nested_errors=sum(c.get('result', {}).get('is_error', False) for c in nested),
                   final=terminals[-1] if terminals else None, usage=run.usage(log))
-    result.update(score(workspace, out / f'{name}-grading', out / f'{name}-grading.log'))
-    result['passed'] = result['oracle_passed'] == result['oracle_total'] and result['preserved_fixture'] and result['oracle_exit_code'] == 0 and code == 0 and bool(terminals) and terminals[-1]['kind'] == 'finished'
+    child_sessions = list(workspace.rglob(f'openseek_session-{name}-sr-*.jsonl'))
+    result['child_sessions'] = len(child_sessions)
+    result['child_steps'] = sum(sum(json.loads(line).get('item', {}).get('kind') == 'assistant'
+                                    for line in path.read_text().splitlines()) for path in child_sessions)
+    result['usage_scope'] = 'parent only; child token usage unavailable' if child_sessions else 'parent (no children)'
+    grading = out / f'{name}-grading'
+    suffix = 1
+    while grading.exists():
+        suffix += 1
+        grading = out / f'{name}-grading-{suffix}'
+    result.update(score(workspace, grading, grading.with_suffix('.log')))
+    result['passed'] = result['oracle_passed'] == result['oracle_total'] and result['preserved_fixture'] and result['oracle_exit_code'] == 0 and result.get('exit_code') == 0 and bool(terminals) and terminals[-1]['kind'] == 'finished'
     (out / f'{name}.json').write_text(json.dumps(result, indent=2) + '\n')
-    print(json.dumps(result), flush=True)
     return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--baseline-engine', type=Path, required=True)
-    parser.add_argument('--engine', type=Path, required=True)
+    parser.add_argument('--baseline-engine', type=Path)
+    parser.add_argument('--engine', type=Path)
+    parser.add_argument('--analyze-only', action='store_true')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--runs', type=int, default=2)
     parser.add_argument('--concurrency', type=int, default=2)
-    parser.add_argument('--timeout', type=int, default=900)
+    parser.add_argument('--timeout', type=int, default=1800)
+    parser.add_argument('--max-steps', type=int, default=128)
     args = parser.parse_args()
+    if args.analyze_only:
+        out = args.out.resolve()
+        manifest = json.loads((out / 'manifest.json').read_text())
+        results = [analyze_trial(out, variant, repeat)
+                   for repeat in range(1, manifest['runs'] + 1)
+                   for variant in ('baseline', 'candidate')]
+        (out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+        return
+    if args.engine is None or args.baseline_engine is None:
+        parser.error('both engines are required for live trials')
     if not os.environ.get('DEEPSEEK'):
         parser.error('DEEPSEEK is required')
+    if min(args.runs, args.concurrency, args.timeout, args.max_steps) <= 0:
+        parser.error('runs, concurrency, timeout, and max-steps must be positive')
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     generated = (run.ROOT / 'prompt/generated_default_prompt.mbt').read_text()
@@ -219,7 +270,7 @@ def main():
     for variant in engines:
         (out / f'{variant}.md').write_text(prompt)
     manifest = {'experiment': 'yaml-parser-capability', 'model': 'deepseek-v4-flash',
-                'runs': args.runs, 'max_steps': 64, 'timeout': args.timeout, 'concurrency': args.concurrency,
+                'runs': args.runs, 'max_steps': args.max_steps, 'timeout': args.timeout, 'concurrency': args.concurrency,
                 'visible_cases': len(VISIBLE), 'withheld_cases': len(CASES) + len(INVALID),
                 'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
                 'spec_sha256': hashlib.sha256(SPEC.encode()).hexdigest(),
@@ -230,7 +281,7 @@ def main():
     jobs = [(variant, repeat) for repeat in range(1, args.runs + 1)
             for variant in (('baseline', 'candidate') if repeat % 2 else ('candidate', 'baseline'))]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = [pool.submit(trial, engines[v], out, v, r, args.timeout) for v, r in jobs]
+        futures = [pool.submit(trial, engines[v], out, v, r, args.timeout, args.max_steps) for v, r in jobs]
         results = [f.result() for f in futures]
     (out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 

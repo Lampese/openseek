@@ -93,11 +93,12 @@ JSON-compatible YAML subset; it is not a claim of full YAML conformance.
 python3 eval/ptc_prompt/yaml_benchmark.py \
   --baseline-engine /absolute/path/to/sdk-only-openseek \
   --engine /absolute/path/to/ptc-openseek \
-  --out /absolute/path/to/new-yaml-results --runs 2 --concurrency 2 --timeout 900
+  --out /absolute/path/to/new-yaml-results --runs 2 --concurrency 2 \
+  --max-steps 128 --timeout 1800
 ```
 
 Both sides receive identical system prompts, tasks, model settings, and a
-64-step allowance. After each run, a separate grading project compiles the
+128-step allowance by default. After each run, a separate grading project compiles the
 implementation against 30 valid-input and 16 rejection tests. Candidate tests
 are excluded; the grader supplies the module manifest and selects only its own
 oracle cases. The fixture manifest and visible tests must remain unchanged.
@@ -109,3 +110,16 @@ can pass the rejection cases without implementing any parsing. Report tool
 errors, actual PTC use, wall time, and token usage alongside correctness.
 Two repetitions per variant are exploratory evidence, not a statistical
 non-regression guarantee. Raw code and transcripts remain in the run directory.
+
+The initial parser cohort used 64 steps and 900 seconds. The first pair passed
+all withheld parser tests but did not finish their review workflows within those
+limits. A separate matched follow-up uses 128 steps and 1800 seconds; keep the
+cohorts separate when analyzing results.
+
+The reader selects the named parent session when review children exist. Token
+usage from the parent event log excludes child usage when the workflow journal
+does not retain it; report child counts/steps and do not treat that number as
+total cost. Execution timing is checkpointed before grading so a scoring error
+cannot discard it. `--analyze-only --out ...` regrades saved implementations
+without rerunning the model. Recovered timing without a checkpoint is explicitly
+labeled as a log active span, which can omit silent waits.

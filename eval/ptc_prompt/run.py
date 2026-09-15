@@ -51,8 +51,9 @@ def fixture(case, workspace):
     return task, files | expected
 
 
-def session_items(workspace):
-    paths = list(workspace.rglob('openseek_session-*.jsonl'))
+def session_items(workspace, session_name=None):
+    pattern = f'openseek_session-{session_name}.jsonl' if session_name else 'openseek_session-*.jsonl'
+    paths = list(workspace.rglob(pattern))
     if len(paths) != 1:
         raise ValueError(f'expected one session, got {len(paths)}')
     records = [json.loads(line) for line in paths[0].read_text().splitlines()]

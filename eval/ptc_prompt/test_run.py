@@ -27,6 +27,15 @@ class OracleTests(unittest.TestCase):
         self.assertTrue(all(p.startswith('before\n') and p.endswith('## Tool Protocol\nafter')
                             for p in historical.values()))
 
+    def test_named_parent_session_excludes_review_children(self):
+        self.events('parent done')
+        (self.workspace / 'openseek_session-test-sr-1.jsonl').write_text(
+            json.dumps({'item': {'kind': 'terminal', 'payload': {'message': 'child done'}}}) + '\n')
+        with self.assertRaises(ValueError):
+            run.session_items(self.workspace)
+        items = run.session_items(self.workspace, session_name='test')
+        self.assertEqual(items[-1]['payload']['message'], 'parent done')
+
     def test_claim_without_edit_fails(self):
         _, expected = run.fixture('single_edit', self.workspace)
         self.events('Done')
