@@ -98,11 +98,32 @@ tool's arguments. The SDK forwards it unchanged, including optional fields;
 the host owns validation and defaults. `@tools.call(name, arguments)` remains
 the escape hatch for other enabled tools. Results remain typed `CallResult`.
 
-### Default activation
+### Session-owned RPC and default activation
 
-Keep PTC opt-in in this stack. Today `ptc=true` also disables automatic
-background handoff and bounds execution to the foreground timeout. Simply
-defaulting it on would change long commands and watchers from background jobs
-into foreground work that eventually times out. Default-on tool availability
-should be considered separately from that execution policy, while preserving
-explicit opt-out and compatibility with other targets, escalation, and subrun.
+Implement in the host PR, then adapt Desktop and prompts in the dependent PRs.
+The session task group owns one listener. Each script registers a random bearer
+capability with its own active calls and bounded trace. The guest protocol and
+SDK remain unchanged. The listener dispatches directly to the existing leaf
+executors; shared file gates retain their current validation/write/rollback scope.
+
+Normal mbtx foreground/background timing stays unchanged. When an execution is
+adopted, its job retains the registration and closes it in the existing terminal
+cleanup hook. Close revokes new requests first, cancels and joins active calls,
+then allows job completion to be published. Session shutdown closes all
+registrations. No listener or call lifecycle is moved into the guest.
+
+Persist the per-job trace in optional job result metadata. Updates and final
+records identify the job, and job_output returns its trace as structured metadata.
+Foreground cancellation retains its current tool-result trace path, which must
+never receive writes from an already-backgrounded script.
+
+Default PTC on when the registered service is available and the selected mode is
+wasm without escalation or subrun. Explicit ptc=false opts out; explicit true in
+an unsupported mode errors. No source rewriting, auto retries, or SDK changes.
+
+Validation: session listener reuse, independent token revocation and trace
+isolation, requests after background handoff, shared file serialization, job stop
+and session teardown joining handlers, durable metadata/reload, foreground error
+handling, normal auto-background timing and explicit opt-out. Run transport and
+lifecycle tests on native and wasm, plus root gates and Desktop coverage. Verify
+real SDK-import scripts once the merged SDK is available in the registry.
