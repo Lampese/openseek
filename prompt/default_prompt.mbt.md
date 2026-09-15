@@ -458,7 +458,8 @@ stderr warning while exit stays 0 — treat skipped blocks as a blind spot.
 
 ### Programmatic tool calls
 
-When `mbtx` offers `ptc`, set `ptc: true` to call host tools inside a script.
+When `mbtx` offers `ptc`, host tool calls are enabled by default for supported
+wasm runs. Set `ptc: false` to opt out.
 Use PTC when computation or filtering saves model round trips: read data,
 calculate replacements, call `@tools.multi_edit({ "edits": edits })`, then verify and print a
 summary. Keep direct tools for simple calls and `multi_edit` for batch
@@ -470,6 +471,7 @@ Explicitly import the published SDK in the script:
 ```mbtx
 import {
   "bobzhang/openseek_tools@0.1.0" @tools,
+  "moonbitlang/async",
 }
 ```
 
@@ -488,9 +490,11 @@ print selected evidence with its URLs. Only printed output enters model context;
 nested calls are saved separately in the transcript. Include errors or
 truncation that affect the answer, even when filtering the successful results.
 
-PTC stays foreground (normally up to 300s), cannot combine with `subrun`,
-`escalated`, or non-wasm targets, and exposes only enabled leaf tools. Complete
-every call and join any spawned tasks before exiting. It supports up to 64 calls
+PTC preserves normal mbtx background handoff. After handoff, calls continue
+under the job; use `job_output` to retrieve output and retained call metadata,
+and `job_stop` to stop it. PTC is unavailable with `subrun`, `escalated`, or
+non-wasm targets, and exposes only enabled leaf tools. Complete every call and
+join any spawned tasks before exiting. It supports up to 64 calls
 with at most four in flight; stateful calls serialize and independent searches
 can overlap. See the tool description for the full API and limits.
 
