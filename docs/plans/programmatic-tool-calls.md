@@ -96,3 +96,16 @@ Use reviewable commits; split into stacked PRs only if it improves review.
   Reproduced the failure on unmodified base `d818b71b1` after loading/reloading
   the same session fixture in a separate worktree. This is recorded separately
   from the passing PTC/OpenSeek browser checks.
+
+## Prompt A/B follow-up (2026-09-15)
+
+- Compared expanded and compact PTC guidance against fresh baselines in 48
+  real Flash trials, with three repetitions per variant/task and separate
+  free-choice and explicitly requested PTC cohorts.
+- All 36 file-edit trials passed final byte and preservation checks. The compact
+  prompt reduced steps/errors on free-choice edits; forced PTC needed more
+  repairs. Search provenance remained weak. No general speedup is claimed.
+- Retained the compact English guidance and synchronized its Chinese translation.
+  No change to the default `ptc` value. Reproducible runner, complete metrics,
+  rejected candidate, and limitations are in
+  [the A/B report](../../eval/ptc_prompt/results-2026-09-15.md).

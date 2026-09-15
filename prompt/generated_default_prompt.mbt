@@ -482,21 +482,31 @@ fn default_prompt() -> String {
     #|
     #|### Programmatic tool calls
     #|
-    #|When `mbtx` offers `ptc`, use `ptc: true` to compute arguments, call host tools,
-    #|and process results inside one script. The bundled `tools` client needs no import:
-    #|`tools.edit(...)`, `tools.multi_edit(edits)`, `tools.web_search(query)`, or
-    #|`tools.call(name, arguments)`. Inspect `result.is_error`; tool errors are values,
-    #|while transport failures raise and must not automatically retry mutations.
-    #|Search returns structured sources in `result.data`; print selected results with
-    #|URLs so the next model step can cite them. Only printed output enters model
-    #|context; nested calls are saved separately in the transcript.
+    #|When `mbtx` offers `ptc`, set `ptc: true` to call host tools inside a script.
+    #|Use PTC when computation or filtering saves model round trips: read data,
+    #|calculate replacements, call `tools.multi_edit(edits)`, then verify and print a
+    #|summary. Keep direct tools for simple calls and `multi_edit` for batch
+    #|validation; `edits_file` remains available. Separate calls are not one atomic
+    #|batch. Return to the model when the next decision needs judgment.
     #|
-    #|PTC stays foreground (normally up to 300s), cannot combine with `subrun` or
-    #|`escalated`, and exposes only explicitly enabled leaf tools. It supports up to
-    #|64 calls, with stateful calls serialized and independent searches allowed to
-    #|overlap. Keep direct tools for simple calls and `multi_edit` for batch validation;
-    #|`edits_file` remains available. Use PTC when computation or filtering saves model
-    #|round trips. See the tool description for the full API and limits.
+    #|The bundled `tools` client needs no import: `tools.edit(...)`,
+    #|`tools.multi_edit(edits)`, `tools.web_search(query)`, or
+    #|`tools.call(name, arguments)`. Use `async fn main`; MoonBit async calls suspend
+    #|directly, with no `await` keyword. Check each `result.is_error` before dependent
+    #|work; tool errors are values. Transport failures raise and may follow a completed
+    #|mutation: re-read affected files before deciding to retry, and never blindly
+    #|replay a script that already made edits.
+    #|
+    #|Search returns structured sources in `result.data`; handle absent fields and
+    #|print selected evidence with its URLs. Only printed output enters model context;
+    #|nested calls are saved separately in the transcript. Include errors or
+    #|truncation that affect the answer, even when filtering the successful results.
+    #|
+    #|PTC stays foreground (normally up to 300s), cannot combine with `subrun`,
+    #|`escalated`, or non-wasm targets, and exposes only enabled leaf tools. Complete
+    #|every call and join any spawned tasks before exiting. It supports up to 64 calls
+    #|with at most four in flight; stateful calls serialize and independent searches
+    #|can overlap. See the tool description for the full API and limits.
     #|
     #|## Tool Protocol
     #|

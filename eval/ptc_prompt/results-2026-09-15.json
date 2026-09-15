@@ -1,0 +1,1263 @@
+{
+  "expanded_free": {
+    "artifact_directory": ".moonagent/eval_runs/ptc_prompt_ab_3x",
+    "manifest": {
+      "model": "deepseek-v4-flash",
+      "runs": 3,
+      "max_steps": 24,
+      "concurrency": 3,
+      "timeout": 600,
+      "cases": [
+        "single_edit",
+        "computed_edits",
+        "search"
+      ],
+      "prompt_sha256": {
+        "baseline": "f55105b5305f57ecc5a4715e4376dab2d5dbde5cb4bc16c4024e45d1011befea",
+        "candidate": "238f15c2fd26cca816f895c2c14d75554faa7045e908ed71507f6f7558b5b592"
+      },
+      "engine_sha256": "865a30262328bc892954a1e6c7e8c7de24d7671c407fa872cdce272f4b833bb8",
+      "commit": "c1789e27a60f984f33d99dd2ce30e1ce6e93e53c"
+    },
+    "results": [
+      {
+        "name": "computed_edits-1-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 39.08,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 7,
+        "nested_calls": 1,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 9962,
+        "usage": {
+          "prompt_tokens": 235681,
+          "completion_tokens": 6297,
+          "total_tokens": 241978,
+          "prompt_cache_hit_tokens": 212992,
+          "prompt_cache_miss_tokens": 22689
+        }
+      },
+      {
+        "name": "computed_edits-1-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 20.88,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 8,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6460,
+        "usage": {
+          "prompt_tokens": 219635,
+          "completion_tokens": 3500,
+          "total_tokens": 223135,
+          "prompt_cache_hit_tokens": 208000,
+          "prompt_cache_miss_tokens": 11635
+        }
+      },
+      {
+        "name": "computed_edits-2-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 30.13,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 11,
+        "outer_calls": 13,
+        "nested_calls": 0,
+        "tool_errors": 4,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6917,
+        "usage": {
+          "prompt_tokens": 307232,
+          "completion_tokens": 4927,
+          "total_tokens": 312159,
+          "prompt_cache_hit_tokens": 295168,
+          "prompt_cache_miss_tokens": 12064
+        }
+      },
+      {
+        "name": "computed_edits-2-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 28.55,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 9,
+        "outer_calls": 10,
+        "nested_calls": 0,
+        "tool_errors": 3,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6929,
+        "usage": {
+          "prompt_tokens": 246666,
+          "completion_tokens": 4468,
+          "total_tokens": 251134,
+          "prompt_cache_hit_tokens": 235136,
+          "prompt_cache_miss_tokens": 11530
+        }
+      },
+      {
+        "name": "computed_edits-3-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 21.75,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 6,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 4813,
+        "usage": {
+          "prompt_tokens": 184828,
+          "completion_tokens": 3336,
+          "total_tokens": 188164,
+          "prompt_cache_hit_tokens": 174080,
+          "prompt_cache_miss_tokens": 10748
+        }
+      },
+      {
+        "name": "computed_edits-3-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 16.5,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 6,
+        "outer_calls": 5,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 3802,
+        "usage": {
+          "prompt_tokens": 156264,
+          "completion_tokens": 2220,
+          "total_tokens": 158484,
+          "prompt_cache_hit_tokens": 145920,
+          "prompt_cache_miss_tokens": 10344
+        }
+      },
+      {
+        "name": "search-1-baseline",
+        "variant": "baseline",
+        "case": "search",
+        "repeat": 1,
+        "seconds": 90.74,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 12,
+        "outer_calls": 20,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 26833,
+        "usage": {
+          "prompt_tokens": 374335,
+          "completion_tokens": 5484,
+          "total_tokens": 379819,
+          "prompt_cache_hit_tokens": 355968,
+          "prompt_cache_miss_tokens": 18367
+        }
+      },
+      {
+        "name": "search-1-candidate",
+        "variant": "candidate",
+        "case": "search",
+        "repeat": 1,
+        "seconds": 105.86,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 11,
+        "outer_calls": 40,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 51714,
+        "usage": {
+          "prompt_tokens": 398513,
+          "completion_tokens": 8337,
+          "total_tokens": 406850,
+          "prompt_cache_hit_tokens": 371200,
+          "prompt_cache_miss_tokens": 27313
+        }
+      },
+      {
+        "name": "search-2-baseline",
+        "variant": "baseline",
+        "case": "search",
+        "repeat": 2,
+        "seconds": 81.66,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 11,
+        "outer_calls": 20,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 27088,
+        "usage": {
+          "prompt_tokens": 339118,
+          "completion_tokens": 3924,
+          "total_tokens": 343042,
+          "prompt_cache_hit_tokens": 320512,
+          "prompt_cache_miss_tokens": 18606
+        }
+      },
+      {
+        "name": "search-2-candidate",
+        "variant": "candidate",
+        "case": "search",
+        "repeat": 2,
+        "seconds": 45.6,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 20,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 22656,
+        "usage": {
+          "prompt_tokens": 233913,
+          "completion_tokens": 2037,
+          "total_tokens": 235950,
+          "prompt_cache_hit_tokens": 217216,
+          "prompt_cache_miss_tokens": 16697
+        }
+      },
+      {
+        "name": "search-3-baseline",
+        "variant": "baseline",
+        "case": "search",
+        "repeat": 3,
+        "seconds": 109.05,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 13,
+        "outer_calls": 28,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 40829,
+        "usage": {
+          "prompt_tokens": 421824,
+          "completion_tokens": 4546,
+          "total_tokens": 426370,
+          "prompt_cache_hit_tokens": 398592,
+          "prompt_cache_miss_tokens": 23232
+        }
+      },
+      {
+        "name": "search-3-candidate",
+        "variant": "candidate",
+        "case": "search",
+        "repeat": 3,
+        "seconds": 105.88,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 11,
+        "nested_calls": 11,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 22412,
+        "usage": {
+          "prompt_tokens": 235977,
+          "completion_tokens": 3303,
+          "total_tokens": 239280,
+          "prompt_cache_hit_tokens": 219136,
+          "prompt_cache_miss_tokens": 16841
+        }
+      },
+      {
+        "name": "single_edit-1-baseline",
+        "variant": "baseline",
+        "case": "single_edit",
+        "repeat": 1,
+        "seconds": 9.35,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 4,
+        "outer_calls": 5,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 948,
+        "usage": {
+          "prompt_tokens": 99219,
+          "completion_tokens": 980,
+          "total_tokens": 100199,
+          "prompt_cache_hit_tokens": 80128,
+          "prompt_cache_miss_tokens": 19091
+        }
+      },
+      {
+        "name": "single_edit-1-candidate",
+        "variant": "candidate",
+        "case": "single_edit",
+        "repeat": 1,
+        "seconds": 8.73,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 4,
+        "outer_calls": 5,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1080,
+        "usage": {
+          "prompt_tokens": 99712,
+          "completion_tokens": 1045,
+          "total_tokens": 100757,
+          "prompt_cache_hit_tokens": 80384,
+          "prompt_cache_miss_tokens": 19328
+        }
+      },
+      {
+        "name": "single_edit-2-baseline",
+        "variant": "baseline",
+        "case": "single_edit",
+        "repeat": 2,
+        "seconds": 11.27,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 5,
+        "outer_calls": 5,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1005,
+        "usage": {
+          "prompt_tokens": 123197,
+          "completion_tokens": 767,
+          "total_tokens": 123964,
+          "prompt_cache_hit_tokens": 114048,
+          "prompt_cache_miss_tokens": 9149
+        }
+      },
+      {
+        "name": "single_edit-2-candidate",
+        "variant": "candidate",
+        "case": "single_edit",
+        "repeat": 2,
+        "seconds": 21.48,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 9,
+        "outer_calls": 9,
+        "nested_calls": 0,
+        "tool_errors": 2,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1991,
+        "usage": {
+          "prompt_tokens": 231703,
+          "completion_tokens": 2000,
+          "total_tokens": 233703,
+          "prompt_cache_hit_tokens": 221696,
+          "prompt_cache_miss_tokens": 10007
+        }
+      },
+      {
+        "name": "single_edit-3-baseline",
+        "variant": "baseline",
+        "case": "single_edit",
+        "repeat": 3,
+        "seconds": 9.62,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 5,
+        "outer_calls": 4,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 709,
+        "usage": {
+          "prompt_tokens": 123278,
+          "completion_tokens": 708,
+          "total_tokens": 123986,
+          "prompt_cache_hit_tokens": 114048,
+          "prompt_cache_miss_tokens": 9230
+        }
+      },
+      {
+        "name": "single_edit-3-candidate",
+        "variant": "candidate",
+        "case": "single_edit",
+        "repeat": 3,
+        "seconds": 13.99,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 6,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 970,
+        "usage": {
+          "prompt_tokens": 176341,
+          "completion_tokens": 1232,
+          "total_tokens": 177573,
+          "prompt_cache_hit_tokens": 166784,
+          "prompt_cache_miss_tokens": 9557
+        }
+      }
+    ]
+  },
+  "expanded_required": {
+    "artifact_directory": ".moonagent/eval_runs/ptc_prompt_required_ab_3x",
+    "manifest": {
+      "model": "deepseek-v4-flash",
+      "runs": 3,
+      "max_steps": 24,
+      "concurrency": 2,
+      "timeout": 600,
+      "require_ptc": true,
+      "cases": [
+        "computed_edits"
+      ],
+      "prompt_sha256": {
+        "baseline": "f55105b5305f57ecc5a4715e4376dab2d5dbde5cb4bc16c4024e45d1011befea",
+        "candidate": "238f15c2fd26cca816f895c2c14d75554faa7045e908ed71507f6f7558b5b592"
+      },
+      "engine_sha256": "865a30262328bc892954a1e6c7e8c7de24d7671c407fa872cdce272f4b833bb8",
+      "commit": "c1789e27a60f984f33d99dd2ce30e1ce6e93e53c"
+    },
+    "results": [
+      {
+        "name": "computed_edits-1-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 36.93,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 10,
+        "outer_calls": 10,
+        "nested_calls": 1,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 10100,
+        "usage": {
+          "prompt_tokens": 284846,
+          "completion_tokens": 6215,
+          "total_tokens": 291061,
+          "prompt_cache_hit_tokens": 272512,
+          "prompt_cache_miss_tokens": 12334
+        }
+      },
+      {
+        "name": "computed_edits-1-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 39.55,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 11,
+        "nested_calls": 1,
+        "tool_errors": 2,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6876,
+        "usage": {
+          "prompt_tokens": 233179,
+          "completion_tokens": 7055,
+          "total_tokens": 240234,
+          "prompt_cache_hit_tokens": 221696,
+          "prompt_cache_miss_tokens": 11483
+        }
+      },
+      {
+        "name": "computed_edits-2-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 26.13,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 9,
+        "nested_calls": 1,
+        "tool_errors": 2,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6756,
+        "usage": {
+          "prompt_tokens": 217610,
+          "completion_tokens": 4262,
+          "total_tokens": 221872,
+          "prompt_cache_hit_tokens": 205952,
+          "prompt_cache_miss_tokens": 11658
+        }
+      },
+      {
+        "name": "computed_edits-2-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 16.72,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 6,
+        "outer_calls": 5,
+        "nested_calls": 1,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 4039,
+        "usage": {
+          "prompt_tokens": 157769,
+          "completion_tokens": 2495,
+          "total_tokens": 160264,
+          "prompt_cache_hit_tokens": 147328,
+          "prompt_cache_miss_tokens": 10441
+        }
+      },
+      {
+        "name": "computed_edits-3-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 24.4,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 8,
+        "nested_calls": 1,
+        "tool_errors": 3,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 4866,
+        "usage": {
+          "prompt_tokens": 212949,
+          "completion_tokens": 3604,
+          "total_tokens": 216553,
+          "prompt_cache_hit_tokens": 202112,
+          "prompt_cache_miss_tokens": 10837
+        }
+      },
+      {
+        "name": "computed_edits-3-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 28.68,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 9,
+        "outer_calls": 9,
+        "nested_calls": 1,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 9319,
+        "usage": {
+          "prompt_tokens": 246928,
+          "completion_tokens": 4092,
+          "total_tokens": 251020,
+          "prompt_cache_hit_tokens": 234624,
+          "prompt_cache_miss_tokens": 12304
+        }
+      }
+    ]
+  },
+  "compact_free": {
+    "artifact_directory": ".moonagent/eval_runs/ptc_prompt_compact_ab_3x",
+    "manifest": {
+      "model": "deepseek-v4-flash",
+      "runs": 3,
+      "max_steps": 24,
+      "concurrency": 3,
+      "timeout": 600,
+      "require_ptc": false,
+      "cases": [
+        "single_edit",
+        "computed_edits",
+        "search"
+      ],
+      "prompt_sha256": {
+        "baseline": "f55105b5305f57ecc5a4715e4376dab2d5dbde5cb4bc16c4024e45d1011befea",
+        "candidate": "4aabb70d60a0c4fc6d12cc78a3f3ddef7cab215ae58b02f768628b357a80a5af"
+      },
+      "engine_sha256": "865a30262328bc892954a1e6c7e8c7de24d7671c407fa872cdce272f4b833bb8",
+      "commit": "c1789e27a60f984f33d99dd2ce30e1ce6e93e53c"
+    },
+    "results": [
+      {
+        "name": "computed_edits-1-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 21.38,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 8,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 5738,
+        "usage": {
+          "prompt_tokens": 186645,
+          "completion_tokens": 2981,
+          "total_tokens": 189626,
+          "prompt_cache_hit_tokens": 175360,
+          "prompt_cache_miss_tokens": 11285
+        }
+      },
+      {
+        "name": "computed_edits-1-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 23.05,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 8,
+        "outer_calls": 8,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6975,
+        "usage": {
+          "prompt_tokens": 215596,
+          "completion_tokens": 3046,
+          "total_tokens": 218642,
+          "prompt_cache_hit_tokens": 204032,
+          "prompt_cache_miss_tokens": 11564
+        }
+      },
+      {
+        "name": "computed_edits-2-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 44.52,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 14,
+        "outer_calls": 13,
+        "nested_calls": 1,
+        "tool_errors": 6,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 58400,
+        "usage": {
+          "prompt_tokens": 550912,
+          "completion_tokens": 7471,
+          "total_tokens": 558383,
+          "prompt_cache_hit_tokens": 524288,
+          "prompt_cache_miss_tokens": 26624
+        }
+      },
+      {
+        "name": "computed_edits-2-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 21.29,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 6,
+        "nested_calls": 0,
+        "tool_errors": 2,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 5250,
+        "usage": {
+          "prompt_tokens": 184455,
+          "completion_tokens": 3160,
+          "total_tokens": 187615,
+          "prompt_cache_hit_tokens": 173696,
+          "prompt_cache_miss_tokens": 10759
+        }
+      },
+      {
+        "name": "computed_edits-3-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 20.04,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 6,
+        "outer_calls": 8,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 5436,
+        "usage": {
+          "prompt_tokens": 160803,
+          "completion_tokens": 3173,
+          "total_tokens": 163976,
+          "prompt_cache_hit_tokens": 149888,
+          "prompt_cache_miss_tokens": 10915
+        }
+      },
+      {
+        "name": "computed_edits-3-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 17.68,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 6,
+        "outer_calls": 6,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 5687,
+        "usage": {
+          "prompt_tokens": 158228,
+          "completion_tokens": 2507,
+          "total_tokens": 160735,
+          "prompt_cache_hit_tokens": 147328,
+          "prompt_cache_miss_tokens": 10900
+        }
+      },
+      {
+        "name": "search-1-baseline",
+        "variant": "baseline",
+        "case": "search",
+        "repeat": 1,
+        "seconds": 77.79,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 10,
+        "outer_calls": 16,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 22539,
+        "usage": {
+          "prompt_tokens": 298191,
+          "completion_tokens": 3333,
+          "total_tokens": 301524,
+          "prompt_cache_hit_tokens": 281344,
+          "prompt_cache_miss_tokens": 16847
+        }
+      },
+      {
+        "name": "search-1-candidate",
+        "variant": "candidate",
+        "case": "search",
+        "repeat": 1,
+        "seconds": 77.94,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 11,
+        "outer_calls": 19,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 23066,
+        "usage": {
+          "prompt_tokens": 332732,
+          "completion_tokens": 3223,
+          "total_tokens": 335955,
+          "prompt_cache_hit_tokens": 315520,
+          "prompt_cache_miss_tokens": 17212
+        }
+      },
+      {
+        "name": "search-2-baseline",
+        "variant": "baseline",
+        "case": "search",
+        "repeat": 2,
+        "seconds": 35.45,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 5,
+        "outer_calls": 8,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 12285,
+        "usage": {
+          "prompt_tokens": 134054,
+          "completion_tokens": 1311,
+          "total_tokens": 135365,
+          "prompt_cache_hit_tokens": 121088,
+          "prompt_cache_miss_tokens": 12966
+        }
+      },
+      {
+        "name": "search-2-candidate",
+        "variant": "candidate",
+        "case": "search",
+        "repeat": 2,
+        "seconds": 22.81,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 4,
+        "outer_calls": 7,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 9865,
+        "usage": {
+          "prompt_tokens": 105162,
+          "completion_tokens": 861,
+          "total_tokens": 106023,
+          "prompt_cache_hit_tokens": 93184,
+          "prompt_cache_miss_tokens": 11978
+        }
+      },
+      {
+        "name": "search-3-baseline",
+        "variant": "baseline",
+        "case": "search",
+        "repeat": 3,
+        "seconds": 92.0,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 9,
+        "outer_calls": 22,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 31729,
+        "usage": {
+          "prompt_tokens": 278840,
+          "completion_tokens": 7906,
+          "total_tokens": 286746,
+          "prompt_cache_hit_tokens": 258688,
+          "prompt_cache_miss_tokens": 20152
+        }
+      },
+      {
+        "name": "search-3-candidate",
+        "variant": "candidate",
+        "case": "search",
+        "repeat": 3,
+        "seconds": 83.15,
+        "exit_code": 0,
+        "passed": false,
+        "failures": [
+          "search format/source provenance oracle failed"
+        ],
+        "steps": 10,
+        "outer_calls": 17,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 23066,
+        "usage": {
+          "prompt_tokens": 298367,
+          "completion_tokens": 4539,
+          "total_tokens": 302906,
+          "prompt_cache_hit_tokens": 281600,
+          "prompt_cache_miss_tokens": 16767
+        }
+      },
+      {
+        "name": "single_edit-1-baseline",
+        "variant": "baseline",
+        "case": "single_edit",
+        "repeat": 1,
+        "seconds": 7.5,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 4,
+        "outer_calls": 4,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1012,
+        "usage": {
+          "prompt_tokens": 98335,
+          "completion_tokens": 538,
+          "total_tokens": 98873,
+          "prompt_cache_hit_tokens": 89344,
+          "prompt_cache_miss_tokens": 8991
+        }
+      },
+      {
+        "name": "single_edit-1-candidate",
+        "variant": "candidate",
+        "case": "single_edit",
+        "repeat": 1,
+        "seconds": 12.18,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 5,
+        "outer_calls": 4,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 679,
+        "usage": {
+          "prompt_tokens": 124318,
+          "completion_tokens": 832,
+          "total_tokens": 125150,
+          "prompt_cache_hit_tokens": 104832,
+          "prompt_cache_miss_tokens": 19486
+        }
+      },
+      {
+        "name": "single_edit-2-baseline",
+        "variant": "baseline",
+        "case": "single_edit",
+        "repeat": 2,
+        "seconds": 17.85,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 8,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1557,
+        "usage": {
+          "prompt_tokens": 175428,
+          "completion_tokens": 1566,
+          "total_tokens": 176994,
+          "prompt_cache_hit_tokens": 165888,
+          "prompt_cache_miss_tokens": 9540
+        }
+      },
+      {
+        "name": "single_edit-2-candidate",
+        "variant": "candidate",
+        "case": "single_edit",
+        "repeat": 2,
+        "seconds": 11.88,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 5,
+        "outer_calls": 5,
+        "nested_calls": 0,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1645,
+        "usage": {
+          "prompt_tokens": 124967,
+          "completion_tokens": 1154,
+          "total_tokens": 126121,
+          "prompt_cache_hit_tokens": 115712,
+          "prompt_cache_miss_tokens": 9255
+        }
+      },
+      {
+        "name": "single_edit-3-baseline",
+        "variant": "baseline",
+        "case": "single_edit",
+        "repeat": 3,
+        "seconds": 9.51,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 5,
+        "outer_calls": 4,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 727,
+        "usage": {
+          "prompt_tokens": 123348,
+          "completion_tokens": 742,
+          "total_tokens": 124090,
+          "prompt_cache_hit_tokens": 114304,
+          "prompt_cache_miss_tokens": 9044
+        }
+      },
+      {
+        "name": "single_edit-3-candidate",
+        "variant": "candidate",
+        "case": "single_edit",
+        "repeat": 3,
+        "seconds": 10.79,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 4,
+        "outer_calls": 5,
+        "nested_calls": 0,
+        "tool_errors": 0,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 1205,
+        "usage": {
+          "prompt_tokens": 99643,
+          "completion_tokens": 981,
+          "total_tokens": 100624,
+          "prompt_cache_hit_tokens": 90368,
+          "prompt_cache_miss_tokens": 9275
+        }
+      }
+    ]
+  },
+  "compact_required": {
+    "artifact_directory": ".moonagent/eval_runs/ptc_prompt_compact_required_ab_3x",
+    "manifest": {
+      "model": "deepseek-v4-flash",
+      "runs": 3,
+      "max_steps": 24,
+      "concurrency": 2,
+      "timeout": 600,
+      "require_ptc": true,
+      "cases": [
+        "computed_edits"
+      ],
+      "prompt_sha256": {
+        "baseline": "f55105b5305f57ecc5a4715e4376dab2d5dbde5cb4bc16c4024e45d1011befea",
+        "candidate": "4aabb70d60a0c4fc6d12cc78a3f3ddef7cab215ae58b02f768628b357a80a5af"
+      },
+      "engine_sha256": "865a30262328bc892954a1e6c7e8c7de24d7671c407fa872cdce272f4b833bb8",
+      "commit": "c1789e27a60f984f33d99dd2ce30e1ce6e93e53c"
+    },
+    "results": [
+      {
+        "name": "computed_edits-1-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 30.72,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 9,
+        "outer_calls": 8,
+        "nested_calls": 1,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 6617,
+        "usage": {
+          "prompt_tokens": 248891,
+          "completion_tokens": 4516,
+          "total_tokens": 253407,
+          "prompt_cache_hit_tokens": 237312,
+          "prompt_cache_miss_tokens": 11579
+        }
+      },
+      {
+        "name": "computed_edits-1-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 1,
+        "seconds": 33.32,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 9,
+        "outer_calls": 9,
+        "nested_calls": 2,
+        "tool_errors": 2,
+        "nested_errors": 1,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 8920,
+        "usage": {
+          "prompt_tokens": 249620,
+          "completion_tokens": 4901,
+          "total_tokens": 254521,
+          "prompt_cache_hit_tokens": 237568,
+          "prompt_cache_miss_tokens": 12052
+        }
+      },
+      {
+        "name": "computed_edits-2-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 45.81,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 14,
+        "outer_calls": 13,
+        "nested_calls": 1,
+        "tool_errors": 4,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 12095,
+        "usage": {
+          "prompt_tokens": 415005,
+          "completion_tokens": 6523,
+          "total_tokens": 421528,
+          "prompt_cache_hit_tokens": 401152,
+          "prompt_cache_miss_tokens": 13853
+        }
+      },
+      {
+        "name": "computed_edits-2-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 2,
+        "seconds": 25.51,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 7,
+        "nested_calls": 1,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 7066,
+        "usage": {
+          "prompt_tokens": 189781,
+          "completion_tokens": 3518,
+          "total_tokens": 193299,
+          "prompt_cache_hit_tokens": 178304,
+          "prompt_cache_miss_tokens": 11477
+        }
+      },
+      {
+        "name": "computed_edits-3-baseline",
+        "variant": "baseline",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 19.53,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 7,
+        "outer_calls": 7,
+        "nested_calls": 1,
+        "tool_errors": 1,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 5788,
+        "usage": {
+          "prompt_tokens": 187480,
+          "completion_tokens": 3161,
+          "total_tokens": 190641,
+          "prompt_cache_hit_tokens": 176384,
+          "prompt_cache_miss_tokens": 11096
+        }
+      },
+      {
+        "name": "computed_edits-3-candidate",
+        "variant": "candidate",
+        "case": "computed_edits",
+        "repeat": 3,
+        "seconds": 43.62,
+        "exit_code": 0,
+        "passed": true,
+        "failures": [],
+        "steps": 17,
+        "outer_calls": 17,
+        "nested_calls": 1,
+        "tool_errors": 5,
+        "nested_errors": 0,
+        "interrupted_calls": 0,
+        "model_tool_output_chars": 18121,
+        "usage": {
+          "prompt_tokens": 531405,
+          "completion_tokens": 5543,
+          "total_tokens": 536948,
+          "prompt_cache_hit_tokens": 515072,
+          "prompt_cache_miss_tokens": 16333
+        }
+      }
+    ]
+  }
+}
