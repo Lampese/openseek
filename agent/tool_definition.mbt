@@ -2,20 +2,24 @@
 /// The completion notice pushed to the model when a background job exits: its
 /// id, terminal status, and how to read its output.
 fn background_notice_text(snapshot : @bgjobs.BgJobSnapshot) -> String {
-  let status = match snapshot.status {
-    Exited(0) => "exit=0"
-    Exited(code) => "exit=\{code}"
-    Stopped =>
-      if snapshot.output_error is Some(error) {
-        "output capture failed: \{error}"
-      } else if snapshot.killed_by_output_limit {
-        "killed: flooded past the output cap"
-      } else if snapshot.killed_by_time_limit {
-        "killed: outlived the wall-clock cap"
-      } else {
-        "stopped"
-      }
-    Running => "running"
+  let status = if snapshot.cleanup_error is Some(error) {
+    "cleanup failed: \{error}"
+  } else {
+    match snapshot.status {
+      Exited(0) => "exit=0"
+      Exited(code) => "exit=\{code}"
+      Stopped =>
+        if snapshot.output_error is Some(error) {
+          "output capture failed: \{error}"
+        } else if snapshot.killed_by_output_limit {
+          "killed: flooded past the output cap"
+        } else if snapshot.killed_by_time_limit {
+          "killed: outlived the wall-clock cap"
+        } else {
+          "stopped"
+        }
+      Running => "running"
+    }
   }
   let label = match snapshot.description {
     Some(description) => "\{description} · \{snapshot.command}"
@@ -167,12 +171,25 @@ pub async fn[X] build_tools(
       }
     })
   })
+  let file_tools = [
+    @edit.definition(workspace_root~, file_state~),
+    @multi_edit.definition(workspace_root~, file_state~),
+    @write.definition(workspace_root~, file_state~),
+    @remove.definition(workspace_root~, file_state~),
+  ].map(tool => file_state.serialize(tool))
+  let extras = extra_tools.map(tool => {
+    if tool.is_concurrent_safe() {
+      tool
+    } else {
+      file_state.serialize(tool)
+    }
+  })
+  let program_tools = @agent_tool.Tools(file_tools + extras)
+  let program_service = @ptc.Service::start(scope.group(), program_tools)
+  let program_trace : Ref[Json?] = Ref(None)
   Tools(
+    file_tools +
     [
-      @edit.definition(workspace_root~, file_state~),
-      @multi_edit.definition(workspace_root~, file_state~),
-      @write.definition(workspace_root~, file_state~),
-      @remove.definition(workspace_root~, file_state~),
       @plan.definition(),
       @goal.definition(),
       // The escalation argument exists for this registry only when the runtime
@@ -192,6 +209,8 @@ pub async fn[X] build_tools(
         job_dir=scratch,
         approval?=runtime.approval_channel(),
         subrun?=mbtx_subrun,
+        program_service~,
+        on_program_trace=data => program_trace.val = Some(data),
       ),
       // Deliberately NOT told about escalation. It reports a job that already
       // ran — a policy refusal reaches it after minutes of real work — and the
@@ -202,8 +221,9 @@ pub async fn[X] build_tools(
       @job_wait.definition(),
       @finish.definition(),
     ] +
-    extra_tools,
+    extras,
     background_jobs=bg_runtime,
+    program_trace~,
   )
 }
 

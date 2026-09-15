@@ -1,4 +1,10 @@
 ///|
+priv struct ProgramRun {
+  registration : @ptc.Program
+  mut adopted : Bool
+}
+
+///|
 /// How long a runtime-backed run stays inline before it is adopted as a job.
 /// Five seconds keeps quick probes inline while moving builds, suites, and
 /// watchers out of the turn without asking the model to predict their duration.
@@ -129,6 +135,8 @@ pub fn definition(
   build_timeout_ms? : Int = BuildTimeoutMs,
   approval? : @agent_runtime.ApprovalChannel,
   subrun? : @host.SubrunInjection,
+  program_service? : @ptc.Service,
+  on_program_trace? : (Json) -> Unit = _ => (),
 ) -> @agent_tool.AgentToolDefinition {
   // Per cache key, the generation a stopped build retired (see
   // `open_generation`). Session memory, deliberately: see there.
@@ -141,43 +149,107 @@ pub fn definition(
   AgentToolDefinition(
     name="mbtx",
     description=description(
-      background=bg_runtime is Some(_),
-      escalation=approval is Some(_),
-      hosting=subrun is Some(_),
-      auto_background_after_ms~,
-      foreground_timeout_ms~,
-      build_timeout_ms~,
-    ),
-    schema=JsonSchema(
-      schema(escalation=approval is Some(_), hosting=subrun is Some(_)),
-    ),
-    execute=Async(arguments => {
-      let saved : Ref[String?] = Ref(None)
-      let action = execute(
-        workspace_root,
-        arguments,
-        read_only~,
-        file_state~,
-        write_scope?,
-        saved~,
-        bg_runtime?,
-        job_dir?,
-        scratch_dir?,
-        worker_sandbox?,
+        background=bg_runtime is Some(_),
+        escalation=approval is Some(_),
+        hosting=subrun is Some(_),
         auto_background_after_ms~,
         foreground_timeout_ms~,
         build_timeout_ms~,
-        generations~,
-        approval?,
-        subrun?,
+      ) +
+      (if program_service is Some(_) { @ptc.description() } else { "" }),
+    schema=JsonSchema(
+      schema(
+        escalation=approval is Some(_),
+        hosting=subrun is Some(_),
+        programmatic=program_service is Some(_),
+      ),
+    ),
+    execute=Async(arguments => {
+      let saved : Ref[String?] = Ref(None)
+      let input = @decode.decode(arguments) catch {
+        error =>
+          return @agent_tool.respond(
+            "error: mbtx requires \{@tool_error.failure_message("\{error}")}",
+            is_error=true,
+          )
+      }
+      let compatible = input.target == "wasm" &&
+        !input.escalated &&
+        !input.subrun
+      let enabled = input.ptc.unwrap_or(
+        compatible && program_service is Some(_),
       )
+      async fn run(
+        program_env : Map[String, String]?,
+        program : ProgramRun?,
+      ) -> @agent_tool.ToolAction {
+        execute(
+          workspace_root,
+          input,
+          read_only~,
+          file_state~,
+          write_scope?,
+          saved~,
+          bg_runtime?,
+          job_dir?,
+          scratch_dir?,
+          worker_sandbox?,
+          auto_background_after_ms~,
+          foreground_timeout_ms~,
+          build_timeout_ms~,
+          generations~,
+          approval?,
+          subrun?,
+          program_env?,
+          program?,
+        )
+      }
+      let action = if enabled {
+        guard compatible else {
+          return @agent_tool.respond(
+            "PTC requires the default wasm target and cannot combine with escalated or subrun",
+            is_error=true,
+          )
+        }
+        if program_service is Some(service) {
+          let active : ProgramRun = {
+            registration: service.register(on_trace=on_program_trace),
+            adopted: false,
+          }
+          errdefer active.registration.close()
+          let action = run(Some(active.registration.env()), Some(active)) catch {
+            error if @async.is_being_cancelled() ||
+              @async.is_cancellation_error(error) => raise error
+            error =>
+              @agent_tool.respond("PTC program failed: \{error}", is_error=true)
+          }
+          if !active.adopted {
+            active.registration.close()
+          }
+          active.registration.result(action)
+        } else {
+          @agent_tool.respond(
+            "PTC is unavailable in this tool registry",
+            is_error=true,
+          )
+        }
+      } else {
+        run(None, None)
+      }
       match (saved.val, action) {
         (Some(filename), Respond(output)) => {
-          let retry : Json = { "filename": filename }
+          let retry : Json = if enabled {
+            { "filename": filename, "ptc": true }
+          } else if input.ptc is Some(false) {
+            { "filename": filename, "ptc": false }
+          } else {
+            { "filename": filename }
+          }
           @agent_tool.respond(
             "Script saved at \{filename}. For subsequent runs, call mbtx with \{retry.stringify()} and omit source.\n\n\{output.content}",
             is_error=output.is_error,
             brief?=output.brief,
+            data?=output.data,
           )
         }
         _ => action
@@ -214,7 +286,7 @@ fn escalation_refused(outcome : @agent_runtime.ApprovalOutcome) -> String {
 ///|
 async fn execute(
   workspace_root : String,
-  arguments : Json,
+  input : @decode.MbtxInput,
   read_only~ : Bool,
   file_state~ : @agent_tool.FileStateMap,
   write_scope? : @write_scope.WriteScope,
@@ -232,14 +304,9 @@ async fn execute(
   generations~ : Map[String, Int],
   approval? : @agent_runtime.ApprovalChannel,
   subrun? : @host.SubrunInjection,
+  program_env? : Map[String, String],
+  program? : ProgramRun,
 ) -> @agent_tool.ToolAction {
-  let input = @decode.decode(arguments) catch {
-    error =>
-      return @agent_tool.respond(
-        "error: mbtx requires \{@tool_error.failure_message("\{error}")}",
-        is_error=true,
-      )
-  }
   // Read once, before validation/approval, then compile this same snapshot.
   // A saved script has the same isolation and execution path as inline code.
   let (source, source_name, script_path) = match input.program {
@@ -251,14 +318,16 @@ async fn execute(
           is_error=true,
         )
       }
-      save_script(
-        workspace_root,
-        filename,
-        source,
-        read_only~,
-        file_state~,
-        write_scope?,
-      ) catch {
+      file_state.with_access(() => {
+        save_script(
+          workspace_root,
+          filename,
+          source,
+          read_only~,
+          file_state~,
+          write_scope?,
+        )
+      }) catch {
         error if @async.is_being_cancelled() => raise error
         error =>
           return @agent_tool.respond(
@@ -288,18 +357,15 @@ async fn execute(
             is_error=true,
           )
       }
-      if is_bundled_filename(filename) &&
-        @env.get_env_var("OPENSEEK_REFERENCES") is Some(root) {
-        check_builtin_containment(path, root) catch {
-          error if @async.is_being_cancelled() => raise error
-          error =>
-            return @agent_tool.respond(
-              "error: mbtx \{@tool_error.failure_message("\{error}")}",
-              is_error=true,
-            )
-        }
-      }
-      let source = @fs.read_file(path).text() catch {
+      let source = read_script_snapshot(
+        file_state,
+        path,
+        if is_bundled_filename(filename) {
+          @env.get_env_var("OPENSEEK_REFERENCES")
+        } else {
+          None
+        },
+      ) catch {
         error if @async.is_being_cancelled() => raise error
         error => {
           let hint = if is_bundled_filename(filename) {
@@ -480,6 +546,9 @@ async fn execute(
     if job_owns_cleanup {
       return
     }
+    if program is Some(active) {
+      active.registration.close()
+    }
     @async.protect_from_cancel(() => {
       @fs.rmdir(dir, recursive=true) catch {
         _ => ()
@@ -633,13 +702,19 @@ async fn execute(
   defer (if reservation is Some(r) && !job_owns_cleanup {
     @emit.emit(WorkflowFinished(id="wf-\{r.base()}"))
   })
+  let injected = reservation.map(r => r.env()).unwrap_or(Map([]))
+  if program_env is Some(env) {
+    for key, value in env {
+      injected[key] = value
+    }
+  }
   let policy = wasm_policy_document(
     tmp_dir=snippet_tmp,
     extra_roots=[
       ..scratch_dir.map(l => [l]).unwrap_or([]),
       ..reservation.map(r => [r.dir()]).unwrap_or([]),
     ],
-    inject=reservation.map(r => r.env()).unwrap_or(Map([])),
+    inject=injected,
     spawnable=match (reservation, subrun) {
       (Some(_), Some(injection)) =>
         Some((injection.exe(), injection.launch_prefix()))
@@ -841,8 +916,14 @@ async fn execute(
       // snippet the engine's fd 0.
       stdin=@process.redirect_from_file(empty_stdin),
     )
+    if program is Some(active) {
+      exec.on_ending(() => active.registration.stop())
+    }
     // A cancelled turn must not leak the child: stop it before unwinding.
-    errdefer exec.request_stop()
+    errdefer {
+      exec.request_stop()
+      @async.protect_from_cancel(() => exec.wait())
+    }
     // Wait for exit even after binary output: reporting early would let
     // cleanup remove a still-running snippet's build directory. Keep the whole
     // wait inside the foreground deadline so expiry can detach the run.
@@ -860,6 +941,11 @@ async fn execute(
         dir
       }
       let terminal_cleanup : async () -> Unit = () => {
+        // Revoke and join RPC calls before deleting scratch space or reporting
+        // the process as completed. The listener itself stays session-owned.
+        if program is Some(active) {
+          active.registration.close()
+        }
         // The workflow bracket closes when the JOB ends — not when this call
         // returned at adoption, which was while the run was still going.
         if reservation is Some(r) {
@@ -870,6 +956,17 @@ async fn execute(
             _ => ()
           }
         })
+        if program is Some(active) &&
+          active.registration.trace_error() is Some(error) {
+          fail("PTC trace publication failed: \{error}")
+        }
+        if program is Some(active) &&
+          active.registration.interrupted() &&
+          exec.status() is Exited(0) {
+          fail(
+            "PTC script exited with unfinished tool calls; changes may have occurred",
+          )
+        }
       }
       // A staged job's label carries the phase marker: the notice and the job
       // listing then say on their face that the build already succeeded, so a
@@ -887,8 +984,17 @@ async fn execute(
         output_rewrites=temp_path_rewrites([real, build_dir], source_name~),
         moonrun_policy_active=policy_active,
         on_terminal=terminal_cleanup,
+        data?=program.map(active => () => active.registration.trace()),
       )
       job_owns_cleanup = true
+      if program is Some(active) {
+        active.adopted = true
+        active.registration.handoff(id, _ => runtime.metadata_changed(id))
+        // Capture calls that completed while job registration was suspended.
+        if active.registration.trace() is { "ptc_calls": [_, ..], .. } {
+          runtime.metadata_changed(id)
+        }
+      }
       let handoff = if staged {
         "mbtx: the build succeeded and the RUNNING PROGRAM was still going after \{duration_label(auto_background_after_ms)}, so it moved to the background as job \{id} (nothing was lost; any later nonzero exit is the program's own). Read its output with job_output (job_id=\"\{id}\") and stop it with job_stop (job_id=\"\{id}\")."
       } else {
@@ -961,6 +1067,7 @@ async fn execute(
     )
   }
   let result = @async.with_timeout_opt(foreground_timeout_ms, () => {
+    defer (if program is Some(active) { active.registration.stop() })
     let exit_code = @process.run(
       prog,
       argv,
@@ -970,7 +1077,17 @@ async fn execute(
       stdout=@process.redirect_to_file(log, append=true),
       stderr=@process.redirect_to_file(log, append=true),
       no_console_window=true,
+      cancel_handler?=program.map(active => {
+        let CancellationHandler(cancel) = @process.graceful_cancel(timeout=5000)
+        CancellationHandler(pid => {
+          active.registration.stop()
+          cancel(pid)
+        })
+      }),
     )
+    if program is Some(active) {
+      active.registration.stop()
+    }
     (exit_code, read_capped(log))
   })
   // A refusal is this tool's confinement firing, not an environment fault:
@@ -1529,7 +1646,7 @@ async fn read_capped(path : String) -> String {
 /// The `mbtx` argument schema. `escalation` adds `escalated` only when an
 /// approval channel is wired; otherwise every use would come back refused, and
 /// the cheapest way not to waste a turn is for the argument not to exist.
-fn schema(escalation~ : Bool, hosting~ : Bool) -> Json {
+fn schema(escalation~ : Bool, hosting~ : Bool, programmatic~ : Bool) -> Json {
   {
     "type": "object",
     "properties": Json(
@@ -1566,6 +1683,19 @@ fn schema(escalation~ : Bool, hosting~ : Bool) -> Json {
               "description": "Short human-readable description of this call for the transcript. Inherited by any background job; does not affect execution.",
             },
           ),
+          ..if programmatic {
+            [
+              (
+                "ptc",
+                Json({
+                  "type": "boolean",
+                  "description": "Enable @tools.edit(arguments), @tools.multi_edit(arguments), @tools.web_search(arguments), and @tools.call(name, arguments) through an explicit SDK import. Each arguments value is the same JSON object as for the direct tool. Uses registered host tools and structured results. Defaults to true for supported wasm runs; false opts out. Normal foreground/background timing is unchanged. Explicit true cannot combine with other targets, escalated, or subrun.",
+                }),
+              ),
+            ]
+          } else {
+            []
+          },
           (
             "target",
             {
@@ -1887,4 +2017,20 @@ fn description(
     $|work is complete.
     $|\{delegation}
   )
+}
+
+///|
+/// Capture saved source only after any shared edit/check/rollback has settled.
+/// Release the file gate before compilation or waiting for the program.
+async fn read_script_snapshot(
+  state : @agent_tool.FileStateMap,
+  path : String,
+  builtin_root : String?,
+) -> String {
+  state.with_access(() => {
+    if builtin_root is Some(root) {
+      check_builtin_containment(path, root)
+    }
+    @fs.read_file(path).text()
+  })
 }
