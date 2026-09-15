@@ -1,0 +1,495 @@
+{
+  "manifest": {
+    "model": "deepseek-v4-flash",
+    "experiment": "capability",
+    "runs": 3,
+    "max_steps": 24,
+    "concurrency": 3,
+    "timeout": 600,
+    "require_ptc": false,
+    "cases": [
+      "single_edit",
+      "computed_edits",
+      "search"
+    ],
+    "prompt_sha256": {
+      "baseline": "c2f916be1899c3c274f62b0d67775dae9e51669d7a0a12491cd63d8e5456de4b",
+      "candidate": "c2f916be1899c3c274f62b0d67775dae9e51669d7a0a12491cd63d8e5456de4b"
+    },
+    "engine_sha256": {
+      "candidate": "e465bd2b9f2b27f6fd7ca2236f21f1f1a7d6e4cd56c4b6b256d1c2ae88ed38b6",
+      "baseline": "359dff8b5ee5858069420a1076ae94ac692bf23cd26568a06f71b0ece5861d7b"
+    },
+    "commit": "43de35e5bf2393c546892197a37e72008ff99cbe"
+  },
+  "results": [
+    {
+      "name": "computed_edits-1-baseline",
+      "variant": "baseline",
+      "case": "computed_edits",
+      "repeat": 1,
+      "seconds": 19.19,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 6,
+      "outer_calls": 8,
+      "nested_calls": 0,
+      "tool_errors": 3,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 6856,
+      "usage": {
+        "prompt_tokens": 159196,
+        "completion_tokens": 3517,
+        "total_tokens": 162713,
+        "prompt_cache_hit_tokens": 138240,
+        "prompt_cache_miss_tokens": 20956
+      }
+    },
+    {
+      "name": "computed_edits-1-candidate",
+      "variant": "candidate",
+      "case": "computed_edits",
+      "repeat": 1,
+      "seconds": 19.46,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 8,
+      "outer_calls": 8,
+      "nested_calls": 0,
+      "tool_errors": 2,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 4813,
+      "usage": {
+        "prompt_tokens": 215461,
+        "completion_tokens": 3347,
+        "total_tokens": 218808,
+        "prompt_cache_hit_tokens": 204672,
+        "prompt_cache_miss_tokens": 10789
+      }
+    },
+    {
+      "name": "computed_edits-2-baseline",
+      "variant": "baseline",
+      "case": "computed_edits",
+      "repeat": 2,
+      "seconds": 28.89,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 7,
+      "outer_calls": 8,
+      "nested_calls": 0,
+      "tool_errors": 1,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 5884,
+      "usage": {
+        "prompt_tokens": 187853,
+        "completion_tokens": 3711,
+        "total_tokens": 191564,
+        "prompt_cache_hit_tokens": 177408,
+        "prompt_cache_miss_tokens": 10445
+      }
+    },
+    {
+      "name": "computed_edits-2-candidate",
+      "variant": "candidate",
+      "case": "computed_edits",
+      "repeat": 2,
+      "seconds": 23.88,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 8,
+      "outer_calls": 8,
+      "nested_calls": 0,
+      "tool_errors": 1,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 6490,
+      "usage": {
+        "prompt_tokens": 220825,
+        "completion_tokens": 4390,
+        "total_tokens": 225215,
+        "prompt_cache_hit_tokens": 209408,
+        "prompt_cache_miss_tokens": 11417
+      }
+    },
+    {
+      "name": "computed_edits-3-baseline",
+      "variant": "baseline",
+      "case": "computed_edits",
+      "repeat": 3,
+      "seconds": 18.96,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 7,
+      "outer_calls": 8,
+      "nested_calls": 0,
+      "tool_errors": 1,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 5895,
+      "usage": {
+        "prompt_tokens": 186433,
+        "completion_tokens": 3628,
+        "total_tokens": 190061,
+        "prompt_cache_hit_tokens": 175872,
+        "prompt_cache_miss_tokens": 10561
+      }
+    },
+    {
+      "name": "computed_edits-3-candidate",
+      "variant": "candidate",
+      "case": "computed_edits",
+      "repeat": 3,
+      "seconds": 27.93,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 10,
+      "outer_calls": 9,
+      "nested_calls": 0,
+      "tool_errors": 2,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 8802,
+      "usage": {
+        "prompt_tokens": 281224,
+        "completion_tokens": 4603,
+        "total_tokens": 285827,
+        "prompt_cache_hit_tokens": 268672,
+        "prompt_cache_miss_tokens": 12552
+      }
+    },
+    {
+      "name": "search-1-baseline",
+      "variant": "baseline",
+      "case": "search",
+      "repeat": 1,
+      "seconds": 88.4,
+      "exit_code": 0,
+      "passed": false,
+      "failures": [
+        "search format/source provenance oracle failed"
+      ],
+      "steps": 13,
+      "outer_calls": 22,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 28303,
+      "usage": {
+        "prompt_tokens": 412967,
+        "completion_tokens": 5279,
+        "total_tokens": 418246,
+        "prompt_cache_hit_tokens": 394752,
+        "prompt_cache_miss_tokens": 18215
+      }
+    },
+    {
+      "name": "search-1-candidate",
+      "variant": "candidate",
+      "case": "search",
+      "repeat": 1,
+      "seconds": 142.89,
+      "exit_code": 0,
+      "passed": false,
+      "failures": [
+        "search format/source provenance oracle failed"
+      ],
+      "steps": 15,
+      "outer_calls": 34,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 50053,
+      "usage": {
+        "prompt_tokens": 549574,
+        "completion_tokens": 9248,
+        "total_tokens": 558822,
+        "prompt_cache_hit_tokens": 522496,
+        "prompt_cache_miss_tokens": 27078
+      }
+    },
+    {
+      "name": "search-2-baseline",
+      "variant": "baseline",
+      "case": "search",
+      "repeat": 2,
+      "seconds": 95.7,
+      "exit_code": 0,
+      "passed": false,
+      "failures": [
+        "search format/source provenance oracle failed"
+      ],
+      "steps": 11,
+      "outer_calls": 31,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 41312,
+      "usage": {
+        "prompt_tokens": 366783,
+        "completion_tokens": 5143,
+        "total_tokens": 371926,
+        "prompt_cache_hit_tokens": 344320,
+        "prompt_cache_miss_tokens": 22463
+      }
+    },
+    {
+      "name": "search-2-candidate",
+      "variant": "candidate",
+      "case": "search",
+      "repeat": 2,
+      "seconds": 98.03,
+      "exit_code": 0,
+      "passed": false,
+      "failures": [
+        "search format/source provenance oracle failed"
+      ],
+      "steps": 11,
+      "outer_calls": 18,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 40110,
+      "usage": {
+        "prompt_tokens": 367995,
+        "completion_tokens": 7964,
+        "total_tokens": 375959,
+        "prompt_cache_hit_tokens": 345600,
+        "prompt_cache_miss_tokens": 22395
+      }
+    },
+    {
+      "name": "search-3-baseline",
+      "variant": "baseline",
+      "case": "search",
+      "repeat": 3,
+      "seconds": 38.72,
+      "exit_code": 0,
+      "passed": false,
+      "failures": [
+        "search format/source provenance oracle failed"
+      ],
+      "steps": 7,
+      "outer_calls": 10,
+      "nested_calls": 0,
+      "tool_errors": 1,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 13577,
+      "usage": {
+        "prompt_tokens": 193521,
+        "completion_tokens": 2070,
+        "total_tokens": 195591,
+        "prompt_cache_hit_tokens": 180608,
+        "prompt_cache_miss_tokens": 12913
+      }
+    },
+    {
+      "name": "search-3-candidate",
+      "variant": "candidate",
+      "case": "search",
+      "repeat": 3,
+      "seconds": 72.25,
+      "exit_code": 0,
+      "passed": false,
+      "failures": [
+        "search format/source provenance oracle failed"
+      ],
+      "steps": 9,
+      "outer_calls": 17,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 21763,
+      "usage": {
+        "prompt_tokens": 272307,
+        "completion_tokens": 4670,
+        "total_tokens": 276977,
+        "prompt_cache_hit_tokens": 255744,
+        "prompt_cache_miss_tokens": 16563
+      }
+    },
+    {
+      "name": "single_edit-1-baseline",
+      "variant": "baseline",
+      "case": "single_edit",
+      "repeat": 1,
+      "seconds": 13.73,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 6,
+      "outer_calls": 5,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 667,
+      "usage": {
+        "prompt_tokens": 147111,
+        "completion_tokens": 1165,
+        "total_tokens": 148276,
+        "prompt_cache_hit_tokens": 128000,
+        "prompt_cache_miss_tokens": 19111
+      }
+    },
+    {
+      "name": "single_edit-1-candidate",
+      "variant": "candidate",
+      "case": "single_edit",
+      "repeat": 1,
+      "seconds": 10.32,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 5,
+      "outer_calls": 5,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 1116,
+      "usage": {
+        "prompt_tokens": 125136,
+        "completion_tokens": 896,
+        "total_tokens": 126032,
+        "prompt_cache_hit_tokens": 105472,
+        "prompt_cache_miss_tokens": 19664
+      }
+    },
+    {
+      "name": "single_edit-2-baseline",
+      "variant": "baseline",
+      "case": "single_edit",
+      "repeat": 2,
+      "seconds": 5.76,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 4,
+      "outer_calls": 4,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 1041,
+      "usage": {
+        "prompt_tokens": 96811,
+        "completion_tokens": 472,
+        "total_tokens": 97283,
+        "prompt_cache_hit_tokens": 88448,
+        "prompt_cache_miss_tokens": 8363
+      }
+    },
+    {
+      "name": "single_edit-2-candidate",
+      "variant": "candidate",
+      "case": "single_edit",
+      "repeat": 2,
+      "seconds": 11.17,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 6,
+      "outer_calls": 6,
+      "nested_calls": 0,
+      "tool_errors": 1,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 1969,
+      "usage": {
+        "prompt_tokens": 151598,
+        "completion_tokens": 1235,
+        "total_tokens": 152833,
+        "prompt_cache_hit_tokens": 141952,
+        "prompt_cache_miss_tokens": 9646
+      }
+    },
+    {
+      "name": "single_edit-3-baseline",
+      "variant": "baseline",
+      "case": "single_edit",
+      "repeat": 3,
+      "seconds": 9.26,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 5,
+      "outer_calls": 4,
+      "nested_calls": 0,
+      "tool_errors": 0,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 742,
+      "usage": {
+        "prompt_tokens": 121543,
+        "completion_tokens": 917,
+        "total_tokens": 122460,
+        "prompt_cache_hit_tokens": 113024,
+        "prompt_cache_miss_tokens": 8519
+      }
+    },
+    {
+      "name": "single_edit-3-candidate",
+      "variant": "candidate",
+      "case": "single_edit",
+      "repeat": 3,
+      "seconds": 10.19,
+      "exit_code": 0,
+      "passed": true,
+      "failures": [],
+      "steps": 6,
+      "outer_calls": 5,
+      "nested_calls": 0,
+      "tool_errors": 1,
+      "nested_errors": 0,
+      "interrupted_calls": 0,
+      "model_tool_output_chars": 1074,
+      "usage": {
+        "prompt_tokens": 150780,
+        "completion_tokens": 869,
+        "total_tokens": 151649,
+        "prompt_cache_hit_tokens": 141312,
+        "prompt_cache_miss_tokens": 9468
+      }
+    }
+  ],
+  "sdk_smoke": {
+    "name": "computed_edits-1-candidate",
+    "variant": "candidate",
+    "case": "computed_edits",
+    "repeat": 1,
+    "seconds": 42.88,
+    "exit_code": 0,
+    "passed": true,
+    "failures": [],
+    "steps": 11,
+    "outer_calls": 10,
+    "nested_calls": 1,
+    "tool_errors": 4,
+    "nested_errors": 0,
+    "interrupted_calls": 0,
+    "model_tool_output_chars": 7497,
+    "usage": {
+      "prompt_tokens": 317030,
+      "completion_tokens": 6274,
+      "total_tokens": 323304,
+      "prompt_cache_hit_tokens": 304768,
+      "prompt_cache_miss_tokens": 12262
+    }
+  }
+}
