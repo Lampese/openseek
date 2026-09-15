@@ -334,6 +334,7 @@ pub fn panel(state : State, emit : @cmd.Emit[Msg]) -> @html.Html {
       if @transcript_component.program_calls_view(
           job.data,
           "job/\{job.generation}/\{job.id}",
+          terminal=job.state.is_terminal(),
         )
         is Some(calls) {
         details.push(calls)

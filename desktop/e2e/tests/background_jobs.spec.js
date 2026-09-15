@@ -477,5 +477,15 @@ test('background program calls update live and retain edit diffs after reload', 
   await page.locator('.jobs-panel').getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.locator('.jobs-detail-title')).toContainText('Failed · cleanup incomplete');
   await expect(page.getByRole('alert')).toContainText('unfinished tool calls');
+  job.cleanup_error = null;
+  job.state = { kind: 'interrupted' };
+  job.data.ptc_calls[0] = { name: 'edit', arguments: { path: 'note.txt' }, status: 'running' };
+  job.revision++;
+  await page.reload(); await app.openSession(); await app.openJobs();
+  await expandHistory(page);
+  await page.getByRole('button', { name: /Watch build output/ }).click();
+  await trace.locator(':scope > summary').click();
+  await expect(trace.getByRole('img', { name: 'Tool failed' })).toBeVisible();
+  await expect(trace.locator('.tool-status-spinner')).toHaveCount(0);
   expect(app.pageErrors).toEqual([]);
 });

@@ -1056,8 +1056,12 @@ fn transcript_view(
 
 ///|
 /// Reuse the ordinary tool cards for live and retained background-job traces.
-pub fn program_calls_view(data : Json?, parent : String) -> @html.Html? {
-  let calls = @transcript.program_calls(data, parent)
+pub fn program_calls_view(
+  data : Json?,
+  parent : String,
+  terminal? : Bool = false,
+) -> @html.Html? {
+  let calls = @transcript.program_calls(data, parent, terminal~)
   guard !calls.is_empty() else { return None }
   let rows : Map[String, @html.Html] = Map([])
   for index, call in calls {
