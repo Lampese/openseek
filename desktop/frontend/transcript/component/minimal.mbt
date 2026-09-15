@@ -266,6 +266,11 @@ fn Input::minimal_blocks(self : Input) -> @vector.Vector[Block] {
               ),
             ),
           )
+          // Program calls are recorded under their parent. Preserve their
+          // status and edit previews in the minimal work log as well.
+          for child in call.children {
+            activity.push(Call(MinimalCall::from_tool(child)))
+          }
         }
         if !activity.is_empty() {
           builder.push_part("tools\u{0}\{identity}", Activity(activity))
