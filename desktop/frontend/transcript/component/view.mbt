@@ -1053,3 +1053,23 @@ fn transcript_view(
     children,
   )
 }
+
+///|
+/// Reuse the ordinary tool cards for live and retained background-job traces.
+pub fn program_calls_view(data : Json?, parent : String) -> @html.Html? {
+  let calls = @transcript.program_calls(data, parent)
+  guard !calls.is_empty() else { return None }
+  let rows : Map[String, @html.Html] = Map([])
+  for index, call in calls {
+    rows[tool_run_row_key(call, index, "request")] = tool_request_view(call)
+    if tool_result_row_is_visible(call) {
+      rows[tool_run_row_key(call, index, "result")] = tool_result_view(call)
+    }
+  }
+  Some(
+    @html.details(class="job-program-calls", [
+      @html.summary("Program tool calls (\{calls.length()})"),
+      @html.div(class="tool-call-section", rows),
+    ]),
+  )
+}

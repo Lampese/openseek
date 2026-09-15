@@ -1,7 +1,7 @@
 ///|
 /// Nested calls are display metadata, not synthetic assistant tool calls.
 /// Reuse normal tool cards so editing arguments retain their diff views.
-fn program_calls(data : Json?, parent : String) -> Array[ToolCall] {
+pub fn program_calls(data : Json?, parent : String) -> Array[ToolCall] {
   guard data is Some({ "ptc_calls": Array(entries), .. }) else { return [] }
   let calls : Array[ToolCall] = []
   for index, entry in entries[:entries.length().min(64)] {
@@ -15,6 +15,7 @@ fn program_calls(data : Json?, parent : String) -> Array[ToolCall] {
       continue
     }
     let outcome = match entry {
+      _ if status == "running" => Pending(output=None)
       {
         "result": {
           "content": String(content),
@@ -69,4 +70,17 @@ test "program calls retain edit arguments and interruption state" {
   assert_true(calls[0].outcome is Done(is_error=false, ..))
   assert_true(calls[1].outcome is Done(is_error=true, ..))
   assert_true(program_calls(None, "outer").is_empty())
+}
+
+///|
+test "live program calls remain pending until their terminal result" {
+  let calls = program_calls(
+    Some({
+      "ptc_calls": [
+        { "name": "web_search", "arguments": {}, "status": "running" },
+      ],
+    }),
+    "job",
+  )
+  assert_true(calls is [{ outcome: Pending(output=None), .. }])
 }
