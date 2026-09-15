@@ -460,7 +460,7 @@ test('background program calls update live and retain edit diffs after reload', 
   job.data.ptc_calls[0].status = 'done';
   job.data.ptc_calls[0].result = { content: 'Updated note.txt', is_error: false };
   job.revision++;
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('.jobs-panel').getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(trace.getByRole('img', { name: 'Tool succeeded' })).toBeVisible();
   await expect(trace.locator('.tool-status-spinner')).toHaveCount(0);
   await page.reload(); await app.openSession(); await app.openJobs();
@@ -474,7 +474,7 @@ test('background program calls update live and retain edit diffs after reload', 
   job.cleanup_error = 'PTC script exited with unfinished tool calls';
   job.state = { kind: 'exited', code: 0 };
   job.revision++;
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.locator('.jobs-panel').getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(page.locator('.jobs-detail-title')).toContainText('Failed · cleanup incomplete');
   await expect(page.getByRole('alert')).toContainText('unfinished tool calls');
   expect(app.pageErrors).toEqual([]);
