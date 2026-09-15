@@ -99,3 +99,11 @@ The prior 48-trial experiment remains historical prompt-only evidence: both
 sides used the old injected PTC client. It does not establish performance or
 regression claims for this implementation. Record new results separately and
 state the limits of the sample.
+
+The published-SDK [capability comparison](../../eval/ptc_prompt/capability-results-2026-09-15.md)
+and [YAML parser comparison](../../eval/ptc_prompt/yaml-results-2026-09-15.md)
+are complete. The parser's initial 64-step/15-minute cohort finished no runs;
+the fresh 128-step/30-minute pair both finished and passed all 46 withheld cases.
+One initial candidate demonstrated a computed 42-edit SDK batch. The expanded
+pair chose no PTC, so it establishes no PTC efficiency gain. Keep selective
+prompt guidance, direct tools, and the larger coding-benchmark allowance.

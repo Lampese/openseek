@@ -1,0 +1,294 @@
+{
+  "experiment": "yaml-parser-capability",
+  "date": "2026-09-15",
+  "moon_version": "moon 0.1.20260904 (94521db 2026-09-04)\n\nFeature flags enabled: rr_moon_mod,rr_moon_pkg",
+  "host": "Darwin arm64",
+  "cohorts": {
+    "initial": {
+      "manifest": {
+        "experiment": "yaml-parser-capability",
+        "model": "deepseek-v4-flash",
+        "runs": 2,
+        "max_steps": 64,
+        "timeout": 900,
+        "concurrency": 2,
+        "visible_cases": 6,
+        "withheld_cases": 46,
+        "prompt_sha256": "c2f916be1899c3c274f62b0d67775dae9e51669d7a0a12491cd63d8e5456de4b",
+        "spec_sha256": "0cd7ecf493792ac3fd27e900ecb9ea33920b5af8a37d4d0cc17e5a64c649718d",
+        "oracle_sha256": "ae7b92e6449ec3117f82493e00e2b09f670e19bcb423f09d279b775ba6575635",
+        "engine_sha256": {
+          "baseline": "359dff8b5ee5858069420a1076ae94ac692bf23cd26568a06f71b0ece5861d7b",
+          "candidate": "e465bd2b9f2b27f6fd7ca2236f21f1f1a7d6e4cd56c4b6b256d1c2ae88ed38b6"
+        },
+        "commit": "43de35e5bf2393c546892197a37e72008ff99cbe"
+      },
+      "results": [
+        {
+          "name": "yaml-1-baseline",
+          "variant": "baseline",
+          "repeat": 1,
+          "exit_code": null,
+          "exit_code_unrecorded": true,
+          "seconds": 674.85,
+          "seconds_source": "log creation to last write (approximate)",
+          "steps": 49,
+          "outer_calls": 69,
+          "nested_calls": 0,
+          "tool_errors": 9,
+          "nested_errors": 0,
+          "final": null,
+          "usage": {
+            "prompt_tokens": 5972486,
+            "completion_tokens": 134849,
+            "total_tokens": 6107335,
+            "prompt_cache_hit_tokens": 5932032,
+            "prompt_cache_miss_tokens": 40454
+          },
+          "child_sessions": 3,
+          "child_steps": 68,
+          "usage_scope": "parent only; child token usage unavailable",
+          "oracle_passed": 46,
+          "oracle_total": 46,
+          "oracle_exit_code": 0,
+          "oracle_failures": [],
+          "valid_passed": 30,
+          "invalid_passed": 16,
+          "compile_or_harness_error": false,
+          "preserved_fixture": false,
+          "passed": false,
+          "project_tests": {
+            "total": 21,
+            "passed": 21,
+            "failed": 0
+          }
+        },
+        {
+          "name": "yaml-1-candidate",
+          "variant": "candidate",
+          "repeat": 1,
+          "exit_code": null,
+          "exit_code_unrecorded": true,
+          "seconds": 736.32,
+          "seconds_source": "log creation to last write (approximate)",
+          "steps": 64,
+          "outer_calls": 81,
+          "nested_calls": 1,
+          "tool_errors": 10,
+          "nested_errors": 0,
+          "final": {
+            "kind": "failed",
+            "message": "max steps exhausted"
+          },
+          "usage": {
+            "prompt_tokens": 9146507,
+            "completion_tokens": 134357,
+            "total_tokens": 9280864,
+            "prompt_cache_hit_tokens": 9076608,
+            "prompt_cache_miss_tokens": 69899
+          },
+          "child_sessions": 1,
+          "child_steps": 3,
+          "usage_scope": "parent only; child token usage unavailable",
+          "oracle_passed": 46,
+          "oracle_total": 46,
+          "oracle_exit_code": 0,
+          "oracle_failures": [],
+          "valid_passed": 30,
+          "invalid_passed": 16,
+          "compile_or_harness_error": false,
+          "preserved_fixture": false,
+          "passed": false,
+          "project_tests": {
+            "total": 23,
+            "passed": 23,
+            "failed": 0
+          }
+        },
+        {
+          "name": "yaml-2-baseline",
+          "variant": "baseline",
+          "repeat": 2,
+          "exit_code": null,
+          "exit_code_unrecorded": true,
+          "seconds": 801.0,
+          "seconds_source": "log creation to last write; excludes silent waits",
+          "steps": 63,
+          "outer_calls": 73,
+          "nested_calls": 0,
+          "tool_errors": 12,
+          "nested_errors": 0,
+          "final": null,
+          "usage": {
+            "prompt_tokens": 8930149,
+            "completion_tokens": 150155,
+            "total_tokens": 9080304,
+            "prompt_cache_hit_tokens": 8869120,
+            "prompt_cache_miss_tokens": 61029
+          },
+          "child_sessions": 1,
+          "child_steps": 12,
+          "usage_scope": "parent only; child token usage unavailable",
+          "oracle_passed": 46,
+          "oracle_total": 46,
+          "oracle_exit_code": 0,
+          "oracle_failures": [],
+          "valid_passed": 30,
+          "invalid_passed": 16,
+          "compile_or_harness_error": false,
+          "preserved_fixture": true,
+          "passed": false,
+          "project_tests": {
+            "total": 60,
+            "passed": 60,
+            "failed": 0
+          }
+        },
+        {
+          "name": "yaml-2-candidate",
+          "variant": "candidate",
+          "repeat": 2,
+          "exit_code": null,
+          "exit_code_unrecorded": true,
+          "seconds": 715.45,
+          "seconds_source": "log creation to last write; excludes silent waits",
+          "steps": 64,
+          "outer_calls": 74,
+          "nested_calls": 0,
+          "tool_errors": 13,
+          "nested_errors": 0,
+          "final": {
+            "kind": "failed",
+            "message": "max steps exhausted"
+          },
+          "usage": {
+            "prompt_tokens": 9308235,
+            "completion_tokens": 141771,
+            "total_tokens": 9450006,
+            "prompt_cache_hit_tokens": 9262464,
+            "prompt_cache_miss_tokens": 45771
+          },
+          "child_sessions": 1,
+          "child_steps": 7,
+          "usage_scope": "parent only; child token usage unavailable",
+          "oracle_passed": 45,
+          "oracle_total": 46,
+          "oracle_exit_code": 2,
+          "oracle_failures": [
+            "flow_comments"
+          ],
+          "valid_passed": 29,
+          "invalid_passed": 16,
+          "compile_or_harness_error": false,
+          "preserved_fixture": false,
+          "passed": false,
+          "project_tests": {
+            "total": 30,
+            "passed": 30,
+            "failed": 0
+          }
+        }
+      ]
+    },
+    "expanded": {
+      "manifest": {
+        "experiment": "yaml-parser-capability",
+        "model": "deepseek-v4-flash",
+        "runs": 1,
+        "max_steps": 128,
+        "timeout": 1800,
+        "concurrency": 2,
+        "visible_cases": 6,
+        "withheld_cases": 46,
+        "prompt_sha256": "c2f916be1899c3c274f62b0d67775dae9e51669d7a0a12491cd63d8e5456de4b",
+        "spec_sha256": "0cd7ecf493792ac3fd27e900ecb9ea33920b5af8a37d4d0cc17e5a64c649718d",
+        "oracle_sha256": "ae7b92e6449ec3117f82493e00e2b09f670e19bcb423f09d279b775ba6575635",
+        "engine_sha256": {
+          "baseline": "359dff8b5ee5858069420a1076ae94ac692bf23cd26568a06f71b0ece5861d7b",
+          "candidate": "e465bd2b9f2b27f6fd7ca2236f21f1f1a7d6e4cd56c4b6b256d1c2ae88ed38b6"
+        },
+        "commit": "47e7c6c9c4e0bdd3e49aae0ba913367f9174f074"
+      },
+      "results": [
+        {
+          "name": "yaml-1-baseline",
+          "variant": "baseline",
+          "repeat": 1,
+          "seconds": 1356.78,
+          "exit_code": 0,
+          "steps": 105,
+          "outer_calls": 105,
+          "nested_calls": 0,
+          "tool_errors": 11,
+          "nested_errors": 0,
+          "final": {
+            "kind": "finished"
+          },
+          "usage": {
+            "prompt_tokens": 16339812,
+            "completion_tokens": 164693,
+            "total_tokens": 16504505,
+            "prompt_cache_hit_tokens": 16259968,
+            "prompt_cache_miss_tokens": 79844
+          },
+          "child_sessions": 1,
+          "child_steps": 25,
+          "usage_scope": "parent only; child token usage unavailable",
+          "oracle_passed": 46,
+          "oracle_total": 46,
+          "oracle_exit_code": 0,
+          "oracle_failures": [],
+          "valid_passed": 30,
+          "invalid_passed": 16,
+          "compile_or_harness_error": false,
+          "preserved_fixture": true,
+          "passed": true,
+          "project_tests": {
+            "total": 29,
+            "passed": 29,
+            "failed": 0
+          }
+        },
+        {
+          "name": "yaml-1-candidate",
+          "variant": "candidate",
+          "repeat": 1,
+          "seconds": 1523.03,
+          "exit_code": 0,
+          "steps": 96,
+          "outer_calls": 117,
+          "nested_calls": 0,
+          "tool_errors": 18,
+          "nested_errors": 0,
+          "final": {
+            "kind": "finished"
+          },
+          "usage": {
+            "prompt_tokens": 15746185,
+            "completion_tokens": 187776,
+            "total_tokens": 15933961,
+            "prompt_cache_hit_tokens": 15682304,
+            "prompt_cache_miss_tokens": 63881
+          },
+          "child_sessions": 1,
+          "child_steps": 33,
+          "usage_scope": "parent only; child token usage unavailable",
+          "oracle_passed": 46,
+          "oracle_total": 46,
+          "oracle_exit_code": 0,
+          "oracle_failures": [],
+          "valid_passed": 30,
+          "invalid_passed": 16,
+          "compile_or_harness_error": false,
+          "preserved_fixture": true,
+          "passed": true,
+          "project_tests": {
+            "total": 128,
+            "passed": 128,
+            "failed": 0
+          }
+        }
+      ]
+    }
+  }
+}

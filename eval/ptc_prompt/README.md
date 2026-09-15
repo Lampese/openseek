@@ -116,6 +116,9 @@ all withheld parser tests but did not finish their review workflows within those
 limits. A separate matched follow-up uses 128 steps and 1800 seconds; keep the
 cohorts separate when analyzing results.
 
+See [the YAML parser report](yaml-results-2026-09-15.md) and its JSON ledger
+for artifact correctness, workflow completion, actual PTC use, and budget limits.
+
 The reader selects the named parent session when review children exist. Token
 usage from the parent event log excludes child usage when the workflow journal
 does not retain it; report child counts/steps and do not treat that number as
