@@ -1,6 +1,9 @@
 # Fixing warnings from a PTC script: per-edit revert guards and structured feedback
 
-Status: proposal, revised 2026-09-16. Nothing here is implemented yet.
+Status: implemented 2026-09-16 as #1570 (tally, identity diff, 1024 calls),
+#1571 (edit guards and data), #1572 (multi_edit guard and data), #1573
+(the bundled script and docs). The outcome section at the end records what
+changed against this plan during implementation and review.
 
 ## The target loop
 
@@ -186,3 +189,47 @@ warnings remain, and whether `moon check --deny-warn` passes afterwards.
 2. Accept the `edit` check-line change in item 4 (recommended: yes).
 3. Raise the per-script call budget from 64 (for example to 256) so one run
    covers a larger backlog, or keep 64 and run the script more than once.
+
+## Outcome
+
+What the implementation and its reviews changed against the plan above:
+
+- **No cap in the tally.** Warning sites are kept in full (as errors were);
+  only the JSON form caps at 200 per severity. A capped list would have made
+  the identity diff wrong on the primary workload (fixing one of 201 warnings
+  brings a hidden one into view). An overflowed capture is refused by the
+  guards as `unverified` instead of compared.
+- **A failed run is not a clean tree.** `check(path)` distinguishes
+  `NotApplicable`, `Unavailable(reason)`, `Failed(code, tally)` (moon exited
+  non-zero with no diagnostic), and `Checked(tally)`. A guarded edit is not
+  written when the baseline cannot be measured, and is rolled back when the
+  post-write check fails. `count_errors` keeps its old reading for the
+  `multi_edit` error guard.
+- **Occurrence selection.** `edit` takes no column, so the script anchors
+  `old_string` on the whole line prefix through the diagnosed span; the first
+  match at that line is exactly that occurrence. It works bottom-up per file
+  and right to left per line, so no span goes stale and no second check per
+  site is needed; the host's post-edit counts confirm progress.
+- **Links.** A file reached through a link is compiled by every module either
+  spelling belongs to, so the guards check each project (compared by
+  canonical directory) and merge the tallies. `multi_edit`'s error guard keeps
+  reading the first project; its warning guard reads them all.
+- **Cancellation and containment.** Guarded writes register their rollback
+  before the write (which truncates before it writes) under
+  `protect_from_cancel`, and the restore goes through the same containment
+  rule as the write.
+- **Payload size.** `edit` carries a compact check (counts plus the first ten
+  error sites, no warning list); `multi_edit` carries the bounded full form.
+  `data.edits` on preview was left out (its text array already sits near the
+  reply cap).
+- **The check line after an unguarded `edit`** is rendered from the JSON
+  tally with one concrete diagnostic kept visible (the first warning on a
+  clean tree), and an overflowed zero-error capture is reported as
+  incomplete rather than clean.
+- **Qualified spans.** moon reports `@a.length` as the span of a qualified
+  call, so the script keeps the qualifier (`@a.`, `Type::`) and swaps only
+  the name.
+- **Measured cost** on this repository: an incremental `moon check` after a
+  one-line edit is about 0.5 s, so a guarded edit costs about a second.
+- **Not done:** the eval harness case and a live-model run; the two
+  host-backed tests exercise the script end to end without a model.
