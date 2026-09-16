@@ -10,11 +10,11 @@ import {
   "bobzhang/openseek/agent_tool/internal/error" @tool_error,
   "bobzhang/openseek/agent_tool/internal/sandbox",
   "bobzhang/openseek/internal/workspace_path",
+  "bobzhang/openseek/internal/references",
   "moonbitlang/async",
   "moonbitlang/async/fs",
   "moonbitlang/async/process",
   "moonbitlang/core/json",
-  "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/async/os_error",
   "bobzhang/openseek_protocol/emit",
@@ -37,6 +37,7 @@ import {
   "bobzhang/openseek/agent_tool/edit",
   "bobzhang/openseek/agent_tool/multi_edit",
   "bobzhang/openseek_protocol/emit",
+  "bobzhang/openseek/internal/references",
 } for "test"
 
 import {

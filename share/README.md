@@ -1,7 +1,9 @@
 # Bundled resources
 
 This directory is checked in and copied into the packaged toolchain's `share/`.
-`OPENSEEK_REFERENCES` points to that installed copy.
+An installation resolves it from its own executable — `share/` beside the
+binaries, or the packaged tree's per-platform `toolchains/moonbit/<platform>/`
+— so nothing has to tell a running engine where its resources are.
 
 - `doc/moonbit/`: official MoonBit documentation from the upstream markdown build.
 - `doc/moonbit.commit`: the exact upstream build commit used for the snapshot.

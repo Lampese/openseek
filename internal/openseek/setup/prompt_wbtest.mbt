@@ -14,6 +14,34 @@ fn split_composed_prompt(prompt : String) -> (String, String) raise {
 }
 
 ///|
+/// The references line the composed prompt appends after the environment
+/// block, or `""` when this installation ships no bundled resources. The
+/// directory is resolved from the running artifact, so a snapshot carries it as
+/// a runtime-computed tail instead of a machine-specific literal.
+async fn references_tail() -> String {
+  match @references.root() {
+    Some(dir) => "\n\nReferences: \{dir}"
+    None => ""
+  }
+}
+
+///|
+/// The composed prompt's references line names the resources of this checkout's
+/// own `share/`, found by walking up from the running test artifact under
+/// `_build/`. Nothing in the environment selects it.
+async test "the environment tail names this checkout's bundled resources" {
+  let parsed = @testkit.run_matches(argv=["write", "MoonBit"], env={
+    "DEEPSEEK": "test-key",
+    "OPENSEEK_GLOBAL_SKILLS_DIR": "no-global-skills",
+  })
+  let (_, section) = split_composed_prompt(
+    configured_system_prompt(parsed, Deepseek(V4Flash)),
+  )
+  assert_eq(references_tail(), "\n\nReferences: \{@fs.realpath("share")}")
+  assert_true(section.has_suffix(references_tail()), msg=section)
+}
+
+///|
 async test "environment section names the cwd and appends the layout outline" {
   let parsed = @testkit.run_matches(argv=["write", "MoonBit"], env={
     "DEEPSEEK": "test-key",
@@ -52,17 +80,19 @@ async test "environment section reports empty directory layout" {
     )
     let resolved_root = @fs.realpath(root)
     let replaced = section.replace_all(old=resolved_root, new="{resolved_root}")
+    let tail = references_tail()
     inspect(
       replaced,
       content=(
-        #|## Environment
-        #|
-        #|Working directory: {resolved_root}
-        #|Relative paths resolve against it; treat it as the workspace root and stay inside it.
-        #|Parent and sibling directories belong to other projects. Never pass a cwd you have not verified exists.
-        #|Project layout (directories; hidden, build, and vendored dirs omitted):
-        #|(empty directory): use `moon new` to create a new project here
-      ),
+          #|## Environment
+          #|
+          #|Working directory: {resolved_root}
+          #|Relative paths resolve against it; treat it as the workspace root and stay inside it.
+          #|Parent and sibling directories belong to other projects. Never pass a cwd you have not verified exists.
+          #|Project layout (directories; hidden, build, and vendored dirs omitted):
+          #|(empty directory): use `moon new` to create a new project here
+        ) +
+        tail,
     )
   })
 }
@@ -85,18 +115,20 @@ async test "environment section inline snapshot for deterministic layout" {
     let (_, section) = split_composed_prompt(
       configured_system_prompt(parsed, Deepseek(V4Flash), workspace_root=root),
     )
+    let tail = references_tail()
     inspect(
       section,
       content=(
-        $|## Environment
-        $|
-        $|Working directory: \{resolved_root}
-        $|Relative paths resolve against it; treat it as the workspace root and stay inside it.
-        $|Parent and sibling directories belong to other projects. Never pass a cwd you have not verified exists.
-        $|Project layout (directories; hidden, build, and vendored dirs omitted):
-        $|a/
-        $|b/
-      ),
+          $|## Environment
+          $|
+          $|Working directory: \{resolved_root}
+          $|Relative paths resolve against it; treat it as the workspace root and stay inside it.
+          $|Parent and sibling directories belong to other projects. Never pass a cwd you have not verified exists.
+          $|Project layout (directories; hidden, build, and vendored dirs omitted):
+          $|a/
+          $|b/
+        ) +
+        tail,
     )
   })
 }

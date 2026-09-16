@@ -4,10 +4,11 @@ This package owns SeekMoon's built-in system prompt text and prompt-selection
 policy. Prompt Markdown files are converted to generated MoonBit string
 functions through the module-level `md_to_mbt_string` dev-build rule.
 
-The `{{OPENSEEK_REFERENCES_LAYOUT}}` placeholder expands to a sorted,
+The `{{REFERENCES_LAYOUT}}` placeholder expands to a sorted,
 directory-only tree of the repository's `share/` during generation. The
-generated prompt contains the tree as static text; only the installation's
-absolute `OPENSEEK_REFERENCES` path is appended at runtime. No `tree` executable
+generated prompt contains the tree as static text; the installation's own
+absolute resource path is resolved at runtime from the running executable and
+named in the environment tail. No `tree` executable
 is required. `just prompt` refreshes this filesystem-derived content;
 the documentation updater invokes it automatically. `just check-prompt` checks
 freshness without writing and runs in CI before other build commands.

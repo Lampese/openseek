@@ -1,12 +1,19 @@
 ///|
-/// Run with OPENSEEK_REFERENCES=<checkout>/share to exercise the public
-/// namespace; otherwise use this checkout's script, never another installation.
-async fn read_workflow_filename() -> String {
-  if @env.get_env_var("OPENSEEK_REFERENCES") == Some(@fs.realpath("share")) {
-    "@builtin/read.mbtx"
+/// A bundled workflow by name through the public `@builtin/` namespace when
+/// this test artifact's installation resolves its resources, and this
+/// checkout's own script otherwise (a relocated build directory, or a platform
+/// where the executable path cannot be read). Never another installation's.
+async fn bundled_workflow(name : String) -> String {
+  if @references.root() is Some(_) {
+    "@builtin/\{name}"
   } else {
-    @fs.realpath("share/workflow/read.mbtx")
+    @fs.realpath("share/workflow/\{name}")
   }
+}
+
+///|
+async fn read_workflow_filename() -> String {
+  bundled_workflow("read.mbtx")
 }
 
 ///|

@@ -90,7 +90,6 @@ fn background_id(messages : String) -> String raise {
 ///|
 async fn run_case(
   executable : String,
-  root : String,
   scenario : Scenario,
 ) -> String? {
   let directory = @fs.tmpdir(prefix="openseek-turn-finish-")
@@ -122,10 +121,10 @@ async fn run_case(
   let snapshot_ready = @cond_var.Cond()
   let mut requests = 0
   let events : Array[Json] = []
+  // The Read scenario exercises the public `@builtin/` namespace with no
+  // environment variable naming the resources: the engine resolves them from
+  // its own executable, which lives under this checkout's `_build/`.
   let environment = { "DEEPSEEK": "test", "OPENSEEK_RETRY_ATTEMPTS": "1" }
-  if read {
-    environment["OPENSEEK_REFERENCES"] = root + "/share"
-  }
   @async.with_timeout(120000, () => {
     @async.with_task_group(group => {
       let (child_stdin, writer) = @process.write_to_process()
@@ -494,17 +493,16 @@ async fn main {
     fail("Usage: moon run tests/integration/turn_finish.mbtx EXE")
   }
   let executable = @fs.realpath(executable)
-  let root = @fs.realpath(".")
   let ids : Array[String] = []
   for scenario in [Run, Serve, Controls] {
-    guard run_case(executable, root, scenario) is Some(id) else {
+    guard run_case(executable, scenario) is Some(id) else {
       fail("Missing background job ID")
     }
     assert_true(!ids.contains(id))
     ids.push(id)
   }
   println("PASS: independent CLI processes allocate distinct compact UUID job IDs")
-  ignore(run_case(executable, root, Read))
+  ignore(run_case(executable, Read))
 }
 
 ///|

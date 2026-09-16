@@ -19,9 +19,11 @@ pins the PR URL, missing output fields use JSON null rather than payload
 sentinels, and failed Actions checks produce the expected log-command argv.
 
 All 17 existing hosted-workflow scenarios passed. The mbtx native suite passed
-86 tests with `OPENSEEK_REFERENCES` pointing to this checkout's `share/`,
-including `@builtin/ci-watch.mbtx` argument forwarding and help/error handling.
-That outer-tool test is offline; it does not authenticate with GitHub.
+86 tests against this checkout's `share/` (it was selected with the
+since-removed `OPENSEEK_REFERENCES`; the resource root is now resolved from the
+running executable), including `@builtin/ci-watch.mbtx` argument forwarding
+and help/error handling. That outer-tool test is offline; it does not
+authenticate with GitHub.
 
 `moon info`, `moon fmt`, `just check-prompt`, and native/JS builds passed. No
 public interfaces changed. Local full checks/tests still hit existing

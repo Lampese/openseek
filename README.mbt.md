@@ -110,6 +110,7 @@ git submodule update --init editor/vscode     # opt-in performance suite
 | `bobzhang/openseek-viz-app` (in `cmd/viz_app/`, own module) | JS entry point compiled into the visualizer bundle. | `viz/README.md` |
 | `moonbitlang/editor` (in `editor/`, own module) | Reusable readonly editor plus its reference browser shell and server. | `editor/README.md` |
 | `bobzhang/openseek/internal/workspace_path` | Workspace-path resolution shared by the agent tools and the command mains. | `internal/workspace_path/README.mbt.md` |
+| `bobzhang/openseek/internal/references` | The running installation's bundled resource root (`share/`: docs and workflows), resolved from its own executable. | — |
 | `bobzhang/openseek/testkit/filesystem` | JSON-backed virtual filesystem for tests and eval fixtures. | `testkit/filesystem/README.mbt.md` |
 | `bobzhang/openseek/eval/report` | Shared Markdown/JSON report primitive for deterministic and model evals. | `eval/report/README.mbt.md` |
 | `bobzhang/openseek/eval/tool_harness` | Deterministic host-side harness for file, command, and control tools. | `eval/tool_harness/README.mbt.md` |

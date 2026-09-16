@@ -46,9 +46,10 @@ pub async fn configured_system_prompt(
   // the recorded directory is where the session was started — resume it from
   // the same project root.
   //
-  // OPENSEEK_REFERENCES adds the resolved share/ resource directory value.
-  // Documentation layout and usage instructions live in the static default
-  // prompt, keeping the installation-dependent path in this tail.
+  // The tail names the resource directory this installation will keep using,
+  // resolved from the running executable's own location. Documentation layout
+  // and usage instructions live in the static default prompt, keeping the
+  // installation-dependent path here.
   let target = if workspace_root == "" { "." } else { workspace_root }
   let cwd = @fs.realpath(target) catch { _ => target }
   let outline = dir_outline(cwd).unwrap_or(
@@ -63,8 +64,8 @@ pub async fn configured_system_prompt(
     $|Project layout (directories; hidden, build, and vendored dirs omitted):
     $|\{outline}
   prompt <+ "\n\n\{environment_block}"
-  if references_dir_from_environment() is Some(dir) {
-    prompt <+ "\n\nOPENSEEK_REFERENCES: \{dir}"
+  if @references.root() is Some(dir) {
+    prompt <+ "\n\nReferences: \{dir}"
   }
   // Workspace skills join the per-project tail after the environment
   // section: like the cwd they vary per project (and change when skills are
@@ -151,14 +152,4 @@ async fn skills_prompt_section_for_cwd(
       ),
     ),
   )
-}
-
-///|
-/// The bundled share/ resource directory, when the process environment
-/// sets `OPENSEEK_REFERENCES` to a non-empty value.
-fn references_dir_from_environment() -> String? {
-  match @env.get_env_var("OPENSEEK_REFERENCES") {
-    Some(dir) if !dir.trim().is_empty() => Some(dir)
-    _ => None
-  }
 }

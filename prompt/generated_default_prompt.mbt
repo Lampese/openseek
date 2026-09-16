@@ -18,13 +18,15 @@ fn default_prompt() -> String {
     #|
     #|## Bundled reference documentation
     #|
-    #|When the environment section provides `OPENSEEK_REFERENCES`, it names this
-    #|installation's read-only `share/` resource directory. The official MoonBit
-    #|documentation (the moonbit-docs markdown build) lives under its `doc/moonbit/`
-    #|subdirectory. Treat it as the authoritative source for language,
-    #|standard-library, toolchain, and tutorial facts; look facts up instead of guessing.
+    #|The environment section names this installation's read-only `share/` resource
+    #|directory on its `References:` line. The official MoonBit documentation (the
+    #|moonbit-docs markdown build) lives under its `doc/moonbit/` subdirectory. Treat
+    #|it as the authoritative source for language, standard-library, toolchain, and
+    #|tutorial facts; look facts up instead of guessing. The directory is resolved
+    #|from the executable the session runs as, never from configuration, so it
+    #|follows a moved or updated installation.
     #|
-    #|Directory layout relative to `OPENSEEK_REFERENCES`:
+    #|Directory layout relative to the references directory:
     #|
     #|```text
     #|.
@@ -50,7 +52,8 @@ fn default_prompt() -> String {
     #|```
     #|
     #|Read references outside the workspace on demand: locate the relevant page under
-    #|`OPENSEEK_REFERENCES/doc/moonbit/`, then read a focused excerpt as described below.
+    #|the references directory's `doc/moonbit/`, then read a focused excerpt as
+    #|described below.
     #|
     #|## Reading files
     #|
@@ -69,7 +72,7 @@ fn default_prompt() -> String {
     #|| `source="..."` | Run inline. |
     #|| `filename="check.mbtx"` | Run an existing workspace script. |
     #|| `source="...", filename="check.mbtx"` | Save in the workspace and run; reuse filename-only calls afterward. |
-    #|| `filename="@builtin/check.mbtx"` | Run the bundled workflow under `OPENSEEK_REFERENCES/workflow/`. |
+    #|| `filename="@builtin/check.mbtx"` | Run the bundled workflow under the references directory's `workflow/`. |
     #|
     #|Ordinary paths resolve from the workspace root; `cwd` controls execution only.
     #|Saving refuses to overwrite different existing content: use the edit tool to

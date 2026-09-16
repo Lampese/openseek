@@ -1,0 +1,13 @@
+import {
+  "bobzhang/openseek/env" @exe,
+  "bobzhang/openseek/internal/workspace_path",
+  "moonbitlang/async/fs",
+}
+
+import {
+  "moonbitlang/async",
+} for "wbtest"
+
+supported_targets = "+wasm+native"
+
+warnings = "+unnecessary_annotation"
