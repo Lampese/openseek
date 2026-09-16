@@ -7,8 +7,11 @@ Status: proposal, revised 2026-09-16. Nothing here is implemented yet.
 The primary use case is a script that fixes most of a project's warnings in
 one pass and leaves the rest for a manual fix:
 
-1. Ask for the current diagnostics as data: every warning with its path, a
-   `line:col-line:col` span, its code, and its message.
+1. Run `moon check --output-json` from the script itself and parse the JSON
+   lines: every warning with its path, a `line:col-line:col` span, its code,
+   and its message. The sandbox admits `moon check` (the bundled
+   `@builtin/check-json.mbtx` does exactly this), and a PTC run uses the same
+   policy.
 2. For each warning of a class the script knows how to fix, read the file
    (scripts already have workspace read access) and cut `old_string` from the
    span. `start_line` is the span's line. `new_string` comes from the message:
@@ -39,8 +42,10 @@ is built from the diagnostics of the tree as it is at that moment.
 - Neither tool sets `ToolOutput.data`; `web_search` does (`sources`,
   `truncated`) and is the precedent. A PTC script already receives
   `result.data : Json?` through the published SDK, so no SDK change is needed.
-- A script cannot run `moon check` itself (wasm, no processes), and nothing
-  returns diagnostics before the first edit.
+- A script can spawn `moon check --output-json` (the policy's spawn list
+  admits it, and PTC runs build the same policy with the capability injected),
+  so the loop seeds itself. Parsing the JSON lines is the script's job; the
+  SDK README example shows the pattern.
 
 ## Work, in order
 
@@ -54,14 +59,15 @@ the line shifts an edit causes below itself, and it catches a fix that
 removes one warning and introduces another, which a count comparison cannot.
 The same rule serves errors.
 
-### 2. A `check` seed tool
+### 2. Seeding from the script's own `moon check`
 
-A small read-only tool, program-callable, that runs the tally for the project
-containing a path (default: the workspace root) and returns the CHECK payload
-as `data` with a one-line text summary. It seeds the loop and doubles as a
-progress probe without editing. The retired model-facing moon_check tool was a
-different thing (raw output for the model); this one exists for scripts and
-returns structured data, so it needs an explicit decision (see below).
+No new tool. The script runs `moon check --output-json` through
+`@shell.Cmd`, keeps the lines whose `level` is `warning`, and reads `path`,
+`loc`, `error_code`, and `message`. That is the same JSON the host tallies,
+so the script and the guard agree on what a warning is. The SDK README
+example carries the ten-line parser. Script calls run one after another, so
+its own check never overlaps a guard check inside an edit; a script that
+spawns tasks must keep it that way.
 
 ### 3. Shared revert guard; two new `edit` flags
 
@@ -130,7 +136,7 @@ the wasm host like the existing `agent_tool/mbtx/ptc_test.mbt` cases.
 A fixture with a few dozen deprecation and unused-binding warnings across
 several files, plus a couple of fixes that would introduce a warning or an
 error so the guards have something to revert. Baseline is the current tools;
-candidate is items 1 to 5. Measure rounds, nested-call counts, how many
+candidate is items 1 to 5 (item 2 is the script's own doing). Measure rounds, nested-call counts, how many
 warnings remain, and whether `moon check --deny-warn` passes afterwards.
 
 ## Bounds
@@ -165,20 +171,18 @@ warnings remain, and whether `moon check --deny-warn` passes afterwards.
 ## PR split
 
 1. `auto_check`: warning sites, `to_json`, the introduced-diff rule.
-2. The `check` seed tool.
-3. Shared revert guard; `edit` gains `revert_on_errors` and
+2. Shared revert guard; `edit` gains `revert_on_errors` and
    `revert_on_warnings`; `multi_edit` gains `revert_on_warnings`.
-4. `edit` payload and check-line alignment; preview `data.edits`.
-5. `multi_edit` payload.
-6. Descriptions, READMEs, SDK example, eval case.
+3. `edit` payload and check-line alignment; preview `data.edits`.
+4. `multi_edit` payload.
+5. Descriptions, READMEs, SDK example (with the warning-fix loop and its
+   JSON-lines parser), eval case.
 
 ## Decisions
 
-1. Add the read-only `check` seed tool (recommended: yes; the loop has no
-   other way to start).
-2. Defaults for `revert_on_errors` and `revert_on_warnings` on `edit`
+1. Defaults for `revert_on_errors` and `revert_on_warnings` on `edit`
    (recommended: both off at first, revisit after the eval; on would also
    protect direct model edits the way `multi_edit` already does).
-3. Accept the `edit` check-line change in item 4 (recommended: yes).
-4. Raise the per-script call budget from 64 (for example to 256) so one run
+2. Accept the `edit` check-line change in item 4 (recommended: yes).
+3. Raise the per-script call budget from 64 (for example to 256) so one run
    covers a larger backlog, or keep 64 and run the script more than once.
