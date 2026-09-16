@@ -231,5 +231,12 @@ What the implementation and its reviews changed against the plan above:
   the name.
 - **Measured cost** on this repository: an incremental `moon check` after a
   one-line edit is about 0.5 s, so a guarded edit costs about a second.
+- **Thresholds, not booleans.** On review the guards became integer
+  thresholds, `revert_when_errors_above` and `revert_when_warnings_above`
+  on both tools (absent = off, `0` = revert on any introduced diagnostic,
+  `N` = tolerate up to N), matching `multi_edit`'s existing error
+  threshold, and every guarded result's `data` carries `introduced_count`
+  and `removed_count` per severity so the delta is quantified even when
+  the edit is kept. The warning-fix script passes `0` for both.
 - **Not done:** the eval harness case and a live-model run; the two
   host-backed tests exercise the script end to end without a model.
