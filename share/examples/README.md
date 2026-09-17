@@ -20,6 +20,10 @@ Part 1 of the prompt teaches the tooling:
 
 - `cli_greet.mbtx`: `argparse` with a defaulted option, the smallest form of
   the `args` contract.
+- `args_literal.mbtx`: the argument vector reaches the program as written —
+  an unexpanded `*.mbt` is a silent miss, `@shell.glob` plus a spread is the
+  fix, an empty glob leaves the program reading stdin, and a non-zero exit
+  can be an answer.
 - `command_output.mbtx`: `@shell.Cmd(...).output()` and its three accessors,
   including a non-zero exit that is not a failure.
 - `check_diagnostics.mbtx`: streaming line-delimited `moon check` JSON with

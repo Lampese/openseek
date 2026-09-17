@@ -25,6 +25,15 @@ $ moonx "$TESTDIR/../../share/examples/strings_and_views.mbtx"
 strings and views: ok
 ```
 
+The argument-vector example builds its own fixture under `@fs.tmpdir`, so
+unlike the other command-spawning examples its output does not depend on the
+checkout and can be pinned here.
+
+```mooncram
+$ moonx "$TESTDIR/../../share/examples/args_literal.mbtx"
+args literal: ok
+```
+
 The CLI example counts what it reads; here stdin is six bytes:
 
 ```mooncram

@@ -175,9 +175,53 @@ fn default_prompt() -> String {
     #|}
     #|```
     #|
-    #|`.output()` reports the program's exit code instead of raising on it; `rg`
-    #|exits 1 when nothing matched, so read `exit_code()` rather than treating the
-    #|call as failed. A regex needle is one ordinary string element: double the
+    #|The argument vector is passed through untouched — no expansion, no splitting
+    #|— so you expand paths yourself. This one asserts what that costs when you
+    #|forget, and every claim in it runs in CI:
+    #|
+    #|```mbtx
+    #|///|
+    #|/// One argument vector, passed through untouched: nothing expands, nothing
+    #|/// splits, and a miss is an answer rather than a failure.
+    #|import {
+    #|  "moonbitlang/async",
+    #|  "moonbitlang/async/fs",
+    #|  "moonbitlang/async/shell",
+    #|}
+    #|
+    #|///|
+    #|async fn main {
+    #|  // `@fs.tmpdir` is the one directory a snippet may write; it creates the
+    #|  // directory and the `prefix` label is required.
+    #|  let dir = @fs.tmpdir(prefix="args-")
+    #|  @fs.write_file("\{dir}/a.mbt", b"let needle = 1", create_mode=CreateOrTruncate)
+    #|  @fs.write_file("\{dir}/b.mbt", b"let needle = 2", create_mode=CreateOrTruncate)
+    #|
+    #|  // THE TRAP: "*.mbt" is one argument naming a file that does not exist.
+    #|  // Nothing raises and nothing prints, so a wildcard written this way reads
+    #|  // as "the code is not there".
+    #|  let missed = @shell.Cmd("rg", ["needle", "\{dir}/*.mbt"]).output()
+    #|  assert_true(missed.exit_code() != 0 && missed.stdout() == "")
+    #|
+    #|  // Expand it yourself, then spread. An empty glob is `[]`, not an error:
+    #|  // spreading one leaves rg with no paths, and it then reads stdin forever.
+    #|  let files = @shell.glob("\{dir}/*.mbt")
+    #|  assert_eq(files.length(), 2)
+    #|  assert_eq(@shell.glob("\{dir}/*.nope").length(), 0)
+    #|
+    #|  // `.output()` hands back the exit code instead of raising on it, and rg
+    #|  // exits 1 when nothing matched — an answer, not a broken call. Spaces
+    #|  // survive, so "let needle" is ONE pattern; quoting neither helps nor is
+    #|  // needed.
+    #|  let found = @shell.Cmd("rg", ["-c", "let needle", ..files]).output()
+    #|  assert_eq(found.exit_code(), 0)
+    #|  let absent = @shell.Cmd("rg", ["-c", "haystack", ..files]).output()
+    #|  assert_eq(absent.exit_code(), 1)
+    #|  println("args literal: ok")
+    #|}
+    #|```
+    #|
+    #|A regex needle is one ordinary string element: double the
     #|backslashes MoonBit needs (`"\\("`) or pass `-F` for a literal match. For
     #|bulky output, redirect with `stdout=ToFile(...)` to a file under
     #|`@fs.tmpdir(prefix="run-")` — the label is required, the call creates the
@@ -238,8 +282,7 @@ fn default_prompt() -> String {
     #|retained. Stderr is inherited, so `mbtx` still
     #|includes Moon's summary in its merged output.
     #|
-    #|`@shell.Cmd(program, arguments)` passes its argument vector literally: `|`,
-    #|`>`, `&&`, `$()`, and `*` receive no shell interpretation. Run dependent
+    #|`|`, `>`, `&&`, and `$()` get no shell interpretation either. Run dependent
     #|commands as ordinary MoonBit statements and branch on their exit codes.
     #|
     #|`mbtx` is both the command runner (via `@shell.Cmd`) and the scripting surface

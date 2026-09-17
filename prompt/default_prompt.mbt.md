@@ -126,9 +126,13 @@ The plain command shape captures both streams and reads them back through
 
 [share/examples/command_output.mbtx](../share/examples/command_output.mbtx)
 
-`.output()` reports the program's exit code instead of raising on it; `rg`
-exits 1 when nothing matched, so read `exit_code()` rather than treating the
-call as failed. A regex needle is one ordinary string element: double the
+The argument vector is passed through untouched — no expansion, no splitting
+— so you expand paths yourself. This one asserts what that costs when you
+forget, and every claim in it runs in CI:
+
+[share/examples/args_literal.mbtx](../share/examples/args_literal.mbtx)
+
+A regex needle is one ordinary string element: double the
 backslashes MoonBit needs (`"\\("`) or pass `-F` for a literal match. For
 bulky output, redirect with `stdout=ToFile(...)` to a file under
 `@fs.tmpdir(prefix="run-")` — the label is required, the call creates the
@@ -158,8 +162,7 @@ does not compile. Its callback is async too. Completed lines are not
 retained. Stderr is inherited, so `mbtx` still
 includes Moon's summary in its merged output.
 
-`@shell.Cmd(program, arguments)` passes its argument vector literally: `|`,
-`>`, `&&`, `$()`, and `*` receive no shell interpretation. Run dependent
+`|`, `>`, `&&`, and `$()` get no shell interpretation either. Run dependent
 commands as ordinary MoonBit statements and branch on their exit codes.
 
 `mbtx` is both the command runner (via `@shell.Cmd`) and the scripting surface
