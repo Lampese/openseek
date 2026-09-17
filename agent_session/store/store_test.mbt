@@ -209,6 +209,36 @@ async test "settings keys share one sidecar without overwriting each other" {
 }
 
 ///|
+async test "append settles the caller's settings in the same locked step as the event" {
+  let store = new_store()
+  defer @fs.rmdir(store.root(), recursive=true)
+  let id = @agent_session.SessionId("run")
+  let pro : Map[String, Json] = { "model": Json("deepseek-v4-pro") }
+  let fresh : @agent_session.Session = Session(id, system_prompt="system")
+  assert_false(store.exists(id))
+  // The first append creates the record; its settings land with it.
+  let one = store.append(fresh, User(UserMessage("hello")), settings=pro)
+  assert_eq(one.events().length(), 1)
+  assert_eq(store.settings(id).get("model"), Some(Json("deepseek-v4-pro")))
+  // In step: another append rewrites nothing.
+  let settings_path = "\{store.root()}/sessions/run/settings.json"
+  let stamp = @fs.mtime(settings_path)
+  let two = store.append(one, User(UserMessage("again")), settings=pro)
+  assert_eq(@fs.mtime(settings_path), stamp)
+  // A process running another model corrects the key it owns and leaves
+  // every other key as it was; an append naming no settings touches none.
+  store.set_title(id, "Named")
+  let three = store.append(two, User(UserMessage("once more")), settings={
+    "model": Json("deepseek-v4-flash"),
+  })
+  let four = store.append(three, User(UserMessage("and again")))
+  assert_eq(four.events().length(), 4)
+  let settings = store.settings(id)
+  assert_eq(settings.get("model"), Some(Json("deepseek-v4-flash")))
+  assert_eq(settings.get("title"), Some(Json("Named")))
+}
+
+///|
 async test "a title written by the one-value sidecar is read and then folded in" {
   let store = new_store()
   defer @fs.rmdir(store.root(), recursive=true)

@@ -661,16 +661,48 @@ pub async fn SessionStore::set_setting(
   with_session_lock(self, id, Exclusive, () => {
     let settings = self.settings(id)
     settings[key] = value
-    write_text_atomic(
-      self.settings_path(id),
-      Json(settings).stringify(),
-      dirs=self.session_dir_chain(id),
-    )
-    @fs.remove(self.legacy_title_path(id)) catch {
-      @os_error.OSError(_) as error if error.is_ENOENT() => ()
-      error => raise error
-    }
+    write_settings_locked(self, id, settings)
   })
+}
+
+///|
+/// Bring the settings to `desired` for the keys it names, writing only when
+/// some key differs. Called under the exclusive session lock.
+async fn settle_settings_locked(
+  store : SessionStore,
+  id : @agent_session.SessionId,
+  desired : Map[String, Json],
+) -> Unit {
+  let settings = store.settings(id)
+  let mut changed = false
+  for key, value in desired {
+    if settings.get(key) != Some(value) {
+      settings[key] = value
+      changed = true
+    }
+  }
+  if changed {
+    write_settings_locked(store, id, settings)
+  }
+}
+
+///|
+/// Replace the settings file atomically and retire the legacy title file it
+/// supersedes. Called under the exclusive session lock.
+async fn write_settings_locked(
+  store : SessionStore,
+  id : @agent_session.SessionId,
+  settings : Map[String, Json],
+) -> Unit {
+  write_text_atomic(
+    store.settings_path(id),
+    Json(settings).stringify(),
+    dirs=store.session_dir_chain(id),
+  )
+  @fs.remove(store.legacy_title_path(id)) catch {
+    @os_error.OSError(_) as error if error.is_ENOENT() => ()
+    error => raise error
+  }
 }
 
 ///|
@@ -855,10 +887,19 @@ pub async fn SessionStore::load(
 /// the first event together; and when a crash left the durable tail
 /// unterminated, the append rewrites the file atomically instead, repairing
 /// the tail as it persists the new event. The input session is unchanged.
+///
+/// `settings`, when given, are the settings keys the appending process is
+/// the authority on — a run passes the model it runs with. They are settled
+/// in the same locked step as the event, right after it, so no other
+/// process's append can land between an event and the settings that describe
+/// the process which wrote it, and a session's settings always name the
+/// process behind its latest event. Keys already at the desired value are
+/// not rewritten; keys not named are never touched.
 pub async fn SessionStore::append(
   self : SessionStore,
   session : @agent_session.Session,
   item : @agent_session.SessionItem,
+  settings? : Map[String, Json],
 ) -> @agent_session.Session {
   ensure_session_dir(self, session.id())
   with_session_lock(self, session.id(), Exclusive, () => {
@@ -869,6 +910,9 @@ pub async fn SessionStore::append(
     )
     persist_event(self, next, event, repair_tail~)
     record_mark(self, next)
+    if settings is Some(desired) {
+      settle_settings_locked(self, next.id(), desired)
+    }
     next
   })
 }

@@ -734,16 +734,20 @@ fn empty_session_reply(session : String) -> LoadSessionReply {
       events: Some([]),
     },
     watermark: Some(0),
-    model: None,
+    model: Unconfigured,
   }
 }
 
 ///|
-/// The model a conversation is set to, from its settings sidecar, if any.
-/// The transcript is the load's substance; a damaged sidecar costs only the
-/// configured model, so it is logged and read as absent rather than failing
-/// the load.
-async fn configured_model(root : @pathx.Absolute, session : String) -> String? {
+/// The model a conversation is set to, from its settings sidecar. The
+/// transcript is the load's substance, so a sidecar that cannot be read does
+/// not fail the load — but it is reported as `Unreadable`, never folded into
+/// "nothing configured": the client must be able to tell damage from
+/// absence rather than show its own default over it.
+async fn configured_model(
+  root : @pathx.Absolute,
+  session : String,
+) -> @protocol.ConfiguredModel {
   let store = @store.SessionStore(root.to_string())
   let settings = store.settings(SessionId(session)) catch {
     error if @async.is_being_cancelled() => raise error
@@ -754,11 +758,13 @@ async fn configured_model(root : @pathx.Absolute, session : String) -> String? {
           "session": session,
           "error": "\{error}",
         }
-      return None
+      return Unreadable("\{error}")
     }
   }
-  guard settings.get("model") is Some(String(model)) else { return None }
-  Some(model)
+  guard settings.get("model") is Some(String(model)) else {
+    return Unconfigured
+  }
+  Configured(model)
 }
 
 ///|

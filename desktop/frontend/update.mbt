@@ -655,7 +655,7 @@ fn apply_session_snapshot(
   watermark : Int,
   goal : @transcript.GoalStanding?,
   goal_markers : Array[(Int, @transcript.GoalMarker)],
-  recorded_model : String?,
+  recorded_model : @protocol.ConfiguredModel,
   generation : Int,
   activate_on_success : Bool,
 ) -> (@cmd.Cmd, Model) {
@@ -690,7 +690,7 @@ fn apply_session_snapshot(
     goal_markers~,
   )
   let conv = if adopt_recorded_model &&
-    recorded_model is Some(wire) &&
+    recorded_model is Configured(wire) &&
     EngineModel::parse(wire) is Some(engine_model) {
     { ..conv, engine_model, }
   } else {
@@ -698,6 +698,18 @@ fn apply_session_snapshot(
   }
   let mut next = model.replace_conversation(conv)
   let commands : Array[@cmd.Cmd] = []
+  // A settings sidecar the host could not read is damage worth saying so
+  // about — the chip is showing a default, not the conversation's model.
+  // Said once, when the user opens the conversation; a background re-read
+  // of the same damage would only repeat it.
+  if activate_on_success && recorded_model is Unreadable(reason) {
+    let (toast, notified) = next.notify_error(
+      dispatch,
+      "Conversation settings unreadable for \{session}: \{reason}",
+    )
+    commands.push(toast)
+    next = notified
+  }
   let owner : @interop.ConversationKey = { channel, session, }
   if activate_on_success &&
     model.loading_conversation is Some(loading_owner) &&
@@ -8677,7 +8689,7 @@ fn second_run_started_before_first_response() -> (Model, String)? {
   let (_, reconciled) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -8690,7 +8702,7 @@ fn second_run_started_before_first_response() -> (Model, String)? {
   let (_, post_finish) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -8740,7 +8752,7 @@ fn second_run_started_before_first_steer_receipt() -> Model? {
   let (_, reconciled) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -9390,7 +9402,7 @@ test "finished run reloads the named durable session for an old host" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -9445,7 +9457,7 @@ test "Finished queues one follow-up behind an older in-flight snapshot" {
   let (_, followed) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -10621,7 +10633,7 @@ test "open session tracks the latest load and ignores stale replies" {
   let (_, after_a) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-a",
@@ -10646,7 +10658,7 @@ test "open session tracks the latest load and ignores stale replies" {
   let (_, after_b) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-b",
@@ -10693,7 +10705,7 @@ test "a restored session keeps the placement its listing named" {
   let (_, restored) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       session~,
       items=[],
       watermark=0,
@@ -10766,7 +10778,7 @@ test "same-id session loads are fenced by channel owner" {
     FromDevice(
       remote,
       SessionLoaded(
-        model=None,
+        model=@protocol.Unconfigured,
         goal=None,
         goal_markers=[],
         session="shared",
@@ -10841,7 +10853,7 @@ test "reselecting a synced active session reloads idle external writes" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -10926,7 +10938,7 @@ test "pruning and reopening cannot reuse a transcript request token" {
   let (_, stale) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-pruned",
@@ -10956,7 +10968,7 @@ test "pruning and reopening cannot reuse a transcript request token" {
   let (_, fresh) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-pruned",
@@ -11012,7 +11024,7 @@ test "archive removal and reopening cannot reuse a transcript request token" {
   let (_, stale) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-archived",
@@ -11325,7 +11337,7 @@ test "session loaded swaps the active conversation onto the stored session" {
   let (_, once) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-stored",
@@ -11338,7 +11350,7 @@ test "session loaded swaps the active conversation onto the stored session" {
   let (_, twice) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-stored",
@@ -11377,7 +11389,7 @@ test "session loaded adopts the store transcript and keeps live run state" {
   let (_, other) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-stored",
@@ -11413,7 +11425,7 @@ test "session loaded adopts the store transcript and keeps live run state" {
   let (_, same) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -11903,7 +11915,7 @@ test "an accepted start response opens the run without Started" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -12483,7 +12495,7 @@ test "a failed response after durable Finished cannot resurrect its prompt" {
   let (_, empty) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -12732,7 +12744,7 @@ test "a live commit dates its row on arrival, buffered or applied straight" {
   let (_, drained) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       session="desktop-test",
       items=[],
       watermark=0,
@@ -12784,7 +12796,7 @@ test "a snapshot never settles a local steer by text" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -12988,7 +13000,7 @@ test "a foreign background run schedules one causal read after Started" {
   let (_, after_old_cut) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       session~,
       items=[],
       watermark=1,
@@ -13006,7 +13018,7 @@ test "a foreign background run schedules one causal read after Started" {
   let (_, causal) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       session~,
       items=[
         {
@@ -13095,7 +13107,7 @@ test "buffered commits are delivery, not applied chronology" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -13383,7 +13395,7 @@ test "a loaded record's recorded model outranks the page default" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionLoaded(
-      model=Some("deepseek-v4-pro"),
+      model=@protocol.Configured("deepseek-v4-pro"),
       goal=None,
       goal_markers=[],
       session="stored-chat",
@@ -13421,7 +13433,7 @@ test "a conversation already shown keeps its own pick across a re-read" {
   let (_, reread) = update_dev(
     dispatch,
     SessionLoaded(
-      model=Some("deepseek-v4-pro"),
+      model=@protocol.Configured("deepseek-v4-pro"),
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -13437,6 +13449,36 @@ test "a conversation already shown keeps its own pick across a re-read" {
 }
 
 ///|
+test "an unreadable settings sidecar keeps the default and says so" {
+  let dispatch = test_dispatch()
+  let (_, loading) = update(
+    dispatch,
+    OpenSession(@interop.ChannelId::Local, "stored-chat"),
+    test_model().with_listed(["stored-chat"]),
+  )
+  let (_, loaded) = update_dev(
+    dispatch,
+    SessionLoaded(
+      model=@protocol.Unreadable("session settings must be a JSON object"),
+      goal=None,
+      goal_markers=[],
+      session="stored-chat",
+      items=[],
+      watermark=0,
+      generation=1,
+    ),
+    loading,
+  )
+  assert_true(loaded.active().engine_model is DsFlash)
+  inspect(loaded.notifications.length(), content="1")
+  assert_true(
+    loaded.notifications[0].message.contains(
+      "settings unreadable for stored-chat",
+    ),
+  )
+}
+
+///|
 test "a record with no recorded model keeps the placeholder's default" {
   let dispatch = test_dispatch()
   let (_, loading) = update(
@@ -13447,7 +13489,7 @@ test "a record with no recorded model keeps the placeholder's default" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="stored-chat",
@@ -13471,7 +13513,7 @@ test "a recorded model this build does not know still shows as itself" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionLoaded(
-      model=Some("deepseek-v5-future"),
+      model=@protocol.Configured("deepseek-v5-future"),
       goal=None,
       goal_markers=[],
       session="stored-chat",
@@ -15110,7 +15152,7 @@ test "switching same-id archived stores fences the first transcript load" {
   let (_, stale_first) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       session=first_item.id,
       items=[
         {
@@ -15137,7 +15179,7 @@ test "switching same-id archived stores fences the first transcript load" {
   let (_, loaded_second) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       session=second_item.id,
       items=[
         {
@@ -15204,7 +15246,7 @@ test "an archived snapshot stays open across archived-list reconciliation" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session=item.id,
@@ -15283,7 +15325,7 @@ test "unarchiving an open transcript fences its archived snapshot" {
   let (_, stale) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session=item.id,
@@ -15642,7 +15684,7 @@ test "a new Started incarnation retires its exact deleted tombstone" {
   let (_, reconciled) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       session=deleted_item.id,
       items=[],
       watermark=0,
@@ -16124,7 +16166,7 @@ test "BridgeReady replaces archive overrides with fresh-list truth" {
   let (_, stale_archived) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session=item.id,
@@ -18245,7 +18287,7 @@ test "a snapshot drains buffered commits in sequence order" {
   let (_, next) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -18291,7 +18333,7 @@ test "a snapshot already containing the buffered commits drops them" {
   let (_, next) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -18325,7 +18367,7 @@ test "a snapshot with a still-gapped buffer keeps reloading" {
   let (_, next) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -18398,7 +18440,7 @@ test "background retries preserve buffered commits until a later success" {
   let (_, healed) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -18450,7 +18492,7 @@ test "reopening an active failed reload restarts it and keeps the buffer" {
   let (_, loaded) = update_dev(
     dispatch,
     SessionLoaded(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -18493,7 +18535,7 @@ test "stale and lower-watermark snapshots cannot overwrite current state" {
   let (_, stale) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -18518,7 +18560,7 @@ test "stale and lower-watermark snapshots cannot overwrite current state" {
   let (_, lower) = update_dev(
     dispatch,
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       goal=None,
       goal_markers=[],
       session="desktop-test",
@@ -19945,7 +19987,7 @@ test "a sub-run's progress refreshes the child transcript on screen" {
   let (_, settled) = update_dev(
     test_dispatch(),
     SessionRefreshed(
-      model=None,
+      model=@protocol.Unconfigured,
       session="desktop-test-sr-1",
       items=[
         {

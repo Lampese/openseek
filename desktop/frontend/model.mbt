@@ -2126,10 +2126,11 @@ priv enum DeviceMsg {
     watermark~ : Int,
     goal~ : @transcript.GoalStanding?,
     goal_markers~ : Array[(Int, @transcript.GoalMarker)],
-    // The model the record's last run recorded, if any; it outranks the
+    // The model the record is configured with, if any, or why the host
+    // could not read its settings; a configured model outranks the
     // placeholder's default so a reopened conversation shows the model it
     // was actually on.
-    model~ : String?,
+    model~ : @protocol.ConfiguredModel,
     generation~ : Int
   )
   // A foreground stored-session read failed. Generation guards stale replies;
@@ -2144,10 +2145,11 @@ priv enum DeviceMsg {
     watermark~ : Int,
     goal~ : @transcript.GoalStanding?,
     goal_markers~ : Array[(Int, @transcript.GoalMarker)],
-    // The model the record's last run recorded, if any; it outranks the
+    // The model the record is configured with, if any, or why the host
+    // could not read its settings; a configured model outranks the
     // placeholder's default so a reopened conversation shows the model it
     // was actually on.
-    model~ : String?,
+    model~ : @protocol.ConfiguredModel,
     generation~ : Int
   )
   // A background re-read failed. The generation identifies the exact read,

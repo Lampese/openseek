@@ -252,10 +252,9 @@ pub struct SessionLoadView {
   // completed. What moved the goal on afterwards is a different question
   // from whether this one was recorded.
   goal_markers : Array[(Int, GoalMarker)]
-  // The wire name of the model the conversation is set to — what its last
-  // run kept in the record's settings; None when no run has configured one
-  // or the host predates reporting it.
-  model : String?
+  // The model the conversation is set to — what its last run kept in the
+  // record's settings — or why the host could not read it.
+  model : @desktop_protocol.ConfiguredModel
 }
 
 ///|
@@ -863,11 +862,16 @@ fn session_reply(
 }
 
 ///|
-test "the load view carries the record's recorded model through" {
+test "the load view carries the record's configured model through" {
   let reply = session_reply("")
-  assert_eq(session_from_reply(reply).model, None)
-  let recorded = session_from_reply({ ..reply, model: Some("deepseek-v4-pro"), })
-  assert_eq(recorded.model, Some("deepseek-v4-pro"))
+  assert_true(session_from_reply(reply).model is Unconfigured)
+  let configured = session_from_reply({
+    ..reply,
+    model: Configured("deepseek-v4-pro"),
+  })
+  assert_true(configured.model is Configured("deepseek-v4-pro"))
+  let damaged = session_from_reply({ ..reply, model: Unreadable("damaged"), })
+  assert_true(damaged.model is Unreadable("damaged"))
 }
 
 ///|

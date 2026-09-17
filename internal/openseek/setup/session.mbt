@@ -125,71 +125,10 @@ pub async fn load_or_new_session(
 }
 
 ///|
-/// Keeps a session's durable settings (`settings.json`, beside its
-/// transcript) in step with what this process actually runs with — today the
-/// model. Every durable append goes through it: after the append it reads
-/// the settings back and writes only the keys whose value differs from what
-/// this process wants. A session already in step costs no writes; a session
-/// another process configured differently is corrected by the process
-/// running it; and the very first append of a new session, which creates the
-/// record, is immediately followed by its settings — there is no earlier
-/// moment, since settings need a record to sit beside.
-///
-/// The read is one small file per append, dwarfed by the append's own
-/// fdatasync, and it is what lets this hold no state of its own: whether a
-/// write is due is asked of the disk, not remembered.
-struct SettingsUpdater {
-  store : @store.SessionStore
-  desired : Map[String, Json]
-}
-
-///|
-/// An updater that holds the session at `desired` — the settings keys this
-/// process is the authority on. Keys it does not name are never touched.
-pub fn SettingsUpdater::SettingsUpdater(
-  store : @store.SessionStore,
-  desired : Map[String, Json],
-) -> SettingsUpdater {
-  { store, desired, }
-}
-
-///|
-/// The settings a run with `model` is the authority on: `model`, as its
-/// wire name — the same string the desktop's chip parses.
+/// The settings a run with `model` is the authority on, for
+/// `SessionStore::append(settings=...)`: `model`, as its wire name — the same
+/// string the desktop's chip parses. Settled with every durable append, so
+/// a session's settings always name the model behind its latest event.
 pub fn run_settings(model : @deepseek.Model) -> Map[String, Json] {
   { "model": Json("\{model}") }
-}
-
-///|
-/// Append one event durably, then bring the settings into step. A failed
-/// settings read or write is reported as a session error and never fails
-/// the append it followed — the transcript is the substance.
-pub async fn SettingsUpdater::append(
-  self : SettingsUpdater,
-  session : @agent_session.Session,
-  item : @agent_session.SessionItem,
-) -> @agent_session.Session {
-  let next = self.store.append(session, item)
-  self.sync(next.id()) catch {
-    error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>
-      raise error
-    error =>
-      @emit.emit(
-        SessionError(error="failed to update the session settings: \{error}"),
-      )
-  }
-  next
-}
-
-///|
-async fn SettingsUpdater::sync(
-  self : SettingsUpdater,
-  id : @agent_session.SessionId,
-) -> Unit {
-  let current = self.store.settings(id)
-  for key, value in self.desired {
-    if current.get(key) != Some(value) {
-      self.store.set_setting(id, key, value)
-    }
-  }
 }

@@ -1838,21 +1838,70 @@ test "editor target codecs require absolute paths and validate optional position
 }
 
 ///|
-test "session load replies carry the recorded model only when there is one" {
-  let recorded : @protocol.LoadSessionReply = @json.from_json({
+test "session load replies carry the configured model in one of three states" {
+  let configured : @protocol.LoadSessionReply = @json.from_json({
     "session": { "id": "desktop-a", "events": [] },
     "watermark": 0,
     "model": "deepseek-v4-pro",
   })
-  assert_eq(recorded.model, Some("deepseek-v4-pro"))
-  // An older host, or a record no run has annotated, sends no field.
+  assert_true(configured.model is Configured("deepseek-v4-pro"))
+  assert_eq(configured.watermark, Some(0))
+  // An older host, or a record no run has configured, sends no field; an
+  // explicit null reads the same.
   let absent : @protocol.LoadSessionReply = @json.from_json({
     "session": { "id": "desktop-a", "events": [] },
-    "watermark": 0,
   })
-  assert_eq(absent.model, None)
-  guard absent.to_json() is Object(fields) else {
+  assert_true(absent.model is Unconfigured)
+  assert_eq(absent.watermark, None)
+  let null_model : @protocol.LoadSessionReply = @json.from_json({
+    "session": { "id": "desktop-a", "events": [] },
+    "watermark": null,
+    "model": null,
+  })
+  assert_true(null_model.model is Unconfigured)
+  assert_eq(null_model.watermark, None)
+  // A sidecar the host could not read is a distinct answer.
+  let damaged : @protocol.LoadSessionReply = @json.from_json({
+    "session": { "id": "desktop-a", "events": [] },
+    "watermark": 3,
+    "settings_error": "session settings must be a JSON object",
+  })
+  assert_true(
+    damaged.model is Unreadable("session settings must be a JSON object"),
+  )
+  // Encoding writes exactly one of the two fields, and no watermark when
+  // there is none.
+  assert_eq(configured.to_json(), {
+    "session": configured.session.to_json(),
+    "watermark": 0,
+    "model": "deepseek-v4-pro",
+  })
+  assert_eq(absent.to_json(), { "session": absent.session.to_json() })
+  guard damaged.to_json() is Object(fields) else {
     fail("reply did not encode as an object")
   }
   assert_false(fields.contains("model"))
+  assert_eq(
+    fields.get("settings_error"),
+    Some(Json("session settings must be a JSON object")),
+  )
+  // Malformed: both answers at once, a non-string model, a missing session.
+  for
+    raw in (
+      [
+        {
+          "session": { "id": "desktop-a", "events": [] },
+          "model": "deepseek-v4-pro",
+          "settings_error": "damaged",
+        },
+        { "session": { "id": "desktop-a", "events": [] }, "model": 7 },
+        { "session": { "id": "desktop-a", "events": [] }, "settings_error": 7 },
+        { "watermark": 0, "model": "deepseek-v4-pro" },
+      ] : Array[Json]) {
+    assert_true(
+      refused(() => {
+        let _ : @protocol.LoadSessionReply = @json.from_json(raw)
+      }),
+    )
+  }
 }

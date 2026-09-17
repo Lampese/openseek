@@ -47,10 +47,6 @@ pub(all) enum DirProbe {
   Absent(parent~ : String, base~ : String)
 }
 
-type SettingsUpdater
-pub fn SettingsUpdater::SettingsUpdater(@store.SessionStore, Map[String, Json]) -> Self
-pub async fn SettingsUpdater::append(Self, @agent_session.Session, @agent_session.SessionItem) -> @agent_session.Session
-
 // Type aliases
 
 // Traits

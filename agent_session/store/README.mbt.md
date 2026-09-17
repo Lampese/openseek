@@ -33,10 +33,11 @@ lives inside the per-id directory and is never collected alongside the jsonl.
 
 `settings.json` is one JSON object: the session's configuration, beside the
 transcript rather than in it. Its keys belong to whoever writes them
-(`set_setting`); the store itself understands only `title`, the user-authored
-display name that `set_title` writes and `listings` reads. A desktop host
-keeps the model a conversation is set to under `model`, which no engine-side
-reader interprets. `settings(id)` returns the object; a session renamed by a
+(`set_setting`, or `append(settings=...)`, which settles them in the same
+locked step as the event); the store itself understands only `title`, the
+user-authored display name that `set_title` writes and `listings` reads. A run
+keeps the model it runs with under `model`, which the desktop reads back when
+reopening. `settings(id)` returns the object; a session renamed by a
 build that wrote the retired one-value `session-title` file is still read
 through that file until the first settings write folds it in and removes it.
 
