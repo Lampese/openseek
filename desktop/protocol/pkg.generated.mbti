@@ -1393,6 +1393,7 @@ pub fn LoadSessionPayload::to_repr(Self) -> @debug.Repr
 pub(all) struct LoadSessionReply {
   session : SessionDocument
   watermark : Int?
+  model : String?
 } derive(Eq, ToJson, @debug.Debug, @json.FromJson)
 pub fn LoadSessionReply::equal(Self, Self) -> Bool
 pub fn LoadSessionReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError

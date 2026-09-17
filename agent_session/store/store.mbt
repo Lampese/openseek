@@ -1,5 +1,5 @@
 ///|
-let session_dir_name : String = "sessions"
+const SessionDirName : String = "sessions"
 
 ///|
 /// Session files carry their id in the name so files collected out of their
@@ -13,21 +13,30 @@ fn session_file_name(id : @agent_session.SessionId) -> String {
 /// The lock file carries no id suffix: it already lives inside the per-id
 /// session directory, and it is transient local coordination that is never
 /// collected alongside the jsonl.
-let lock_file_name : String = "session.lock"
+const LockFileName : String = "session.lock"
 
 ///|
-/// User-authored display titles live beside the append-only transcript. A
-/// separate file lets a running session be renamed without rewriting history
-/// or replacing the inode its engine is still appending to.
-let title_file_name : String = "session-title"
+/// The session's configuration, beside its append-only transcript rather
+/// than in it: the user's display title, the model the conversation is set
+/// to, whatever a client adds. One JSON sidecar, replaced atomically under
+/// the session lock, lets a running session be renamed or reconfigured
+/// without rewriting history or replacing the inode its engine is still
+/// appending to.
+const SettingsFileName : String = "settings.json"
+
+///|
+/// The one-value title sidecar `settings.json` replaced. Still read when the
+/// JSON file is absent, so sessions renamed by an older build keep their
+/// title; the first settings write for such a session removes it.
+const LegacyTitleFileName : String = "session-title"
 
 ///|
 /// Native filesystem-backed collection of durable OpenSeek sessions.
 ///
 /// A `SessionStore` owns a root path string plus an in-memory sync cache.
-/// Under that root, each session is stored in `sessions/<id>/` with two files:
+/// Under that root, each session is stored in `sessions/<id>/`:
 /// `openseek_session-<id>.jsonl` (a header line followed by append-only event
-/// lines) and `session.lock`. The store is not a handle to one current
+/// lines), `session.lock`, and optionally `settings.json`. The store is not a handle to one current
 /// session; APIs that operate on a session either take a `SessionId` or a
 /// `Session` carrying its id.
 struct SessionStore {
@@ -90,7 +99,7 @@ fn validate_session_id(id : @agent_session.SessionId) -> Unit raise {
 
 ///|
 fn SessionStore::sessions_dir(self : SessionStore) -> String {
-  "\{self.root}/\{session_dir_name}"
+  "\{self.root}/\{SessionDirName}"
 }
 
 ///|
@@ -115,15 +124,23 @@ fn SessionStore::lock_path(
   self : SessionStore,
   id : @agent_session.SessionId,
 ) -> String raise {
-  "\{self.session_dir(id)}/\{lock_file_name}"
+  "\{self.session_dir(id)}/\{LockFileName}"
 }
 
 ///|
-fn SessionStore::title_path(
+fn SessionStore::settings_path(
   self : SessionStore,
   id : @agent_session.SessionId,
 ) -> String raise {
-  "\{self.session_dir(id)}/\{title_file_name}"
+  "\{self.session_dir(id)}/\{SettingsFileName}"
+}
+
+///|
+fn SessionStore::legacy_title_path(
+  self : SessionStore,
+  id : @agent_session.SessionId,
+) -> String raise {
+  "\{self.session_dir(id)}/\{LegacyTitleFileName}"
 }
 
 ///|
@@ -561,26 +578,59 @@ pub fn SessionListing::title(self : SessionListing) -> String? {
 }
 
 ///|
-/// Read a session's explicit display title. A missing sidecar means the title
-/// still derives from the first user prompt; malformed or unreadable metadata
-/// remains an error rather than masquerading as absence.
-pub async fn SessionStore::title(
+/// Read a session's settings: one JSON object whose keys belong to whoever
+/// writes them. The store itself understands only `title` (see `listings`);
+/// a client configuring, say, the model a conversation uses owns that key
+/// end to end. A missing file means nothing has been configured; malformed
+/// or unreadable settings remain an error rather than masquerading as
+/// absence. A session renamed by a build that wrote the one-value title file
+/// is read through that file.
+pub async fn SessionStore::settings(
   self : SessionStore,
   id : @agent_session.SessionId,
-) -> String? {
-  let text = @fs.read_file(self.title_path(id)).text() catch {
-    @os_error.OSError(_) as error if error.is_ENOENT() => return None
+) -> Map[String, Json] {
+  let text = @fs.read_file(self.settings_path(id)).text() catch {
+    @os_error.OSError(_) as error if error.is_ENOENT() =>
+      return self.legacy_settings(id)
+    error => raise error
+  }
+  guard @json.parse(text) is Object(fields) else {
+    fail("session settings must be a JSON object")
+  }
+  fields
+}
+
+///|
+/// The retired title sidecar as settings: a `title` key, or nothing at all.
+async fn SessionStore::legacy_settings(
+  self : SessionStore,
+  id : @agent_session.SessionId,
+) -> Map[String, Json] {
+  let text = @fs.read_file(self.legacy_title_path(id)).text() catch {
+    @os_error.OSError(_) as error if error.is_ENOENT() => return {}
     error => raise error
   }
   let title = text.trim().to_owned()
   guard !title.is_empty() else { fail("session title must not be blank") }
+  { "title": Json(title) }
+}
+
+///|
+/// The display title a settings object carries, if any. A title that is not
+/// a non-blank string is a damaged sidecar, not an absent title: displaying
+/// nothing while suppressing the first-prompt fallback would hide the damage.
+fn settings_title(settings : Map[String, Json]) -> String? raise {
+  guard settings.get("title") is Some(json) else { return None }
+  guard json is String(title) && !title.is_blank() else {
+    fail("session title must be a non-blank string")
+  }
   Some(title)
 }
 
 ///|
 /// Persist a user-authored display title without touching the append-only
-/// transcript. The title file is atomically replaced under the session lock,
-/// so concurrent readers see either complete value and a running engine may
+/// transcript. The sidecar is atomically replaced under the session lock, so
+/// concurrent readers see either complete value and a running engine may
 /// continue appending to its existing JSONL inode.
 pub async fn SessionStore::set_title(
   self : SessionStore,
@@ -589,15 +639,37 @@ pub async fn SessionStore::set_title(
 ) -> Unit {
   let title = title.trim().to_owned()
   guard !title.is_empty() else { fail("session title must not be blank") }
+  self.set_setting(id, "title", Json(title))
+}
+
+///|
+/// Set one settings key, leaving every other key as it was: a
+/// read-modify-write under the exclusive session lock, so two writers
+/// changing different keys cannot lose each other's value. Requires a
+/// durable record: a session directory is a transcript, and settings without
+/// one would list as a damaged session. The legacy title file, once folded
+/// into the JSON, is removed so the two can never disagree.
+pub async fn SessionStore::set_setting(
+  self : SessionStore,
+  id : @agent_session.SessionId,
+  key : String,
+  value : Json,
+) -> Unit {
   guard @fs.exists(self.session_file_path(id)) else {
     fail("session \{id.value()} does not exist")
   }
   with_session_lock(self, id, Exclusive, () => {
+    let settings = self.settings(id)
+    settings[key] = value
     write_text_atomic(
-      self.title_path(id),
-      title,
+      self.settings_path(id),
+      Json(settings).stringify(),
       dirs=self.session_dir_chain(id),
     )
+    @fs.remove(self.legacy_title_path(id)) catch {
+      @os_error.OSError(_) as error if error.is_ENOENT() => ()
+      error => raise error
+    }
   })
 }
 
@@ -672,7 +744,7 @@ pub async fn SessionStore::listings(
           id,
           last_active_unix_seconds: None,
           first_prompt: "",
-          title: self.title(id),
+          title: settings_title(self.settings(id)),
         })
         continue
       }
@@ -684,7 +756,7 @@ pub async fn SessionStore::listings(
           id,
           last_active_unix_seconds: Some(seconds),
           first_prompt: first_prompt_in_log(path),
-          title: self.title(id),
+          title: settings_title(self.settings(id)),
         },
         seconds,
         nanoseconds,

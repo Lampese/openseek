@@ -696,6 +696,7 @@ pub async fn load_session(
     return {
       session: document,
       watermark: Some(session_max_sequence(document)),
+      model: configured_model(root, session),
     }
   }
   // A record that moved to an archived twin is a different answer than one
@@ -714,7 +715,11 @@ pub async fn load_session(
     @session_record.Absent(_) => return empty_session_reply(session)
     error => raise EngineError("session load failed: \{error}")
   }
-  { session: document, watermark: Some(session_max_sequence(document)), }
+  {
+    session: document,
+    watermark: Some(session_max_sequence(document)),
+    model: configured_model(root, session),
+  }
 }
 
 ///|
@@ -729,7 +734,31 @@ fn empty_session_reply(session : String) -> LoadSessionReply {
       events: Some([]),
     },
     watermark: Some(0),
+    model: None,
   }
+}
+
+///|
+/// The model a conversation is set to, from its settings sidecar, if any.
+/// The transcript is the load's substance; a damaged sidecar costs only the
+/// configured model, so it is logged and read as absent rather than failing
+/// the load.
+async fn configured_model(root : @pathx.Absolute, session : String) -> String? {
+  let store = @store.SessionStore(root.to_string())
+  let settings = store.settings(SessionId(session)) catch {
+    error if @async.is_being_cancelled() => raise error
+    error => {
+      @xlog.warn() <?
+        {
+          "event": "desktop_session_settings_unreadable",
+          "session": session,
+          "error": "\{error}",
+        }
+      return None
+    }
+  }
+  guard settings.get("model") is Some(String(model)) else { return None }
+  Some(model)
 }
 
 ///|
@@ -779,7 +808,11 @@ pub async fn load_archived_session(
     error if @async.is_being_cancelled() => raise error
     error => raise EngineError("archived session load failed: \{error}")
   }
-  { session: document, watermark: Some(session_max_sequence(document)), }
+  {
+    session: document,
+    watermark: Some(session_max_sequence(document)),
+    model: configured_model(root, session),
+  }
 }
 
 ///|

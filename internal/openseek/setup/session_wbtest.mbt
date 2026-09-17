@@ -181,3 +181,31 @@ async test "load_or_new_session recovers empty interrupted session directory" {
     assert_eq(with_event.events().length(), 1)
   })
 }
+
+///|
+async test "settings follow the running process: written with the first append, corrected when they differ, left alone when in step" {
+  @vfs.with_tmpdir(prefix="openseek-cli-settings-", root => {
+    let store = @store.SessionStore(root)
+    let id : @agent_session.SessionId = SessionId("cli-settings")
+    let pro = SettingsUpdater(store, run_settings(Deepseek(V4Pro)))
+    let fresh : @agent_session.Session = Session(id, system_prompt="system")
+    assert_false(store.exists(id))
+    // The first append creates the record; the settings follow at once.
+    let one = pro.append(fresh, User(UserMessage("hello")))
+    assert_eq(one.events().length(), 1)
+    assert_eq(store.settings(id).get("model"), Some(Json("deepseek-v4-pro")))
+    // In step: another append rewrites nothing.
+    let stamp = @fs.mtime("\{root}/sessions/cli-settings/settings.json")
+    let two = pro.append(one, User(UserMessage("again")))
+    assert_eq(@fs.mtime("\{root}/sessions/cli-settings/settings.json"), stamp)
+    // A later process running another model corrects the setting and leaves
+    // every key it does not own as it was.
+    store.set_title(id, "Named")
+    let flash = SettingsUpdater(store, run_settings(Deepseek(V4Flash)))
+    let three = flash.append(two, User(UserMessage("once more")))
+    assert_eq(three.events().length(), 3)
+    let settings = store.settings(id)
+    assert_eq(settings.get("model"), Some(Json("deepseek-v4-flash")))
+    assert_eq(settings.get("title"), Some(Json("Named")))
+  })
+}

@@ -688,9 +688,13 @@ pub(all) struct SessionDocument {
 } derive(Debug, Eq, FromJson, ToJson)
 
 ///|
+/// `model` is the wire name of the model the conversation is set to — what
+/// its last run kept in the record's settings sidecar; absent for a record no
+/// run has configured, or from a host that predates it.
 pub(all) struct LoadSessionReply {
   session : SessionDocument
   watermark : Int?
+  model : String?
 } derive(Debug, Eq, FromJson, ToJson)
 
 ///|

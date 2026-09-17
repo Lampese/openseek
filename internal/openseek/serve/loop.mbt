@@ -90,6 +90,11 @@ async fn run_serve(
         ),
       )
   }
+  // Durable appends go through the updater so the record's settings follow
+  // what this process runs with (see `@setup.SettingsUpdater`).
+  let updater = store.map(store => {
+    @setup.SettingsUpdater(store, @setup.run_settings(model))
+  })
   // The live conversation value. `append_item` updates it on every appended
   // event, so even a turn that raises leaves `session` reflecting all the
   // events it recorded before failing.
@@ -275,8 +280,8 @@ async fn run_serve(
       item : @agent_session.SessionItem,
       what : String,
     ) -> Bool {
-      session = if store is Some(store) {
-        store.append(session, item) catch {
+      session = if updater is Some(updater) {
+        updater.append(session, item) catch {
           error if @async.is_being_cancelled() ||
             @async.is_cancellation_error(error) => raise error
           error => {
@@ -421,8 +426,8 @@ async fn run_serve(
           submission_id?,
           on_goal_met?,
           append_item=(current, item) => {
-            let next = match store {
-              Some(store) => store.append(current, item)
+            let next = match updater {
+              Some(updater) => updater.append(current, item)
               None => current.append(item)
             }
             session = next

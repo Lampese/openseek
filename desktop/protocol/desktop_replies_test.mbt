@@ -1836,3 +1836,23 @@ test "editor target codecs require absolute paths and validate optional position
     assert_true(decoded is None)
   }
 }
+
+///|
+test "session load replies carry the recorded model only when there is one" {
+  let recorded : @protocol.LoadSessionReply = @json.from_json({
+    "session": { "id": "desktop-a", "events": [] },
+    "watermark": 0,
+    "model": "deepseek-v4-pro",
+  })
+  assert_eq(recorded.model, Some("deepseek-v4-pro"))
+  // An older host, or a record no run has annotated, sends no field.
+  let absent : @protocol.LoadSessionReply = @json.from_json({
+    "session": { "id": "desktop-a", "events": [] },
+    "watermark": 0,
+  })
+  assert_eq(absent.model, None)
+  guard absent.to_json() is Object(fields) else {
+    fail("reply did not encode as an object")
+  }
+  assert_false(fields.contains("model"))
+}

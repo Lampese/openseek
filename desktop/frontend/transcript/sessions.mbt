@@ -252,6 +252,10 @@ pub struct SessionLoadView {
   // completed. What moved the goal on afterwards is a different question
   // from whether this one was recorded.
   goal_markers : Array[(Int, GoalMarker)]
+  // The wire name of the model the conversation is set to — what its last
+  // run kept in the record's settings; None when no run has configured one
+  // or the host predates reporting it.
+  model : String?
 }
 
 ///|
@@ -296,6 +300,7 @@ pub fn session_from_reply(
     watermark: reply.watermark.unwrap_or(derived_watermark),
     goal,
     goal_markers,
+    model: reply.model,
   }
 }
 
@@ -855,6 +860,14 @@ fn session_reply(
   let suffix =
     #|]}}
   @json.from_json(@json.parse(prefix + events_json + suffix))
+}
+
+///|
+test "the load view carries the record's recorded model through" {
+  let reply = session_reply("")
+  assert_eq(session_from_reply(reply).model, None)
+  let recorded = session_from_reply({ ..reply, model: Some("deepseek-v4-pro"), })
+  assert_eq(recorded.model, Some("deepseek-v4-pro"))
 }
 
 ///|
