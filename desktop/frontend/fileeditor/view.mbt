@@ -1977,7 +1977,6 @@ pub fn breadcrumb_view(
   if !full_diff_available(state, ctx) {
     path_row.push(review_badge(dispatch, state, ctx))
   }
-  path_row.push(review_progress(dispatch, state, ctx))
   if mbti_view_available(state, ctx) {
     path_row.push(mbti_view_toolbar(dispatch, state, ctx))
   }
@@ -2374,7 +2373,8 @@ fn review_diff_mode_toolbar(
     return @html.span(class="review-mode-toolbar hidden", "")
   }
   @html.div(
-    class="review-mode-toolbar comparison-algorithm",
+    class="review-mode-toolbar comparison-algorithm" +
+      (if review_controls_pending(state, ctx) { " pending" } else { "" }),
     attrs=@html.Attrs::build()
       .role("toolbar")
       .aria_label("Comparison algorithm"),
@@ -2403,7 +2403,8 @@ fn review_diff_mode_toolbar(
 }
 
 ///|
-/// Keep the shared filter buttons stable while replacement diff inputs load.
+/// Keep filters stable while replacement diff inputs load. Native checkboxes
+/// emit click for pointer and Space activation.
 fn review_comments_control(
   dispatch : @cmd.Emit[Msg],
   state : State,
@@ -2414,17 +2415,11 @@ fn review_comments_control(
   }
   let enabled = full_diff_ready(state, ctx) &&
     state.review_diff_mode != ReviewDiffLine
+  // Preserve the selected filter while replacement diff inputs load.
   let pending = review_controls_pending(state, ctx) &&
     state.review_diff_mode != ReviewDiffLine
-  @html.button(
-    type_="button",
-    class="review-comments-control" +
-      (if (enabled || pending) && state.review_diff_ignore_comments {
-        " active"
-      } else {
-        ""
-      }) +
-      (if pending { " pending" } else { "" }),
+  @html.label(
+    class="review-comments-control" + (if pending { " pending" } else { "" }),
     title=if !full_diff_ready(state, ctx) {
       "Available in diff view"
     } else if state.review_diff_mode == ReviewDiffLine {
@@ -2434,18 +2429,16 @@ fn review_comments_control(
     } else {
       "Ignore comment-only changes"
     },
-    disabled=!enabled,
-    on_click=dispatch(ToggleReviewDiffIgnoreComments),
-    attrs=@html.Attrs::build()
-      .aria_label("Ignore comments")
-      .aria_pressed(
-        ((enabled || pending) && state.review_diff_ignore_comments).to_string(),
+    [
+      @html.input(
+        input_type=Checkbox,
+        checked=(enabled || pending) && state.review_diff_ignore_comments,
+        attrs=@html.Attrs::build()
+          .disabled(!enabled)
+          .on_click(_ => dispatch(ToggleReviewDiffIgnoreComments)),
       ),
-    if state.review_diff_ignore_comments {
-      "Comments: ignored"
-    } else {
-      "Comments: included"
-    },
+      @html.text("Ignore comments"),
+    ],
   )
 }
 
@@ -2460,17 +2453,11 @@ fn review_tests_control(
   }
   let enabled = full_diff_ready(state, ctx) &&
     state.review_diff_mode != ReviewDiffLine
+  // Preserve the selected filter while replacement diff inputs load.
   let pending = review_controls_pending(state, ctx) &&
     state.review_diff_mode != ReviewDiffLine
-  @html.button(
-    type_="button",
-    class="review-tests-control" +
-      (if (enabled || pending) && state.review_diff_ignore_tests {
-        " active"
-      } else {
-        ""
-      }) +
-      (if pending { " pending" } else { "" }),
+  @html.label(
+    class="review-tests-control" + (if pending { " pending" } else { "" }),
     title=if !full_diff_ready(state, ctx) {
       "Available in diff view"
     } else if state.review_diff_mode == ReviewDiffLine {
@@ -2480,18 +2467,16 @@ fn review_tests_control(
     } else {
       "Ignore MoonBit test blocks"
     },
-    disabled=!enabled,
-    on_click=dispatch(ToggleReviewDiffIgnoreTests),
-    attrs=@html.Attrs::build()
-      .aria_label("Ignore tests")
-      .aria_pressed(
-        ((enabled || pending) && state.review_diff_ignore_tests).to_string(),
+    [
+      @html.input(
+        input_type=Checkbox,
+        checked=(enabled || pending) && state.review_diff_ignore_tests,
+        attrs=@html.Attrs::build()
+          .disabled(!enabled)
+          .on_click(_ => dispatch(ToggleReviewDiffIgnoreTests)),
       ),
-    if state.review_diff_ignore_tests {
-      "Tests: ignored"
-    } else {
-      "Tests: included"
-    },
+      @html.text("Ignore tests"),
+    ],
   )
 }
 

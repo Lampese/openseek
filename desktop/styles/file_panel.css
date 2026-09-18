@@ -2396,35 +2396,31 @@ button.git-history-file.selected {
 
 .review-comments-control,
 .review-tests-control {
-  appearance: none;
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
+  gap: 5px;
   min-height: 28px;
-  padding: 3px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  padding: 0 3px;
   color: var(--color-text-secondary);
-  background: var(--color-control-surface);
-  font: inherit;
   font-size: var(--font-size-xs);
   white-space: nowrap;
   cursor: pointer;
 }
 
-.review-comments-control:hover:not(:disabled),
-.review-tests-control:hover:not(:disabled) {
-  color: var(--color-text-primary);
-  background: var(--color-bg-surface);
+.review-comments-control input,
+.review-tests-control input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: inherit;
 }
 
-.review-comments-control.active,
-.review-tests-control.active {
-  color: var(--color-accent-strong);
-  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
-}
-
-.review-comments-control:disabled:not(.pending),
-.review-tests-control:disabled:not(.pending) {
+.review-comments-control:has(input:disabled):not(.pending),
+.review-tests-control:has(input:disabled):not(.pending) {
   color: var(--color-text-muted);
+  cursor: default;
   opacity: 0.5;
 }
 

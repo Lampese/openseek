@@ -37,7 +37,8 @@ test('failed Search refresh replaces retained review content with a visible noti
   await app.goto();
   await app.openSession();
   await app.openReview();
-  await page.getByRole('button', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('button', { name: 'Line diff', exact: true }).click();
   await expect(page.locator('#diff-editor-host')).toContainText('working tree');
   await page.getByRole('tab', { name: 'Search', exact: true }).click();
   await page.getByRole('textbox', { name: 'Search', exact: true }).fill('working');
@@ -73,7 +74,8 @@ test('workspace navigation preserves tabs and each file owns its Content/Diff vi
   await expect(tabs).toHaveCount(0);
   const navigator = page.getByRole('tablist', { name: 'Explorer views' });
   const fileView = page.getByRole('group', { name: 'File view' });
-  await page.getByRole('button', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('button', { name: 'Line diff', exact: true }).click();
   await fileView.getByRole('button', { name: 'Content view' }).click();
   await page.getByRole('button', { name: 'Next changed file' }).click();
   await expect(fileView.getByRole('button', { name: 'Diff view' })).toHaveAttribute('aria-pressed', 'true');
@@ -127,7 +129,8 @@ for (const layout of ['right-sidebar', 'bottom-panel', 'narrow']) {
     await app.openSession();
     await app.openReview();
     await expect(page.locator('.editor-tab')).toHaveCount(0);
-    await page.getByRole('button', { name: /View diff: src\/main\.mbt/ }).click();
+    await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+    await page.getByRole('button', { name: 'Line diff', exact: true }).click();
     await expect(page.getByRole('group', { name: 'File view' })).toBeVisible();
     if (layout === 'narrow') {
       await page.getByRole('button', { name: 'Show workspace navigator' }).click();
@@ -139,7 +142,7 @@ for (const layout of ['right-sidebar', 'bottom-panel', 'narrow']) {
     expect(viewer.height).toBeGreaterThan(100);
     expect(viewer.width).toBeGreaterThan(200);
     await page.getByTitle('New tab', { exact: true }).click();
-    await page.getByRole('button', { name: /^Workflows / }).click();
+    await page.getByRole('menuitem', { name: 'Workflows', exact: true }).click();
     await expect(page.locator('.workflow-panel')).toBeVisible();
     await page.getByRole('button', { name: 'Show workspace navigator' }).click();
     await expect(page.getByRole('tab', { name: /^Changes/ })).toBeVisible();
@@ -159,7 +162,8 @@ test('comparison filters support native checkbox pointer and keyboard input', as
   await app.goto();
   await app.openSession();
   await app.openReview();
-  await page.getByRole('button', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('button', { name: 'Line diff', exact: true }).click();
   const comments = page.getByRole('checkbox', { name: 'Ignore comments' });
   await expect(comments).toBeDisabled();
   await expect(comments).not.toBeChecked();
