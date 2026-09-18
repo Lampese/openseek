@@ -31,11 +31,7 @@ pub fn open_history_diff(State, GitHistoryDiff) -> State
 
 pub fn open_jobs(State) -> State
 
-pub fn open_picker(State) -> State
-
 pub fn open_workflows(State) -> State
-
-pub fn resolve_pick(State, @common.Uri) -> State
 
 pub fn sync(State, @interop.ConversationKey) -> State
 
@@ -50,7 +46,6 @@ pub(all) enum DockTab {
   File(path~ : @common.Uri)
   GitDiff(diff~ : GitHistoryDiff)
   Browser(id~ : Int)
-  FilePicker
   Workflows
   Jobs
 } derive(Eq)

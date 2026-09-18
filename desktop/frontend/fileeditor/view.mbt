@@ -243,15 +243,11 @@ fn icon(image : () -> @html.Html) -> @html.Html {
 /// The `div.editor` class list the root view wraps the panel's parts in:
 /// tree visibility and the Settings-chosen dock layout are both classes, not
 /// structure, so every state renders the same children in the same order and
-/// the viewer host is never re-keyed. With no file open the breadcrumb row
-/// hides (see `breadcrumb_view`) and takes the tree toggle with it, so the
-/// tree must show regardless of the toggle's state — the panel is otherwise
-/// a dead pane.
+/// the viewer host is never re-keyed. Navigation visibility is independent of
+/// the active resource; Browser and Workflows can keep the navigator collapsed.
 pub fn editor_classes(state : State, ctx : Ctx) -> String {
-  let tree_visible = state.tree_open ||
-    (ctx.active_file is None && ctx.active_history_diff is None)
   let mut classes = "editor"
-  if tree_visible {
+  if state.tree_open {
     classes += " tree-open"
   }
   if ctx.tree_layout is RightSidebar {
@@ -285,12 +281,14 @@ pub fn resize_handle_view() -> @html.Html {
 /// switches; CSS hides the inactive surface and the tree pane when toggled off,
 /// and collapses the whole panel to zero width when it is closed. The children's
 /// order is structural — rabbita diffs by index, so every part renders
-/// unconditionally.
+/// unconditionally. The caller supplies a fixed list of other tab bodies so
+/// they share the same resizable navigator without changing their DOM identity.
 pub fn body_view(
   dispatch : @cmd.Emit[Msg],
   state : State,
   ctx : Ctx,
   semantic_review? : @html.Html = @html.nothing,
+  other_tabs? : Array[@html.Html] = [],
 ) -> @html.Html {
   // The stable elements the code Viewer, MarkdownViewer, and switchable Line
   // DiffEditor attach their imperative DOM into. Semantic review owns keyed
@@ -426,18 +424,22 @@ pub fn body_view(
       }),
     semantic_review,
   )
-  @html.div(class="editor-body", [
-    @html.div(class="viewer-stack", [
-      viewer_host,
-      markdown_viewer_host,
-      mbti_diagram_host,
-      package_diagram_host,
-      diff_editor_host,
-      semantic_review_host,
-      viewer_notice(state, ctx),
-    ]),
-    tree_pane(dispatch, state, ctx),
-  ])
+  @html.div(
+    class="editor-body",
+    [
+      @html.div(class="viewer-stack", [
+        viewer_host,
+        markdown_viewer_host,
+        mbti_diagram_host,
+        package_diagram_host,
+        diff_editor_host,
+        semantic_review_host,
+        viewer_notice(state, ctx),
+      ]),
+      ..other_tabs,
+      tree_pane(dispatch, state, ctx),
+    ],
+  )
 }
 
 ///|
@@ -625,6 +627,16 @@ fn tree_pane(dispatch : @cmd.Emit[Msg], state : State, ctx : Ctx) -> @html.Html 
         .role("tabpanel")
         .aria_labelledby(explorer_tab_id(state.explorer_mode)),
       inventory,
+    ),
+    // Keep Tab moving directly from the selected inventory tab into its contents.
+    // The dismiss button is visually in the header but follows the inventory.
+    @html.button(
+      type_="button",
+      class="panel-toggle navigator-hide",
+      title="Hide navigator",
+      attrs=@html.Attrs::build().aria_label("Hide navigator"),
+      on_click=dispatch(ToggleTree),
+      icon(icon_folder),
     ),
     // Rendered even while empty so the row's slot in the pane is stable.
     @html.div(

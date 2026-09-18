@@ -118,14 +118,14 @@ test('fixed sidebar toggle respects native geometry across pages and fullscreen'
   expect(app.pageErrors).toEqual([]);
 });
 
-test('Launcher tabs receive focus and Close never closes the window', async ({ page }) => {
+test('Navigator launchers receive focus without creating tabs', async ({ page }) => {
   const app = await installDesktop(page);
   app.gitChanges = [];
   const tabs = page.locator('.editor-tab');
   for (const name of ['Review', 'Files', 'Search']) {
     await page.getByRole('button', { name: 'Show panel', exact: true }).click();
     await page.getByRole('button', { name: new RegExp(`^${name} `) }).click();
-    await expect(tabs).toHaveCount(1);
+    await expect(tabs).toHaveCount(0);
     if (name === 'Review') {
       await expect(page.getByText('No changed files.', { exact: true })).toBeVisible();
     }
@@ -140,11 +140,85 @@ test('Launcher tabs receive focus and Close never closes the window', async ({ p
   expect(app.pageErrors).toEqual([]);
 });
 
+for (const width of [1440, 390]) {
+  for (const destination of ['File', 'Browser', 'Workflows', 'Jobs']) {
+    test(`closing the focused navigator preserves ${destination} at ${width}px`, async ({ page }) => {
+      const app = await installDesktop(page);
+      await page.setViewportSize({ width, height: 900 });
+      await app.openReview();
+      await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+      await page.getByRole('button', { name: 'Line diff', exact: true }).click();
+      if (destination !== 'File') {
+        await page.getByTitle('New tab', { exact: true }).click();
+        await page.getByRole('menuitem', { name: destination === 'Browser' ? 'Browse' : destination, exact: true }).click();
+      }
+      const tabs = page.locator('.editor-tab');
+      const initialTabs = await tabs.allTextContents();
+      const active = page.locator('.editor-tab.active');
+      const initialActive = await active.textContent();
+      const navigator = page.getByRole('tablist', { name: 'Explorer views' });
+      const resource = page.locator(destination === 'File' ? '#diff-editor-host'
+        : destination === 'Browser' ? '.browser-chrome'
+        : destination === 'Jobs' ? '.jobs-panel' : '.workflow-panel');
+      const originalResource = await resource.elementHandle();
+      for (const inventory of ['Files', 'Changes', 'Search']) {
+        if (!(await navigator.isVisible())) {
+          await page.getByTitle('New tab', { exact: true }).click();
+          await page.getByRole('menuitem', { name: 'Files', exact: true }).click();
+        }
+        const tab = navigator.getByRole('tab', { name: new RegExp(`^${inventory}`) });
+        await tab.click();
+        await expect(navigator).toBeVisible();
+        await expect(tabs).toHaveText(initialTabs);
+        await expect(active).toHaveText(initialActive);
+        expect(await originalResource.evaluate(node => node.isConnected)).toBe(true);
+        if (width > 760) {
+          await expect(resource).toBeVisible();
+          const content = await resource.boundingBox();
+          const tree = await page.locator('.file-tree-pane').boundingBox();
+          expect(content.width).toBeGreaterThan(100);
+          expect(content.height).toBeGreaterThan(100);
+          expect(content.x + content.width).toBeLessThanOrEqual(tree.x + 1);
+        } else {
+          await expect(resource).toBeHidden();
+        }
+        // Exercise both the navigator header and controls inside its body.
+        if (inventory === 'Changes') {
+          await page.getByRole('treeitem', { name: /View diff: src\/lib\.mbt/ }).focus();
+        } else if (inventory === 'Search') {
+          await page.locator('#workspace-search-input').fill('answer');
+        } else {
+          await tab.focus();
+        }
+        await closeFocused(page);
+        await expect(tabs).toHaveText(initialTabs);
+        await expect(active).toHaveText(initialActive);
+        await expect(navigator).toBeHidden();
+        await expect(page.locator('.content.panel-open > .editor')).toBeFocused();
+        await expect(resource).toBeVisible();
+        if (width <= 760) {
+          const body = await page.locator('.editor-body').boundingBox();
+          const restored = await resource.boundingBox();
+          expect(restored.width).toBeGreaterThanOrEqual(body.width - 1);
+          expect(restored.height).toBeGreaterThanOrEqual(body.height - 1);
+        }
+      }
+      // Once focus returns to the resource, the next Close owns that tab.
+      await closeFocused(page);
+      await expect(tabs).toHaveCount(initialTabs.length - 1);
+      expect(app.requests.filter(request => request.method === 'app.close_window')).toEqual([]);
+      expect(app.pageErrors).toEqual([]);
+    });
+  }
+}
+
 test('Selecting a dock tab moves focus out of the composer', async ({ page }) => {
   const app = await installDesktop(page);
   await page.getByRole('button', { name: 'Show panel', exact: true }).click();
   await page.getByRole('button', { name: /^Review / }).click();
-  const review = page.locator('.editor-tab', { hasText: 'Review Changes' });
+  await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+  await page.getByRole('button', { name: 'Line diff', exact: true }).click();
+  const review = page.locator('.editor-tab', { hasText: 'main.mbt' });
   await page.getByTitle('New tab', { exact: true }).click();
   await page.getByRole('menu', { name: 'New tab', exact: true })
     .getByRole('menuitem', { name: 'Browse', exact: true }).click();
@@ -304,3 +378,87 @@ test('web theme follows the browser without querying native appearance', async (
   expect(app.requests.some(r => r.method === 'app.system_appearance')).toBe(false);
   expect(app.pageErrors).toEqual([]);
 });
+for (const destination of ['Browser', 'Workflows']) {
+  test(`closing a file keeps its promoted ${destination} visible on narrow layouts`, async ({ page }) => {
+    const app = await installDesktop(page);
+    await page.setViewportSize({ width: 390, height: 850 });
+    await app.openReview();
+    await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+    await page.getByRole('button', { name: 'Line diff', exact: true }).click();
+    await page.getByTitle('New tab', { exact: true }).click();
+    await page.getByRole('menuitem', { name: destination === 'Browser' ? 'Browse' : destination, exact: true }).click();
+    const tabs = page.locator('.editor-tab');
+    const file = tabs.filter({ hasText: 'main.mbt' });
+    await file.click();
+    await expect(file).toHaveClass(/active/);
+    await file.locator('.tab-close').click();
+    await expect(tabs).toHaveCount(1);
+    await expect(tabs).toHaveClass(/active/);
+    await expect(page.locator(destination === 'Browser' ? '.browser-chrome' : destination === 'Jobs' ? '.jobs-panel' : '.workflow-panel')).toBeVisible();
+    await expect(page.getByRole('tablist', { name: 'Explorer views' })).toBeHidden();
+    await expect(page.getByTitle('New tab', { exact: true })).toBeVisible();
+    expect(app.pageErrors).toEqual([]);
+  });
+}
+
+for (const destination of ['Browser', 'Workflows']) {
+  test(`bottom navigator shares space with ${destination} and resizes`, async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('openseek.tree_layout', 'bottom-panel'));
+    const app = await installDesktop(page);
+    await page.getByRole('button', { name: 'Show panel', exact: true }).click();
+    await page.locator('.dock-launcher').getByRole('button', {
+      name: new RegExp(`^${destination === 'Browser' ? 'Browse' : destination} `),
+    }).click();
+    const active = page.locator('.editor-tab.active');
+    const selected = await active.textContent();
+    const resource = page.locator(destination === 'Browser' ? '.browser-chrome' : '.workflow-panel');
+    const navigator = page.locator('.file-tree-pane');
+    await page.getByTitle('New tab', { exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Search', exact: true }).click();
+    await expect(page.locator('#workspace-search-input')).toBeFocused();
+    await expect(resource).toBeVisible();
+    await expect(navigator).toBeVisible();
+    const before = await navigator.boundingBox();
+    const content = await resource.boundingBox();
+    expect(content.y + content.height).toBeLessThanOrEqual(before.y + 1);
+    expect(before.height).toBeGreaterThan(96);
+    const handle = await page.locator('#tree-resize-handle').boundingBox();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2, handle.y - 80);
+    await page.mouse.up();
+    await expect.poll(async () => (await navigator.boundingBox()).height).toBeGreaterThan(before.height + 50);
+    await expect(active).toHaveText(selected);
+    await expect(page.locator('.editor-tab')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Hide navigator', exact: true }).click();
+    await expect(navigator).toBeHidden();
+    await expect(resource).toBeVisible();
+    expect(app.pageErrors).toEqual([]);
+  });
+}
+
+for (const destination of ['File', 'Browser', 'Workflows', 'Jobs']) {
+  test(`selecting the retained ${destination} returns from narrow navigation`, async ({ page }) => {
+    const app = await installDesktop(page);
+    await page.setViewportSize({ width: 390, height: 850 });
+    await app.openReview();
+    await page.getByRole('treeitem', { name: /View diff: src\/main\.mbt/ }).click();
+    if (destination !== 'File') {
+      await page.getByTitle('New tab', { exact: true }).click();
+      await page.getByRole('menuitem', { name: destination === 'Browser' ? 'Browse' : destination, exact: true }).click();
+    }
+    const active = page.locator('.editor-tab.active');
+    const selected = await active.textContent();
+    await page.getByTitle('New tab', { exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Search', exact: true }).click();
+    await expect(page.locator('#workspace-search-input')).toBeFocused();
+    await expect(active).toHaveText(selected);
+    await active.click();
+    await expect(page.getByRole('tablist', { name: 'Explorer views' })).toBeHidden();
+    await expect(page.locator(destination === 'File' ? '.viewer-stack'
+      : destination === 'Browser' ? '.browser-chrome'
+      : destination === 'Jobs' ? '.jobs-panel' : '.workflow-panel')).toBeVisible();
+    await expect(active).toHaveText(selected);
+    expect(app.pageErrors).toEqual([]);
+  });
+}

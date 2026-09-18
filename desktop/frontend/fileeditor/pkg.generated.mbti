@@ -29,7 +29,7 @@ pub fn apply_theme(String) -> @cmd.Cmd
 
 pub fn basename(@pathx.Relative) -> String
 
-pub fn body_view(@cmd.Emit[Msg], State, Ctx, semantic_review? : @html.Html) -> @html.Html
+pub fn body_view(@cmd.Emit[Msg], State, Ctx, semantic_review? : @html.Html, other_tabs? : Array[@html.Html]) -> @html.Html
 
 pub fn breadcrumb_view(@cmd.Emit[Msg], State, Ctx, reveal? : (String, @cmd.Cmd)?) -> @html.Html
 

@@ -83,6 +83,8 @@ test('historical selection rejects late reads, reports errors and fits a narrow 
   await expect(output).toContainText('old failed job output');
   await page.setViewportSize({ width: 1000, height: 850 });
   await expect.poll(() => page.locator('.jobs-panel').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  // With navigation alongside Jobs, details may require vertical scrolling.
+  await page.getByRole('button', { name: 'Copy tail command', exact: true }).scrollIntoViewIfNeeded();
   await expect(page.getByRole('button', { name: 'Copy tail command', exact: true })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('jobs-narrow.png'), fullPage: true });
   expect(app.pageErrors).toEqual([]);
@@ -223,6 +225,8 @@ test('UUID suffix collisions expand labels while selection and copying retain fu
   expect(app.requests.some(r => r.method === 'jobs.read' && r.params.target.job_id === otherId)).toBe(true);
   await page.setViewportSize({ width: 1000, height: 850 });
   await expect.poll(() => page.locator('.jobs-panel').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  // The narrower content column may place actions below the initial viewport.
+  await page.getByRole('button', { name: 'Copy job ID', exact: true }).scrollIntoViewIfNeeded();
   await expect(page.getByRole('button', { name: 'Copy job ID', exact: true })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('jobs-uuid-narrow.png'), fullPage: true });
   expect(app.pageErrors).toEqual([]);

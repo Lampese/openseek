@@ -396,36 +396,20 @@ html:is(
   pointer-events: none !important;
 }
 
-/* ---------- dock: browser tabs, launcher, file picker ---------- */
-/* The active tab's kind is a class on .editor (mode-file / mode-browser /
-   mode-picker / mode-launcher); every body part below the strip is always
-   rendered and CSS shows exactly one, so no imperative host is re-keyed. */
-.editor.mode-browser .viewer-breadcrumb,
-.editor.mode-browser .editor-body,
-.editor.mode-launcher .viewer-breadcrumb,
-.editor.mode-launcher .editor-body {
+/* Resource bodies share the resizable navigator. Hiding one resource must
+   leave the navigator and all permanent attachment points mounted. */
+.editor:is(.mode-browser, .mode-launcher, .mode-workflows, .mode-jobs) .viewer-breadcrumb,
+.editor:is(.mode-browser, .mode-launcher, .mode-workflows, .mode-jobs) .viewer-stack {
   display: none;
 }
-/* The picker reuses the file chrome (tree + viewer area); the overlay
-   covers whatever document the viewer last showed. */
-.editor.mode-picker .viewer-stack::after {
-  content: "Select a file to open";
+.editor-body > :is(.browser-chrome, .workflow-panel, .jobs-panel, .dock-launcher) {
+  flex: 1;
+  min-width: 0;
+}
+.navigator-hide {
   position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--color-bg-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-md);
-}
-.editor.mode-picker.mode-review .viewer-stack::after {
-  content: "Select a changed file to review";
-}
-.editor.mode-picker.mode-search-picker .viewer-stack::after {
-  content: "Select a search result to open";
+  top: 8px;
+  right: 5px;
 }
 /* The strip's new-tab button and its launcher popup. The tabsbar anchors
    the popup; a click away closes it (see `dismiss_subscription`). */
@@ -452,9 +436,6 @@ html:is(
 .tab-action:disabled {
   opacity: 0.4;
   cursor: default;
-}
-.tab-add.hidden {
-  display: none;
 }
 .editor-tabsbar {
   anchor-scope: --dock-menu-trigger;
@@ -1107,7 +1088,7 @@ html:is(
   display: flex;
   flex: 0 0 auto;
   gap: 2px;
-  padding: 7px 4px 4px;
+  padding: 7px 36px 4px 4px;
   border-bottom: 1px solid var(--color-separator);
 }
 
@@ -2754,7 +2735,6 @@ button.git-history-file.selected {
   display: none;
 }
 .editor.mode-workflows .viewer-breadcrumb,
-.editor.mode-workflows .editor-body,
 .editor.mode-workflows .browser-chrome {
   display: none;
 }
@@ -2904,11 +2884,12 @@ button.git-history-file.selected {
 /* Background jobs share the dock's stable body slots. */
 .editor .jobs-panel { display: none; }
 .editor.mode-jobs .viewer-breadcrumb,
-.editor.mode-jobs .editor-body,
 .editor.mode-jobs .browser-chrome { display: none; }
 .editor.mode-jobs .jobs-panel { display: flex; }
 .jobs-panel { flex: 1; min-height: 0; min-width: 0; flex-direction: column; overflow: auto; padding: 18px; gap: 12px; color: var(--color-text-primary); }
 .jobs-heading, .jobs-row-head, .jobs-detail-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* Navigation can leave Jobs narrower than the full panel. */
+.jobs-heading { flex-wrap: wrap; }
 .jobs-heading h3 { margin: 0 0 8px; font-size: var(--font-size-lg); font-weight: 600; letter-spacing: -.2px; }
 .jobs-summary, .jobs-host, .jobs-row-meta, .jobs-detail-meta, .jobs-output-note, .jobs-footnote { font-size: var(--font-size-xs); color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .jobs-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }

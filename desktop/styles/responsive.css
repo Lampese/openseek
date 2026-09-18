@@ -112,10 +112,13 @@
   .content.panel-open .editor-tabsbar {
     padding-inline-start: var(--sidebar-toggle-reserved-width);
   }
-  /* Drill-down: exactly one of tree/viewer shows. Opening a file
-     closes the tree (the fileeditor's narrow Ctx flag); the
-     breadcrumb's toggle brings the tree back. */
-  .editor.tree-open .viewer-stack {
+  /* Narrow navigation temporarily covers the active resource. Selecting a
+     resource tab restores its content without dropping the navigator state. */
+  .editor.tree-open :is(.viewer-stack, .browser-chrome, .workflow-panel, .jobs-panel, .dock-launcher) {
+    display: none;
+  }
+  /* A collapsed navigator must release its space to the retained resource. */
+  .editor:not(.tree-open) .file-tree-pane {
     display: none;
   }
   .editor .file-tree-pane,

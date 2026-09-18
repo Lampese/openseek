@@ -1,5 +1,6 @@
 ///|
 /// The dock strip sits above the file breadcrumb and its permanent body hosts.
+/// Every resource body shares the navigator, independently of tab selection.
 /// Child order is structural because Rabbita diffs by index; the viewer and
 /// browser placeholders must not be re-keyed when the active tab changes.
 fn panel_view(
@@ -53,15 +54,6 @@ fn panel_view(
           title: "Subagents this conversation delegated to",
           missing: false,
         }
-      FilePicker => {
-        let (label, title) = match input.file_panel.explorer_mode {
-          ExplorerChanges =>
-            ("Review Changes", "Review changed files and diffs")
-          ExplorerSearch => ("Search", "Search across files")
-          ExplorerFiles => ("Open File", "Open a workspace file")
-        }
-        { tab, label, title, missing: false, }
-      }
     }
   })
   let launcher : @dock.LauncherActions = {
@@ -82,11 +74,6 @@ fn panel_view(
   let mode = match input.dock.active {
     None => "mode-launcher"
     Some(Browser(_)) => "mode-browser"
-    Some(FilePicker) if input.file_panel.explorer_mode is ExplorerChanges =>
-      "mode-picker mode-review"
-    Some(FilePicker) if input.file_panel.explorer_mode is ExplorerSearch =>
-      "mode-picker mode-search-picker"
-    Some(FilePicker) => "mode-picker"
     Some(File(_)) => "mode-file"
     Some(GitDiff(_)) => "mode-history"
     Some(Jobs) => "mode-jobs"
@@ -141,19 +128,23 @@ fn panel_view(
         input.file_panel,
         input.file_ctx,
         semantic_review~,
+        other_tabs=[
+          @html.div(class="browser-chrome", [
+            @preview.toolbar_view(active_page, toolbar),
+            @preview.failure_view(active_page),
+            // A native page overlays this measured rectangle after navigation.
+            @html.div(
+              attrs=@html.Attrs::build()
+                .id("browser-pane")
+                .class("browser-pane"),
+              ([] : Array[@html.Html]),
+            ),
+          ]),
+          @jobs.panel(input.jobs, actions.job_events),
+          @workflow.panel(input.workflows, { open_child: actions.open_child, }),
+          @dock.launcher_pane(launcher),
+        ],
       ),
-      @html.div(class="browser-chrome", [
-        @preview.toolbar_view(active_page, toolbar),
-        @preview.failure_view(active_page),
-        // A native page overlays this measured rectangle after navigation.
-        @html.div(
-          attrs=@html.Attrs::build().id("browser-pane").class("browser-pane"),
-          ([] : Array[@html.Html]),
-        ),
-      ]),
-      @jobs.panel(input.jobs, actions.job_events),
-      @workflow.panel(input.workflows, { open_child: actions.open_child, }),
-      @dock.launcher_pane(launcher),
     ],
   )
 }

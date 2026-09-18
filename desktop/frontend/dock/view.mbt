@@ -197,9 +197,9 @@ pub fn tabs_bar(
       ),
     )
   }
-  // With an empty strip the body already is the launcher, so the `+` hides
-  // (by class, keeping the child order structural). The popup is conditional,
-  // appended after every stable child.
+  // The navigator can fill an empty dock on narrow screens. Keep the `+`
+  // available so opening the first resource never requires a placeholder tab.
+  // The conditional popup follows every stable child.
   let children : Array[@html.Html] = [
     @html.div(class="editor-tabs", tabs),
     @html.button(
@@ -212,11 +212,7 @@ pub fn tabs_bar(
       @icons.icon(@icons.icon_close_all),
     ),
     @html.button(
-      class=if chips.is_empty() {
-        "tab-action tab-add hidden"
-      } else {
-        "tab-action tab-add"
-      },
+      class="tab-action tab-add",
       title="New tab",
       attrs=@html.Attrs::build()
         .id("dock-new-tab")
