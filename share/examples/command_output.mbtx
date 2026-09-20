@@ -1,7 +1,7 @@
 ///|
 import {
   "moonbitlang/async",
-  "moonbitlang/async/shell",
+  "moonbitlang/async/shell" *,
 }
 
 ///|
@@ -11,7 +11,7 @@ async fn main {
   // matches the basename at any depth. rg ships no `moonbit` file type, so
   // `-g` is the filter — and `*.mbt` excludes `.mbti` and `.mbt.md`; widen it
   // to `*.mbt*` when those should count.
-  let out = @shell.Cmd("rg", [
+  let out = Cmd("rg", [
     // A regex needle is one ordinary string element, so double the
     // backslashes MoonBit needs (`"\\("`), or pass `-F` to match literally.
     "-n", "protect_from_cancel\\(",

@@ -1,14 +1,14 @@
 ///|
 import {
   "moonbitlang/async",
-  "moonbitlang/async/shell",
+  "moonbitlang/async/shell" *,
   "moonbitlang/core/json",
 }
 
 ///|
 async fn main {
   let mut errors = 0
-  let exit_code = @shell.Cmd(
+  let exit_code = Cmd(
     "moon",
     ["check", "--output-json", "--diagnostic-limit", "5"],
     env={ "NO_COLOR": "1" },

@@ -33,6 +33,12 @@ A script is a whole program — imports plus vanilla MoonBit
 - Import every package it uses separately, core packages included and by
   their real path: `moonbitlang/core/encoding/base64`, not
   `moonbitlang/core/base64` — `moon ide doc "@base64"` prints the path.
+- In `.mbtx` script mode only, `"moonbitlang/async/shell" *` imports all its
+  public symbols for direct use — `Cmd(...)`, `Pipeline(...)`, `glob(...)` —
+  and `@shell.Cmd(...)` keeps working too. Prefer `*` for shell in short
+  scripts; keep other packages qualified to avoid ambiguous names. Star
+  imports are not allowed in `moon.pkg`; ordinary packages keep explicit
+  imports and qualified names.
 - Keep `async fn main` for async IO.
 - Helpers that run an async command/IO are `async fn` too;
   a plain `fn` cannot call them. (so async is contagious)
@@ -92,7 +98,7 @@ For a nonzero exit,import `"moonbitlang/x/sys"`, and call `@sys.exit(1)`.
 
 ### Shell EDSL with moonbitlang/async/shell
 
-Use `@shell.Cmd` to run an external program and capture its output. Which
+Use `Cmd` to run an external program and capture its output. Which
 programs a snippet may start is listed in the `mbtx` tool description, under
 "Which programs a snippet may start" — that list is rendered from the
 allowlist the sandbox enforces, so it is the current one; read it there rather
@@ -105,7 +111,7 @@ Anything else is refused, including the obvious ones such as `ls`, `cat`, and
 | Command     | Alternatives     |
 |-------------|------------------|
 | ls          | @fs.readdir(dir) |
-| find        | @shell.glob(pattern), spread into args as `[..files]` |
+| find        | glob(pattern), spread into args as `[..files]` |
 | cat         | @fs.read_file(p).text() |
 | head/tail   | slice the split text; wc -l → count it |
 | grep        | rg, or .split("\n").filter(...) on captured output |
@@ -261,7 +267,7 @@ costs a bounded subagent run, so for small changes validate directly instead.
     matter in MoonBit, and an append cannot mismatch an anchor. The result
     reports the actual inclusive line range the new code landed on. Insert
     mid-file only when grouping related code.
-  - `mbtx` with `@shell.Cmd` for all Moon commands, including
+  - `mbtx` with `Cmd` for all Moon commands, including
     `moon check` for compiler feedback; pass `cwd="dir"` on the `Cmd` when a
     command is package- or directory-scoped. If a run reports that source file
     writes are blocked, retry compiler feedback fixes with line-anchored `edit`
@@ -376,16 +382,16 @@ costs a bounded subagent run, so for small changes validate directly instead.
     ```mbtx
     import {
       "moonbitlang/async",
-      "moonbitlang/async/shell",
+      "moonbitlang/async/shell" *,
     }
 
     async fn main {
-      @shell.Cmd("gh", ["pr", "view", "--json", "number"]).output().check()
+      Cmd("gh", ["pr", "view", "--json", "number"]).output().check()
       for pass in 0..<12; previous = None {
         ignore(
-          @shell.Cmd("gh", ["pr", "checks", "--watch"]).output(),
+          Cmd("gh", ["pr", "checks", "--watch"]).output(),
         )
-        let snapshot = @shell.Cmd("gh", ["pr", "checks"]).output()
+        let snapshot = Cmd("gh", ["pr", "checks"]).output()
         let stdout = snapshot.stdout()
         let count = [..stdout.split("\n")]
           .filter(line => !line.is_blank())
@@ -519,7 +525,7 @@ The positional argument is the scan root (a directory or one `.mbt` file;
 the default `.` is the whole repository), `$(name:kind)` marks a
 metavariable, and `--json` writes one finding per line on stdout with
 diagnostics on stderr. Pass each argument as its own element of
-`@shell.Cmd("moonx", [...])` — there is no shell to split them, and no `--`
+`Cmd("moonx", [...])` — there is no shell to split them, and no `--`
 separator is needed before moongrep's own flags. The pattern language, output
 fields, scan-root exclusions, and exit codes are in
 `<bundled-resources>/moongrep/README.md`; read it before going beyond this
@@ -545,8 +551,9 @@ example rather than guessing the flags.
   package directory. For module `name = "user/toml"` and package `lib/moon.pkg`,
   import `"user/toml/lib"` and call it as `@lib.parse(...)`; import
   `"user/toml/src"` and call `@src.name(...)` for a `src` package.
-- Configure imports in `moon.pkg`, not in `.mbt` files. Use `@alias.name` in
-  code to call imported package APIs.
+- Configure imports in `moon.pkg`, not in `.mbt` files (`.mbtx` has its own
+  import header). Use `@alias.name` in package code; `*` imports are only
+  supported in `.mbtx` scripts, not in `moon.pkg`.
 - Do not import `moonbitlang/core` as a package. Prelude types such as `Array`,
   `Map`, `Json`, and `StringBuilder` are already available. Import specific
   core subpackages only when needed, for example
