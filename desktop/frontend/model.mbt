@@ -710,14 +710,19 @@ priv struct Conversation {
   // workspace root. Consumed by the create-then-start chain, which sets
   // `worktree` and clears this.
   worktree_mode : Bool
-  // The model this conversation's next turn runs with, chosen on the
-  // composer's chip. Per conversation, not per app: a long refactor can sit
-  // on the high tier while a quick question beside it stays cheap. Born from
-  // the page's `default_model` — or, for a conversation the page first meets
-  // through a live run, from that run's tier. Nothing but the chip changes it
-  // afterwards: a start is always older than the composer, so echoing one
-  // back would undo a choice the user has already made for the next turn.
+  // The model this conversation's next turn runs with. Per conversation,
+  // not per app: a long refactor can sit on the high tier while a quick
+  // question beside it stays cheap. Born from the page's `default_model`,
+  // then kept in step with what the record and its runs report — until the
+  // user chooses on the composer's chip (`model_chosen`).
   engine_model : EngineModel
+  // Whether `engine_model` is the user's own pick on this page's chip, as
+  // opposed to the default it was born with or what the record and its runs
+  // report. Only a pick is protected: a start or a re-read of the record
+  // may replace an inherited or reported model, never a chosen one — a
+  // start is always older than the composer, and a re-read changes nothing
+  // the user did.
+  model_chosen : Bool
   // Root-authored prompt snapshot for submission and delivery recovery. The
   // live textarea value is component-local and is copied here atomically only
   // when the user submits; a rejection may write recovered text back here.
@@ -2167,7 +2172,10 @@ priv enum DeviceMsg {
     item~ : @protocol.SessionItem,
     // The durable store root the host read this commit from — the store
     // half of the session's identity.
-    session_root~ : @common.Uri
+    session_root~ : @common.Uri,
+    // The model the record is configured with as of this commit, so a
+    // session first met through it materializes on the right model.
+    model~ : @protocol.ConfiguredModel
   )
   // The host's `subrun.progress` broadcast: a running sub-run advanced. Not
   // durable and not lifecycle — the raw stream's brackets own the sub-run's
@@ -2447,6 +2455,7 @@ fn empty_conversation(
     workspace: Project(root=project),
     worktree_mode: false,
     engine_model: model,
+    model_chosen: false,
     task: "",
     mentions: [],
     composer_draft_present: false,

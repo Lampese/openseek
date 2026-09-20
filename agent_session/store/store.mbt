@@ -666,13 +666,16 @@ pub async fn SessionStore::set_setting(
 }
 
 ///|
-/// Bring the settings to `desired` for the keys it names, writing only when
-/// some key differs. Called under the exclusive session lock.
-async fn settle_settings_locked(
+/// The settings as they should read once `desired` is applied to the keys
+/// it names, or `None` when nothing differs (or nothing is desired) and no
+/// write is due. Reads the sidecar; called under the exclusive session lock,
+/// before the event it accompanies is committed.
+async fn settled_settings(
   store : SessionStore,
   id : @agent_session.SessionId,
-  desired : Map[String, Json],
-) -> Unit {
+  desired : Map[String, Json]?,
+) -> Map[String, Json]? {
+  guard desired is Some(desired) else { return None }
   let settings = store.settings(id)
   let mut changed = false
   for key, value in desired {
@@ -682,7 +685,9 @@ async fn settle_settings_locked(
     }
   }
   if changed {
-    write_settings_locked(store, id, settings)
+    Some(settings)
+  } else {
+    None
   }
 }
 
@@ -890,11 +895,14 @@ pub async fn SessionStore::load(
 ///
 /// `settings`, when given, are the settings keys the appending process is
 /// the authority on — a run passes the model it runs with. They are settled
-/// in the same locked step as the event, right after it, so no other
-/// process's append can land between an event and the settings that describe
-/// the process which wrote it, and a session's settings always name the
-/// process behind its latest event. Keys already at the desired value are
-/// not rewritten; keys not named are never touched.
+/// in the same locked step as the event, so no other process's append can
+/// land between an event and the settings that describe the process which
+/// wrote it, and a session's settings always name the process behind its
+/// latest event. The sidecar is read and merged before the event is
+/// committed: a sidecar that cannot be read fails the append with nothing
+/// written, never after an event the caller would then believe rejected.
+/// Keys already at the desired value are not rewritten; keys not named are
+/// never touched.
 pub async fn SessionStore::append(
   self : SessionStore,
   session : @agent_session.Session,
@@ -904,14 +912,15 @@ pub async fn SessionStore::append(
   ensure_session_dir(self, session.id())
   with_session_lock(self, session.id(), Exclusive, () => {
     let repair_tail = ensure_session_is_current(self, session)
+    let settled = settled_settings(self, session.id(), settings)
     let (next, event) = session.append_event(
       item,
       unix_ms=@env.now().reinterpret_as_int64(),
     )
     persist_event(self, next, event, repair_tail~)
     record_mark(self, next)
-    if settings is Some(desired) {
-      settle_settings_locked(self, next.id(), desired)
+    if settled is Some(settings) {
+      write_settings_locked(self, next.id(), settings)
     }
     next
   })
@@ -929,22 +938,31 @@ pub async fn SessionStore::append(
 /// `Session::chat_messages` applies the compaction by skipping covered earlier
 /// events and emitting the summary. On success, the returned session includes
 /// the new `Summary` event with a wall-clock timestamp.
+///
+/// `settings` are settled with the summary exactly as `append` settles them
+/// with an event: the compacting process is the authority on the model
+/// behind the newest durable event, which the summary now is.
 pub async fn SessionStore::compact(
   self : SessionStore,
   session : @agent_session.Session,
   content~ : String,
   from_sequence~ : Int,
   to_sequence~ : Int,
+  settings? : Map[String, Json],
 ) -> @agent_session.Session {
   ensure_session_dir(self, session.id())
   with_session_lock(self, session.id(), Exclusive, () => {
     let repair_tail = ensure_session_is_current(self, session)
+    let settled = settled_settings(self, session.id(), settings)
     let (next, event) = session.append_event(
       session.summary_item(content~, from_sequence~, to_sequence~),
       unix_ms=@env.now().reinterpret_as_int64(),
     )
     persist_event(self, next, event, repair_tail~)
     record_mark(self, next)
+    if settled is Some(settings) {
+      write_settings_locked(self, next.id(), settings)
+    }
     next
   })
 }

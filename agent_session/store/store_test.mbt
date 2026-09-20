@@ -236,6 +236,47 @@ async test "append settles the caller's settings in the same locked step as the 
   let settings = store.settings(id)
   assert_eq(settings.get("model"), Some(Json("deepseek-v4-flash")))
   assert_eq(settings.get("title"), Some(Json("Named")))
+  // A compaction summary is a durable event like any other: the compacting
+  // process's settings ride with it.
+  let compacted = store.compact(
+    four,
+    content="summary",
+    from_sequence=1,
+    to_sequence=4,
+    settings={ "model": Json("deepseek-v4-pro") },
+  )
+  assert_eq(compacted.events().length(), 5)
+  assert_eq(store.settings(id).get("model"), Some(Json("deepseek-v4-pro")))
+}
+
+///|
+async test "an unreadable sidecar fails the append before the event is committed" {
+  let store = new_store()
+  defer @fs.rmdir(store.root(), recursive=true)
+  let id = @agent_session.SessionId("damaged")
+  let one = store.append(
+    Session(id, system_prompt="system"),
+    User(UserMessage("hello")),
+  )
+  @fs.write_file(
+    "\{store.root()}/sessions/damaged/settings.json",
+    "not json",
+    create_mode=CreateOrTruncate,
+  )
+  try
+    store.append(one, User(UserMessage("again")), settings={
+      "model": Json("deepseek-v4-pro"),
+    })
+  catch {
+    _ => ()
+  } noraise {
+    _ => fail("an append settled settings from an unreadable sidecar")
+  }
+  // Nothing was committed, so the caller's snapshot is still current and the
+  // next append — one that asks for no settings — goes through.
+  assert_eq(store.load(id).events().length(), 1)
+  let two = store.append(one, User(UserMessage("again")))
+  assert_eq(two.events().length(), 2)
 }
 
 ///|

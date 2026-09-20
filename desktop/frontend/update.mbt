@@ -675,14 +675,13 @@ fn apply_session_snapshot(
       "failed to load session \{session}: snapshot watermark moved backwards",
     )
   }
-  // The record says which model its last run used. That outranks the
-  // default a placeholder was minted on — but only a placeholder's: a
-  // conversation this page has already shown keeps its own model, whether
-  // that is a chip pick made since (ephemeral until a run makes it durable,
-  // and exactly what the user means to send next) or the model a run in
-  // flight was started with. A name this build does not know still shows as
-  // the model the engine actually ran.
-  let adopt_recorded_model = !conv.has_begun() && conv.watermark == 0
+  // The record says which model it is configured with. That replaces
+  // whatever this page inherited or was told before — unless the user chose
+  // a model here for the next turn, which a re-read of the record must not
+  // undo, or this page's own run is in flight with the model it was sent
+  // with. A name this build does not know still shows as the model the
+  // engine actually ran.
+  let adopt_recorded_model = !conv.model_chosen && !conv.is_running()
   let (conv, gapped) = conv.adopt_snapshot(
     items,
     watermark,
@@ -3059,7 +3058,11 @@ fn update_msg(
             guard model.active_conversation() is Some(conv) else {
               return (@cmd.none, model)
             }
-            let next = model.replace_conversation({ ..conv, engine_model, })
+            let next = model.replace_conversation({
+              ..conv,
+              engine_model,
+              model_chosen: true,
+            })
             (
               @cmd.batch([
                 save_default_model(engine_model),
@@ -6997,7 +7000,14 @@ fn update_device_msg(
         false,
         "failed to refresh session \{session}",
       )
-    SessionCommitted(session~, sequence~, ts~, item~, session_root~) => {
+    SessionCommitted(
+      session~,
+      sequence~,
+      ts~,
+      item~,
+      session_root~,
+      model=configured
+    ) => {
       // The commit names its own store — the exact durable identity rather
       // than a guess. Commits do not precede `agent.connected` (readiness
       // precedes every forwarded notification), but if one ever did, the
@@ -7044,7 +7054,9 @@ fn update_device_msg(
       let refresh_sessions = sequence == 1 && !listed && first_commit_unseen
       // A short foreign run can commit and finish before either the session
       // list or run resync reaches this page. Materialize hidden client state
-      // from the commit itself: sequence 1 projects immediately; a later
+      // from the commit itself — on the model the commit reports the record
+      // configured with, so the conversation is born right rather than on
+      // this page's default: sequence 1 projects immediately; a later
       // sequence exposes a gap and follows the normal snapshot recovery path.
       let model = if model.find_conversation(channel, session) is None {
         model.replace_conversation(
@@ -7052,7 +7064,11 @@ fn update_device_msg(
             channel,
             session,
             commit_project,
-            model=model.default_model,
+            model=match configured {
+              Configured(wire) if EngineModel::parse(wire) is Some(reported) =>
+                reported
+              _ => model.default_model
+            },
           ),
         )
       } else {
@@ -7298,7 +7314,7 @@ fn update_device_msg(
             // A conversation this page is meeting for the first time takes
             // the tier its run is on — better evidence than the default,
             // and no choice exists yet to contradict it. A conversation the
-            // page already holds keeps its own tier — see below.
+            // page already holds keeps a chosen tier — see below.
             model=selected_model,
           )
         }
@@ -7318,6 +7334,15 @@ fn update_device_msg(
         // none must not move a placement the user chose. That reconcile
         // belongs to the session list.
         None => existing
+      }
+      // A run's model is the conversation's model — unless the user chose
+      // one here for the next turn (a start is always older than the
+      // composer), or this page's own run is in flight with the model it
+      // was sent with.
+      let existing = if existing.model_chosen || existing.is_running() {
+        existing
+      } else {
+        { ..existing, engine_model: selected_model, }
       }
       // An automatically promoted follow-up is still transient until this
       // ordinary Started boundary. Retire its in-memory queue row here; the
@@ -8924,6 +8949,7 @@ test "a matching durable commit de-duplicates without mutating the preview" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -8953,6 +8979,7 @@ test "a matching durable commit de-duplicates without mutating the preview" {
 test "commit-first reasoning keeps late prefixes and de-duplicates when sealed" {
   let dispatch = test_dispatch()
   let commit = SessionCommitted(
+    model=@protocol.Unconfigured,
     session="desktop-test",
     sequence=1,
     ts=None,
@@ -8994,6 +9021,7 @@ test "a delayed untagged commit cannot truncate a newer reasoning stream" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -9697,6 +9725,7 @@ test "session list assigns a commit-first conversation to its durable workspace"
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-foreign",
       sequence=1,
       ts=None,
@@ -9759,6 +9788,7 @@ test "a rooted commit places its conversation without waiting for the list" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-foreign",
       sequence=1,
       ts=None,
@@ -9783,6 +9813,7 @@ test "a rooted commit places its conversation without waiting for the list" {
   let (_, registered) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-registered",
       sequence=1,
       ts=None,
@@ -9808,6 +9839,7 @@ test "a rooted commit places its conversation without waiting for the list" {
   let (_, unseen) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-unseen",
       sequence=1,
       ts=None,
@@ -9859,6 +9891,7 @@ test "a commit for an unlisted store refreshes past a same-id row" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-shared",
       sequence=1,
       ts=None,
@@ -9873,6 +9906,7 @@ test "a commit for an unlisted store refreshes past a same-id row" {
   let (_, same_store) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-listed-only",
       sequence=1,
       ts=None,
@@ -9912,6 +9946,7 @@ test "a commit for an unlisted store refreshes past a same-id watermark" {
   let (_, first) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-shared",
       sequence=1,
       ts=None,
@@ -9931,6 +9966,7 @@ test "a commit for an unlisted store refreshes past a same-id watermark" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-shared",
       sequence=1,
       ts=None,
@@ -10225,6 +10261,7 @@ test "reconnect refresh is single-flight and preserves its commit buffer" {
   let (_, buffered) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=3,
       ts=None,
@@ -11231,6 +11268,7 @@ test "run semantic errors never duplicate their terminal commit" {
     exit_code=None,
   )
   let terminal = SessionCommitted(
+    model=@protocol.Unconfigured,
     session="desktop-test",
     sequence=1,
     ts=None,
@@ -12719,6 +12757,7 @@ test "a live commit dates its row on arrival, buffered or applied straight" {
   let dispatch = test_dispatch()
   let stamped = (session, sequence, ts) => {
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session~,
       sequence~,
       ts=Some(ts),
@@ -12766,6 +12805,7 @@ test "a canonical user commit never settles a local steer" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -12941,6 +12981,7 @@ test "a foreign background run schedules one causal read after Started" {
   let (_, buffered_answer) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session~,
       sequence=2,
       ts=None,
@@ -12976,6 +13017,7 @@ test "a foreign background run schedules one causal read after Started" {
   let (_, buffered_terminal) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session~,
       sequence=3,
       ts=None,
@@ -12987,6 +13029,7 @@ test "a foreign background run schedules one causal read after Started" {
   let (_, buffered_user) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session~,
       sequence=4,
       ts=None,
@@ -13065,6 +13108,7 @@ test "buffered commits are delivery, not applied chronology" {
   let (_, user) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=2,
       ts=None,
@@ -13076,6 +13120,7 @@ test "buffered commits are delivery, not applied chronology" {
   let (_, answer) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=3,
       ts=None,
@@ -13092,6 +13137,7 @@ test "buffered commits are delivery, not applied chronology" {
   let (_, terminal) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=4,
       ts=None,
@@ -13476,6 +13522,78 @@ test "an unreadable settings sidecar keeps the default and says so" {
       "settings unreadable for stored-chat",
     ),
   )
+}
+
+///|
+test "a session first met through a commit is born on the model the commit reports" {
+  let dispatch = test_dispatch()
+  // Another client's engine appended to a session this page never opened —
+  // an idle goal marker, or a turn whose Started this page missed. The
+  // commit names the record's model; the page must not substitute its own
+  // default, which is what the next turn from here would then run on.
+  let (_, met) = update_dev(
+    dispatch,
+    SessionCommitted(
+      model=@protocol.Configured("deepseek-v4-pro"),
+      session="foreign-chat",
+      sequence=1,
+      ts=None,
+      item=@protocol.User({
+        content: "hello from elsewhere",
+        submission_id: None,
+      }),
+      session_root=@interop.ChannelId::Local.test_store_root(),
+    ),
+    test_model(),
+  )
+  guard met.find_conversation(@interop.ChannelId::Local, "foreign-chat")
+    is Some(conv) else {
+    fail("the commit materialized no conversation")
+  }
+  assert_true(conv.engine_model is DsPro)
+  assert_false(conv.model_chosen)
+  assert_true(met.default_model is DsFlash)
+}
+
+///|
+test "a start moves an unchosen conversation to the run's model, never a chosen one" {
+  let dispatch = test_dispatch()
+  // The fixture chat inherited its model; a run — this page's own resync
+  // after a reconnect, or another client's — says what it actually runs on.
+  let (_, moved) = update_dev(
+    dispatch,
+    Started(
+      run_id="r1",
+      session="desktop-test",
+      model=DsFlash,
+      max_steps=1000,
+      session_root=None,
+      submission_id=None,
+    ),
+    test_model(),
+  )
+  assert_true(moved.active().engine_model is DsFlash)
+  // Once the user has chosen for the next turn, a start is older than the
+  // composer and echoes nothing back.
+  let (_, chosen) = update(
+    dispatch,
+    ModelPicked("openseek:deepseek-v4-pro"),
+    test_model(),
+  )
+  assert_true(chosen.active().model_chosen)
+  let (_, kept) = update_dev(
+    dispatch,
+    Started(
+      run_id="r2",
+      session="desktop-test",
+      model=DsFlash,
+      max_steps=1000,
+      session_root=None,
+      submission_id=None,
+    ),
+    chosen,
+  )
+  assert_true(kept.active().engine_model is DsPro)
 }
 
 ///|
@@ -15664,6 +15782,7 @@ test "a new Started incarnation retires its exact deleted tombstone" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session=deleted_item.id,
       sequence=1,
       ts=None,
@@ -18171,6 +18290,7 @@ test "send does not show a prompt until its commit lands" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -18199,6 +18319,7 @@ test "a replayed commit at or below the watermark is dropped" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=2,
       ts=None,
@@ -18221,6 +18342,7 @@ test "a commit past the frontier buffers and flips into a reload" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=5,
       ts=None,
@@ -18249,6 +18371,7 @@ test "commits buffer while a reload is in flight" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=3,
       ts=None,
@@ -18424,6 +18547,7 @@ test "background retries preserve buffered commits until a later success" {
   let (_, retrying) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=2,
       ts=None,
@@ -18596,6 +18720,7 @@ test "tool decode semantics wait for their durable error tool result" {
   // The engine records the response with its undecodable call, then the
   // error result that closes it; the semantic event is only news.
   let call = SessionCommitted(
+    model=@protocol.Unconfigured,
     session="desktop-test",
     sequence=1,
     ts=None,
@@ -18608,6 +18733,7 @@ test "tool decode semantics wait for their durable error tool result" {
     session_root=@interop.ChannelId::Local.test_store_root(),
   )
   let result = SessionCommitted(
+    model=@protocol.Unconfigured,
     session="desktop-test",
     sequence=2,
     ts=None,
@@ -18655,6 +18781,7 @@ test "assistant semantic events wait for their durable commit" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -18731,6 +18858,7 @@ test "a delayed assistant commit never clears a newer live delta" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -18771,6 +18899,7 @@ test "a delayed terminal commit never clears a newer live delta" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=2,
       ts=None,
@@ -18795,6 +18924,7 @@ test "commit-first assistant semantics do not append again" {
   let (_, committed) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -18829,6 +18959,7 @@ test "a sequence-one commit materializes an unknown hidden conversation" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-elsewhere",
       sequence=1,
       ts=None,
@@ -18850,6 +18981,7 @@ test "a sequence-one commit materializes an unknown hidden conversation" {
   let (_, repeated) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-elsewhere",
       sequence=1,
       ts=None,
@@ -18867,6 +18999,7 @@ test "a gapped commit for an unknown session materializes then reloads" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-gap",
       sequence=3,
       ts=None,
@@ -18906,6 +19039,7 @@ test "a late commit cannot resurrect a locally known archived session" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-archived",
       sequence=1,
       ts=None,
@@ -18935,6 +19069,7 @@ test "an archive tombstone blocks commits before the archived list refreshes" {
   let (_, next) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-tombstoned",
       sequence=1,
       ts=None,

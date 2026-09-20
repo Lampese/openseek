@@ -711,33 +711,58 @@ pub(all) struct LoadSessionReply {
 } derive(Debug, Eq)
 
 ///|
-/// `session` is required. `watermark` is optional; missing and `null` both
-/// mean the host did not report one. The configured model rides in two
-/// mutually exclusive fields: a string `model` is `Configured`, a string
-/// `settings_error` is `Unreadable`, and neither (or `null`) is
-/// `Unconfigured`; both present, or either of another type, is malformed.
-/// Unknown fields are ignored.
-pub impl FromJson for LoadSessionReply with fn from_json(json, path) {
-  let object = JsonObject::decode(json, path, "session load reply")
-  let session : SessionDocument = @json.from_json(
-    object.required_json("session"),
-    path=path.add_key("session"),
-  )
-  let watermark = object.optional_int("watermark")
-  let model = match
+/// Decode the configured model from the two mutually exclusive fields a
+/// reply or broadcast carries: a string `model` is `Configured`, a string
+/// `settings_error` is `Unreadable`, neither (or `null`) is `Unconfigured`;
+/// both present, or either of another type, is malformed.
+fn ConfiguredModel::decode(
+  object : JsonObject,
+) -> ConfiguredModel raise @json.JsonDecodeError {
+  match
     (object.optional_string("model"), object.optional_string("settings_error")) {
     (Some(_), Some(_)) =>
       raise JsonDecodeError(
         (
-          path.add_key("settings_error"),
-          "a reply names a model or a settings error, not both",
+          object.path.add_key("settings_error"),
+          "a payload names a model or a settings error, not both",
         ),
       )
     (Some(model), None) => Configured(model)
     (None, Some(reason)) => Unreadable(reason)
     (None, None) => Unconfigured
   }
-  { session, watermark, model, }
+}
+
+///|
+/// Write the configured model into `fields` as `model`, `settings_error`,
+/// or nothing at all.
+fn ConfiguredModel::encode_into(
+  self : ConfiguredModel,
+  fields : Map[String, Json],
+) -> Unit {
+  match self {
+    Configured(model) => fields["model"] = Json(model)
+    Unreadable(reason) => fields["settings_error"] = Json(reason)
+    Unconfigured => ()
+  }
+}
+
+///|
+/// `session` is required. `watermark` is optional; missing and `null` both
+/// mean the host did not report one. The configured model rides in the
+/// `model` / `settings_error` pair (`ConfiguredModel::decode`). Unknown
+/// fields are ignored.
+pub impl FromJson for LoadSessionReply with fn from_json(json, path) {
+  let object = JsonObject::decode(json, path, "session load reply")
+  let session : SessionDocument = @json.from_json(
+    object.required_json("session"),
+    path=path.add_key("session"),
+  )
+  {
+    session,
+    watermark: object.optional_int("watermark"),
+    model: ConfiguredModel::decode(object),
+  }
 }
 
 ///|
@@ -748,11 +773,7 @@ pub impl ToJson for LoadSessionReply with fn to_json(self) {
   if self.watermark is Some(watermark) {
     fields["watermark"] = Json(watermark)
   }
-  match self.model {
-    Configured(model) => fields["model"] = Json(model)
-    Unreadable(reason) => fields["settings_error"] = Json(reason)
-    Unconfigured => ()
-  }
+  self.model.encode_into(fields)
   Json(fields)
 }
 

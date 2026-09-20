@@ -1905,3 +1905,61 @@ test "session load replies carry the configured model in one of three states" {
     )
   }
 }
+
+///|
+test "session commit broadcasts carry the record's configured model" {
+  let event : Json = {
+    "sequence": 3,
+    "item": { "kind": "user", "payload": { "content": "hi" } },
+  }
+  let configured : @protocol.SessionCommitPayload = @json.from_json({
+    "session": "desktop-a",
+    "sequence": 3,
+    "event": event,
+    "session_root": "/work/project/.openseek",
+    "model": "deepseek-v4-pro",
+  })
+  assert_true(configured.model is Configured("deepseek-v4-pro"))
+  assert_eq(configured.sequence, 3)
+  assert_eq(configured.session_root, "/work/project/.openseek")
+  guard configured.to_json() is Object(fields) else {
+    fail("commit did not encode as an object")
+  }
+  assert_eq(fields.get("model"), Some(Json("deepseek-v4-pro")))
+  assert_false(fields.contains("settings_error"))
+  // A host that predates the field broadcasts none.
+  let legacy : @protocol.SessionCommitPayload = @json.from_json({
+    "session": "desktop-a",
+    "sequence": 3,
+    "event": event,
+    "session_root": "/work/project/.openseek",
+  })
+  assert_true(legacy.model is Unconfigured)
+  let damaged : @protocol.SessionCommitPayload = @json.from_json({
+    "session": "desktop-a",
+    "sequence": 3,
+    "event": event,
+    "session_root": "/work/project/.openseek",
+    "settings_error": "not json",
+  })
+  assert_true(damaged.model is Unreadable("not json"))
+  for
+    raw in (
+      [
+        { "session": "desktop-a", "sequence": 3, "event": event },
+        {
+          "session": "desktop-a",
+          "sequence": 3,
+          "event": event,
+          "session_root": "/work/project/.openseek",
+          "model": "deepseek-v4-pro",
+          "settings_error": "not json",
+        },
+      ] : Array[Json]) {
+    assert_true(
+      refused(() => {
+        let _ : @protocol.SessionCommitPayload = @json.from_json(raw)
+      }),
+    )
+  }
+}

@@ -2240,12 +2240,15 @@ pub(all) struct SessionCommitPayload {
   sequence : Int
   event : SessionEvent
   session_root : String
-} derive(Eq, ToJson, @debug.Debug, @json.FromJson)
+  model : ConfiguredModel
+} derive(Eq, @debug.Debug)
 pub fn SessionCommitPayload::equal(Self, Self) -> Bool
 pub fn SessionCommitPayload::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
 pub fn SessionCommitPayload::not_equal(Self, Self) -> Bool
 pub fn SessionCommitPayload::to_json(Self) -> Json
 pub fn SessionCommitPayload::to_repr(Self) -> @debug.Repr
+pub impl ToJson for SessionCommitPayload
+pub impl @json.FromJson for SessionCommitPayload
 
 pub(all) struct SessionDocument {
   version : Int?

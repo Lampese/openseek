@@ -777,6 +777,7 @@ fn session_event_msg(
       ts=payload.event.ts,
       item=payload.event.item,
       session_root~,
+      model=payload.model,
     ),
   )
 }

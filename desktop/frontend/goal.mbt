@@ -59,6 +59,7 @@ test "only the matching set marker settles the pending text" {
     let (_, next) = update_dev(
       dispatch,
       SessionCommitted(
+        model=@protocol.Unconfigured,
         session="desktop-test",
         sequence~,
         ts=None,
@@ -149,6 +150,7 @@ test "a clear waits for its tombstone, not for any goal marker" {
     let (_, next) = update_dev(
       dispatch,
       SessionCommitted(
+        model=@protocol.Unconfigured,
         session="desktop-test",
         sequence~,
         ts=None,
@@ -217,6 +219,7 @@ test "goal marker commits write the mirror and render cards" {
   let (_, set) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -234,6 +237,7 @@ test "goal marker commits write the mirror and render cards" {
   let (_, blocked) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=2,
       ts=None,
@@ -251,6 +255,7 @@ test "goal marker commits write the mirror and render cards" {
   let (_, cleared) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=3,
       ts=None,
@@ -371,6 +376,7 @@ test "a clear over an unconfirmed set waits for a goal to actually go away" {
     let (_, next) = update_dev(
       dispatch,
       SessionCommitted(
+        model=@protocol.Unconfigured,
         session="desktop-test",
         sequence~,
         ts=None,
@@ -411,6 +417,7 @@ test "a tombstone over an empty mirror still ends the clear" {
   let (_, settled) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -440,6 +447,7 @@ test "re-asserting an unchanged goal waits for its own marker too" {
     let (_, next) = update_dev(
       dispatch,
       SessionCommitted(
+        model=@protocol.Unconfigured,
         session="desktop-test",
         sequence~,
         ts=None,
@@ -554,6 +562,7 @@ test "re-asserting a blocked goal waits for its own marker" {
     let (_, next) = update_dev(
       dispatch,
       SessionCommitted(
+        model=@protocol.Unconfigured,
         session="desktop-test",
         sequence~,
         ts=None,
@@ -919,6 +928,7 @@ test "an undelivered reply goes quiet once its send has been settled" {
   let (_, settled) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,
@@ -976,6 +986,7 @@ test "a rejection that arrives after the record has spoken only reports" {
   let (_, settled) = update_dev(
     dispatch,
     SessionCommitted(
+      model=@protocol.Unconfigured,
       session="desktop-test",
       sequence=1,
       ts=None,

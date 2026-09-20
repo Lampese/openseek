@@ -761,10 +761,13 @@ async fn configured_model(
       return Unreadable("\{error}")
     }
   }
-  guard settings.get("model") is Some(String(model)) else {
-    return Unconfigured
+  match settings.get("model") {
+    Some(String(model)) => Configured(model)
+    // Only a key that is not there means nothing was configured; a value of
+    // another type is a damaged sidecar and must read as one.
+    Some(_) => Unreadable("model must be a string")
+    None => Unconfigured
   }
-  Configured(model)
 }
 
 ///|

@@ -258,6 +258,7 @@ async fn run_serve(
         current,
         api_key~,
         model~,
+        settings=run_settings,
         api_url?,
         retry_attempts?,
         retry_backoff_ms?,
