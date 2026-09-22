@@ -12,11 +12,14 @@ fn fetch_installed_skills(
   let dispatch = dispatch.map((msg : DeviceMsg) => FromDevice(channel, msg))
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
-      let reply = @interop.bridge_request(
-        channel,
-        @commands.skills_installed,
-        @protocol.EmptyPayload::NoPayload,
-      ) catch {
+      let items = try {
+        let reply = @interop.bridge_request(
+          channel,
+          @commands.skills_installed,
+          @protocol.EmptyPayload::NoPayload,
+        )
+        @skills.installed_from_reply(reply)
+      } catch {
         error => {
           scheduler.add(
             dispatch(InstalledSkillsFailed(@interop.bridge_error_text(error))),
@@ -24,9 +27,7 @@ fn fetch_installed_skills(
           return
         }
       }
-      scheduler.add(
-        dispatch(InstalledSkillsLoaded(@skills.installed_from_reply(reply))),
-      )
+      scheduler.add(dispatch(InstalledSkillsLoaded(items)))
     })
     |> ignore
   })

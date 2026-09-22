@@ -4,6 +4,18 @@
 // here beside the page that manages it.
 
 ///|
+pub(all) suberror SkillReplyError {
+  SkillReplyError(String)
+}
+
+///|
+impl Show for SkillReplyError with fn output(self, logger) {
+  match self {
+    SkillReplyError(message) => logger.write_string(message)
+  }
+}
+
+///|
 /// One installable entry of the registry catalog, as the host reports it.
 pub(all) struct MarketItem {
   // Registry entry name, e.g. "moonbit-community/meta-skill".
@@ -46,9 +58,13 @@ pub fn source_label(item : MarketItem) -> String {
 /// removed malformed registry rows before constructing this value.
 pub fn catalog_from_reply(
   reply : @protocol.SkillsCatalogReply,
-) -> Array[MarketItem] {
+) -> Array[MarketItem] raise SkillReplyError {
+  let entries = match reply {
+    SkillsCatalog(skills) => skills
+    SkillsCatalogError(message) => raise SkillReplyError(message)
+  }
   let items : Array[MarketItem] = []
-  for entry in reply.skills {
+  for entry in entries {
     guard !entry.module_name.is_empty() && !entry.version.is_empty() else {
       continue
     }
@@ -73,9 +89,13 @@ pub fn catalog_from_reply(
 /// Project a `skills_installed` reply.
 pub fn installed_from_reply(
   reply : @protocol.InstalledSkillsReply,
-) -> Array[InstalledItem] {
+) -> Array[InstalledItem] raise SkillReplyError {
+  let entries = match reply {
+    InstalledSkills(skills) => skills
+    InstalledSkillsError(message) => raise SkillReplyError(message)
+  }
   let items : Array[InstalledItem] = []
-  for entry in reply.skills {
+  for entry in entries {
     guard !entry.id.is_empty() else { continue }
     items.push({
       id: entry.id,
