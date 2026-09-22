@@ -232,7 +232,9 @@ html.is-resizing .sidebar-resize-handle {
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text-muted);
+  /* Match the row-status glyphs it swaps with on hover: same weight of ink,
+     so revealing the actions never reads as a fade. */
+  color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
   cursor: pointer;
