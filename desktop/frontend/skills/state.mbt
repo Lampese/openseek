@@ -16,17 +16,45 @@ priv enum Catalog {
 ///|
 /// Everything the page alone can see. The catalog is fetched when the page
 /// opens and kept until the user refreshes it; `busy` holds the entries with
-/// an install or uninstall in flight, keyed by the catalog entry's source
-/// label or the installed entry's id; `notice` is the last failure to show.
+/// an install or uninstall in flight, retaining its source even after the
+/// library changes; `notice` is the last failure to show.
 struct State {
   catalog : Catalog
   query : String
-  busy : Array[String]
+  busy : Array[PendingSkillAction]
   notice : String
   preview : Preview
   preview_cache : Map[String, String]
   list_scroll_top : Double
 } derive(Eq)
+
+///|
+/// Retain the source until the request settles, even if a library notification
+/// replaces the action or removes the installed entry first.
+pub(all) enum PendingSkillAction {
+  Installing(source~ : String)
+  Uninstalling(source~ : String, id~ : String)
+} derive(Eq)
+
+///|
+pub extend PendingSkillAction with Eq::{equal, not_equal}
+
+///|
+fn PendingSkillAction::source(self : PendingSkillAction) -> String {
+  match self {
+    Installing(source~) | Uninstalling(source~, ..) => source
+  }
+}
+
+///|
+fn State::pending_action(self : State, source : String) -> PendingSkillAction? {
+  for action in self.busy {
+    if action.source() == source {
+      return Some(action)
+    }
+  }
+  None
+}
 
 ///|
 enum Preview {
@@ -64,12 +92,16 @@ pub(all) enum Msg {
   CatalogLoaded(channel~ : @interop.ChannelId, items~ : Array[MarketItem])
   CatalogFailed(channel~ : @interop.ChannelId, message~ : String)
   Install(MarketItem)
-  // Uninstall by library entry id; only registry installs get the button.
-  Uninstall(String)
-  // An install or uninstall settled: `key` is the busy entry to release, and
+  // Capture the source alongside the library id before the entry disappears.
+  Uninstall(InstalledItem)
+  // An install or uninstall settled: `action` is the operation to release, and
   // a non-empty `error` becomes the page's notice (a success reports the
   // library change to the root instead).
-  ActionDone(channel~ : @interop.ChannelId, key~ : String, error~ : String)
+  ActionDone(
+    channel~ : @interop.ChannelId,
+    action~ : PendingSkillAction,
+    error~ : String
+  )
   PreviewMarket(MarketItem)
   PreviewInstalled(InstalledItem)
   PreviewLoaded(request~ : Int, target~ : PreviewTarget, content~ : String)
@@ -222,13 +254,13 @@ pub fn State::handle(
       (@cmd.none, { ..self, catalog: Failed(message), }, None)
     }
     Install(item) => {
-      let key = source_label(item)
-      if self.busy.contains(key) {
-        // A second click while the first install is in flight.
+      let source = source_label(item)
+      if self.pending_action(source) is Some(_) {
+        // Block either direction while an operation on this source is in flight.
         (@cmd.none, self, None)
       } else {
         let busy = self.busy.copy()
-        busy.push(key)
+        busy.push(Installing(source~))
         (
           install(emit, input.channel, item),
           { ..self, busy, notice: "", },
@@ -236,20 +268,20 @@ pub fn State::handle(
         )
       }
     }
-    Uninstall(id) =>
-      if self.busy.contains(id) {
+    Uninstall(item) =>
+      if item.source.is_empty() || self.pending_action(item.source) is Some(_) {
         (@cmd.none, self, None)
       } else {
         let busy = self.busy.copy()
-        busy.push(id)
+        busy.push(Uninstalling(source=item.source, id=item.id))
         (
-          uninstall(emit, input.channel, id),
+          uninstall(emit, input.channel, item),
           { ..self, busy, notice: "", },
           None,
         )
       }
-    ActionDone(channel~, key~, error~) => {
-      let busy = self.busy.filter(entry => entry != key)
+    ActionDone(channel~, action~, error~) => {
+      let busy = self.busy.filter(entry => entry != action)
       // A result that outlived a focus switch belongs to its old host: it
       // releases its busy entry, but it neither refreshes the library on
       // screen nor speaks for the page's notice. That host refetches when it

@@ -2,6 +2,14 @@
 // so the whole page can be rendered in a test from constant values.
 
 ///|
+fn PendingSkillAction::label(self : PendingSkillAction) -> UiMessage {
+  match self {
+    Installing(..) => Installing
+    Uninstalling(..) => Removing
+  }
+}
+
+///|
 /// One local-library row: name, description, and — for registry installs
 /// only — the source tag and the uninstall button. Hand-written skills are
 /// listed so the user sees everything the engine advertises, but the app
@@ -41,15 +49,15 @@ fn installed_row(
       ]),
     )
   } else {
-    let busy = state.busy.contains(skill.id)
+    let pending = state.pending_action(skill.source)
     children.push(
       @html.div(class="skill-actions", [
         @html.button(
           class="button secondary skill-action",
-          disabled=busy,
-          on_click=emit(Uninstall(skill.id)),
-          if busy {
-            ui(locale, Removing)
+          disabled=pending is Some(_),
+          on_click=emit(Uninstall(skill)),
+          if pending is Some(action) {
+            ui(locale, action.label())
           } else {
             ui(locale, Uninstall)
           },
@@ -73,7 +81,7 @@ fn market_row(
   emit : @cmd.Emit[Msg],
 ) -> @html.Html {
   let source = source_label(item)
-  let busy = state.busy.contains(source)
+  let pending = state.pending_action(source)
   let installed = input.has_installed(source)
   let info : Array[@html.Html] = [@html.div(class="skill-name", item.name)]
   if !item.description.is_blank() {
@@ -93,10 +101,10 @@ fn market_row(
     @html.div(class="skill-actions", [
       @html.button(
         class="button secondary skill-action",
-        disabled=busy,
+        disabled=pending is Some(_),
         on_click=emit(Install(item)),
-        if busy {
-          ui(locale, Installing)
+        if pending is Some(action) {
+          ui(locale, action.label())
         } else {
           ui(locale, Install)
         },
@@ -275,14 +283,13 @@ fn detail_action(
   }
   match target {
     Market(item) => {
-      let key = source_label(item)
-      let busy = state.busy.contains(key)
+      let pending = state.pending_action(source_label(item))
       @html.button(
         class="button primary skill-detail-action",
-        disabled=busy,
+        disabled=pending is Some(_),
         on_click=emit(Install(item)),
-        if busy {
-          ui(locale, Installing)
+        if pending is Some(action) {
+          ui(locale, action.label())
         } else {
           ui(locale, InstallSkill)
         },
@@ -292,13 +299,13 @@ fn detail_action(
       if item.source.is_empty() {
         @html.span(class="skill-check ok", ui(locale, HandWrittenSkill))
       } else {
-        let busy = state.busy.contains(item.id)
+        let pending = state.pending_action(item.source)
         @html.button(
           class="button secondary skill-detail-action",
-          disabled=busy,
-          on_click=emit(Uninstall(item.id)),
-          if busy {
-            ui(locale, Removing)
+          disabled=pending is Some(_),
+          on_click=emit(Uninstall(item)),
+          if pending is Some(action) {
+            ui(locale, action.label())
           } else {
             ui(locale, Uninstall)
           },

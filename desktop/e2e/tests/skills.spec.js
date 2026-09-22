@@ -34,6 +34,19 @@ class SkillsHarness extends DesktopBrowserHarness {
     }
   }
 
+  holdReplyAfterCommit(method) {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const replyFor = this.replyFor.bind(this);
+    this.replyFor = request => {
+      const result = replyFor(request);
+      if (request.method !== method) return result;
+      this.notify('skills.changed', {});
+      return gate.then(() => result);
+    };
+    return release;
+  }
+
   async openDetails(fromCatalog = false) {
     await this.install();
     await this.goto();
@@ -102,3 +115,37 @@ test('uninstall failure is visible in the detail page and can be retried', async
   await expect(page.getByRole('button', { name: 'Install skill', exact: true })).toBeVisible();
   expect(app.pageErrors).toEqual([]);
 });
+
+for (const removing of [false, true]) {
+  test(`${removing ? 'uninstall' : 'install'} stays busy when SkillsChanged precedes its reply`, async ({ page }) => {
+    const app = new SkillsHarness(page, removing);
+    const method = removing ? 'skills.uninstall' : 'skills.install';
+    const inverse = removing ? 'skills.install' : 'skills.uninstall';
+    const busyLabel = removing ? 'Removing…' : 'Installing…';
+    const release = app.holdReplyAfterCommit(method);
+    await app.openDetails();
+    const refreshes = app.requests.filter(r => r.method === 'skills.installed').length;
+    await page.getByRole('button', { name: removing ? 'Uninstall' : 'Install skill', exact: true }).click();
+    await expect.poll(() => app.requests.filter(r => r.method === 'skills.installed').length).toBeGreaterThan(refreshes);
+    await expect(page.locator('.skill-detail-action')).toBeDisabled();
+    await expect(page.locator('.skill-detail-action')).toHaveText(busyLabel);
+    // Wait for the committed library state to render, rather than just for the request.
+    await page.getByRole('button', { name: '← Back to skills', exact: true }).click();
+    await expect(page.locator('.skill-row')).toHaveCount(removing ? 1 : 2);
+    const listAction = page.locator('.skill-row button.skill-action');
+    await expect(listAction).toBeDisabled();
+    await expect(listAction).toHaveText(busyLabel);
+    await page.locator('.skill-summary').first().click();
+    const action = page.locator('.skill-detail-action');
+    await expect(action).toBeDisabled();
+    await expect(action).toHaveText(busyLabel);
+    await action.evaluate(button => button.click());
+    expect(app.requests.filter(r => r.method === inverse)).toHaveLength(0);
+    release();
+    const nextAction = page.getByRole('button', { name: removing ? 'Install skill' : 'Uninstall', exact: true });
+    await expect(nextAction).toBeEnabled();
+    await nextAction.click();
+    await expect.poll(() => app.requests.filter(r => r.method === inverse).length).toBe(1);
+    expect(app.pageErrors).toEqual([]);
+  });
+}
