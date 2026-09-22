@@ -205,6 +205,11 @@ fn detail_shell(
         @html.h1(preview_name(target)),
         @html.div(class="skill-detail-meta", preview_meta(locale~, target)),
         detail_action(locale~, target, state, input, emit),
+        if state.notice.is_empty() {
+          @html.nothing
+        } else {
+          @html.div(class="skills-notice danger", state.notice)
+        },
       ]),
       @html.div(class="skill-detail-card", [
         @html.div(class="skill-file-bar", [
@@ -263,24 +268,25 @@ fn detail_action(
   input : Input,
   emit : @cmd.Emit[Msg],
 ) -> @html.Html {
+  // The preview target records where the document came from. Resolve actions
+  // against the live library instead of treating that snapshot as an install.
+  guard detail_action_target(target, state, input) is Some(target) else {
+    return @html.span(class="skill-meta", ui(locale, NotInstalled))
+  }
   match target {
     Market(item) => {
       let key = source_label(item)
       let busy = state.busy.contains(key)
-      if input.has_installed(key) {
-        @html.span(class="skill-check ok", ui(locale, InstalledCheck))
-      } else {
-        @html.button(
-          class="button primary skill-detail-action",
-          disabled=busy,
-          on_click=emit(Install(item)),
-          if busy {
-            ui(locale, Installing)
-          } else {
-            ui(locale, InstallSkill)
-          },
-        )
-      }
+      @html.button(
+        class="button primary skill-detail-action",
+        disabled=busy,
+        on_click=emit(Install(item)),
+        if busy {
+          ui(locale, Installing)
+        } else {
+          ui(locale, InstallSkill)
+        },
+      )
     }
     Installed(item) =>
       if item.source.is_empty() {
@@ -298,6 +304,34 @@ fn detail_action(
           },
         )
       }
+  }
+}
+
+///|
+fn detail_action_target(
+  target : PreviewTarget,
+  state : State,
+  input : Input,
+) -> PreviewTarget? {
+  match target {
+    Market(item) => Some(preview_target_for_market(input.installed, item))
+    Installed(item) => {
+      for installed in input.installed {
+        if installed.id == item.id && installed.source == item.source {
+          return Some(Installed(installed))
+        }
+      }
+      // Keep the same detail page usable after uninstall, when its version
+      // still exists in the catalog. Never send an id from a removed snapshot.
+      if state.catalog is Ready(items) {
+        for market in items {
+          if source_label(market) == item.source {
+            return Some(Market(market))
+          }
+        }
+      }
+      None
+    }
   }
 }
 
