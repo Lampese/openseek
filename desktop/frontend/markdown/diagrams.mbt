@@ -1,5 +1,5 @@
 ///|
-/// DOM-bound diagram renderers shared by transcript and hosted Markdown.
+/// DOM-bound diagram renderers for transcript Markdown.
 /// Even synchronous D2 compilation runs only when a source/container changes,
 /// never on unrelated Rabbita view updates.
 priv enum MarkdownDiagramRenderer {

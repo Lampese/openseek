@@ -9,6 +9,8 @@ import {
 }
 
 // Values
+pub fn body_view(String, String, class? : String) -> @html.Html
+
 pub fn checkout_dialog(State, @cmd.Emit[Msg]) -> @html.Html
 
 pub fn checkout_notification(State, @cmd.Emit[Msg]) -> @html.Html

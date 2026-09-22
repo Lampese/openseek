@@ -5,18 +5,15 @@ import {
   "moonbit-community/rabbita/cmd",
   "moonbit-community/rabbita/dom",
   "moonbit-community/rabbita/html",
-  "moonbit-community/rabbita/sub",
   "openseek_desktop/frontend/i18n",
 }
 
 // Values
 pub fn copy_button(locale? : @i18n.Locale, String, class~ : String, title~ : String, label~ : String) -> @html.Html
 
-pub fn github_html_subscription() -> @sub.Sub
-
 pub fn linkified_text_nodes(String) -> Array[@html.Html]
 
-pub fn markdown_nodes(locale? : @i18n.Locale, String, open_file? : (String) -> @cmd.Cmd, web_source? : String, render_html? : Bool) -> Array[@html.Html]
+pub fn markdown_nodes(locale? : @i18n.Locale, String, open_file? : (String) -> @cmd.Cmd) -> Array[@html.Html]
 
 // Errors
 

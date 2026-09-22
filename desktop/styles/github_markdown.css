@@ -1,4 +1,4 @@
-/* Both PR conversations and Review threads render the same allowed HTML. */
+/* GitHub's bodyHTML is shared by PR conversations and Review threads. */
 :is(.github-detail .markdown, .github-review-markdown) {
   min-width: 0;
   max-width: 100%;
@@ -51,3 +51,50 @@
 :is(.github-detail .markdown, .github-review-markdown) [align="center"] { text-align: center; }
 :is(.github-detail .markdown, .github-review-markdown) [align="right"] { text-align: right; }
 :is(.github-detail .markdown, .github-review-markdown) [align="justify"] { text-align: justify; }
+
+/* GitHub emits these wrappers, anchors and disabled task-list controls. */
+.github-html-body markdown-accessiblity-table { display: block; max-width: 100%; }
+.github-html-body themed-picture { display: inline-block; max-width: 100%; }
+.github-html-body .markdown-heading { position: relative; }
+.github-html-body .markdown-heading > :is(h1, h2, h3, h4, h5, h6) { padding-right: 1.25em; }
+.github-html-body .markdown-heading > .anchor {
+  position: absolute;
+  top: .25em;
+  right: 0;
+  display: inline-flex;
+  color: var(--color-text-muted);
+  opacity: 0;
+}
+.github-html-body .markdown-heading:hover > .anchor,
+.github-html-body .markdown-heading > .anchor:focus-visible { opacity: 1; }
+.github-html-body .octicon { display: inline-block; vertical-align: text-bottom; fill: currentColor; }
+.github-html-body .task-list-item { list-style-type: none; }
+.github-html-body .task-list-item-checkbox { margin: 0 .35em .2em -1.4em; vertical-align: middle; }
+.github-html-body .user-mention { font-weight: 600; }
+.github-html-body .markdown-alert {
+  margin: 1em 0;
+  padding: .5em 1em;
+  border-left: 4px solid var(--github-alert-color, var(--color-focus-ring));
+}
+.github-html-body .markdown-alert > .markdown-alert-title {
+  display: flex;
+  align-items: center;
+  gap: .5em;
+  margin-top: 0;
+  color: var(--github-alert-color, var(--color-focus-ring));
+  font-weight: 600;
+}
+.github-html-body .markdown-alert-tip { --github-alert-color: var(--color-success); }
+.github-html-body .markdown-alert-important { --github-alert-color: light-dark(#8250df, #a371f7); }
+.github-html-body .markdown-alert-warning { --github-alert-color: var(--color-warning); }
+.github-html-body .markdown-alert-caution { --github-alert-color: var(--color-danger); }
+
+/* Use the syntax spans supplied by GitHub, without local tokenization. */
+.github-html-body .pl-c { color: var(--color-text-muted); }
+.github-html-body .pl-k { color: light-dark(#cf222e, #ff7b72); }
+.github-html-body :is(.pl-c1, .pl-s .pl-v) { color: light-dark(#0550ae, #79c0ff); }
+.github-html-body :is(.pl-e, .pl-en) { color: light-dark(#8250df, #d2a8ff); }
+.github-html-body :is(.pl-s, .pl-pds, .pl-sr) { color: light-dark(#0a3069, #a5d6ff); }
+.github-html-body :is(.pl-v, .pl-smw) { color: light-dark(#953800, #ffa657); }
+.github-html-body :is(.pl-ent, .pl-gi) { color: light-dark(#116329, #7ee787); }
+.github-html-body .pl-gd { color: light-dark(#82071e, #ffa198); }

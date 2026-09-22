@@ -1276,7 +1276,7 @@ pub impl @json.FromJson for GithubCheckoutStatus
 
 pub(all) struct GithubComment {
   author : String?
-  body : String
+  body_html : String
   url : String
   created_at : String
 } derive(Eq, @debug.Debug)
@@ -1404,7 +1404,7 @@ pub(all) struct GithubPullRequestDetail {
   item : GithubItem
   state : String
   mergeable : String
-  body : String
+  body_html : String
   base : String
   head : String
   additions : Int
@@ -1471,7 +1471,7 @@ pub impl @json.FromJson for GithubReviewAction
 
 pub(all) struct GithubReviewComment {
   id : String
-  body : String
+  body_html : String
   url : String
   author : String?
   avatar_url : String?

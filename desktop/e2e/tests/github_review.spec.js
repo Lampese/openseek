@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
-import { fixture as markdownFixture } from './support/github_markdown.js';
+import { fixture as htmlFixture } from './support/github_body_html.js';
 
 const oldSource = '///|\npub fn retry_delay(attempt : Int) -> Int {\n  500 * attempt\n}\n\n///|\npub fn max_retries() -> Int {\n  3\n}\n';
 const newSource = oldSource.replace('500 *', '250 *').replace('  3\n', '  5\n');
 const prURL = 'https://github.com/owner/project/pull/42';
 const head = 'b'.repeat(40);
-const makeComment = (id, body, canDelete = false) => ({ id, body, url: `${prURL}#discussion_r${id}`, author: 'reviewer', created_at: '2026-09-20T08:15:00Z', can_delete: canDelete });
-const makeThread = (id, side, line) => ({ id, path: 'src/main.mbt', side, line, original_line: line, resolved: false, outdated: false, can_reply: true, can_resolve: true, can_unresolve: false, comments: [makeComment(`${id === 'left' ? 6 : 5}000000001`, side === 'LEFT' ? 'Should we keep the original delay?' : 'Could we add **coverage** for the new limit?')] });
+const makeComment = (id, body_html, canDelete = false) => ({ id, body_html, url: `${prURL}#discussion_r${id}`, author: 'reviewer', created_at: '2026-09-20T08:15:00Z', can_delete: canDelete });
+const makeThread = (id, side, line) => ({ id, path: 'src/main.mbt', side, line, original_line: line, resolved: false, outdated: false, can_reply: true, can_resolve: true, can_unresolve: false, comments: [makeComment(`${id === 'left' ? 6 : 5}000000001`, side === 'LEFT' ? 'Should we keep the original delay?' : 'Could we add <strong>coverage</strong> for the new limit?')] });
 
 async function openComments(page, { holdReview = false, missingRevision = false, unchangedTail = '' } = {}) {
   const app = new DesktopBrowserHarness(page);
@@ -74,13 +74,17 @@ test('inline Review comments render HTML and media and preserve disclosure state
     return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"/>' });
   });
   const { app, fixture } = await openComments(page, { holdReview: true });
-  fixture.threads[0].comments[0].body = markdownFixture('mixed') + '\n\n[Guide](../blob/main/README.md)\n\n![Screenshot](https://image.example.test/comment.png)';
+  fixture.threads[0].comments[0].body_html = htmlFixture('mixed') + '<p><a href="../blob/main/README.md">Guide</a></p><img alt="Screenshot" src="https://image.example.test/comment.png">';
+  fixture.threads[0].comments[0].body = 'Legacy inline Markdown must not be displayed';
   fixture.releaseReview();
   const comment = page.locator('.github-review-inline-block [data-thread-id="right"] .markdown');
   await expect(comment.getByRole('link', { name: 'Guide', exact: true }))
     .toHaveAttribute('href', 'https://github.com/owner/project/blob/main/README.md');
   await expect(comment.getByRole('img', { name: 'Screenshot', exact: true }))
     .toHaveAttribute('src', 'https://image.example.test/comment.png');
+  await expect(comment.locator('markdown-accessiblity-table table')).toHaveCount(1);
+  await expect(comment.locator('pre.notranslate code.notranslate')).toHaveText('<script>literal code</script>');
+  await expect(comment).not.toContainText('Legacy inline Markdown');
   await expect(comment.locator('.transcript-image')).toHaveCount(0);
   await expect.poll(() => comment.locator('img').evaluate(img => img.naturalWidth)).toBe(32);
   expect([...new Set(requests)]).toEqual(['https://image.example.test/comment.png']);

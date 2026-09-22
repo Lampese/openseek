@@ -172,7 +172,7 @@ fn pull_request_body(
       author_avatar,
       pr.created_at,
       pr.item.url,
-      pr.body,
+      pr.body_html,
       description=true,
       open_link,
     ),
@@ -188,7 +188,7 @@ fn pull_request_body(
         },
         comment.created_at,
         comment.url,
-        comment.body,
+        comment.body_html,
         open_link,
       ),
     )
@@ -210,7 +210,7 @@ fn comment_card(
   avatar : String?,
   created_at : String,
   url : String,
-  body : String,
+  body_html : String,
   description? : Bool = false,
   open_link : (String) -> @cmd.Cmd,
 ) -> @html.Html {
@@ -239,13 +239,10 @@ fn comment_card(
         },
       ]),
       @html.div(class="github-comment-body", [
-        if body.is_empty() {
+        if body_html.is_empty() {
           @html.p(class="github-detail-status", "No description provided.")
         } else {
-          @html.div(
-            class="msg-content markdown",
-            @markdown.markdown_nodes(body, web_source=url, render_html=true),
-          )
+          body_view(body_html, url)
         },
       ]),
     ],

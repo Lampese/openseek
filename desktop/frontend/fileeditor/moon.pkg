@@ -4,7 +4,6 @@ import {
   "moonbitlang/x/crypto",
   "moonbitlang/editor/viewer/common/localization",
   "openseek_desktop/frontend/i18n",
-  "openseek_desktop/frontend/markdown",
   "openseek_desktop/frontend/github",
   "moonbit-community/rabbita/cmd",
   "moonbit-community/rabbita/dom",
