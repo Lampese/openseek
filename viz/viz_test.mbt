@@ -18,7 +18,7 @@ fn sample_session() -> @agent_session.Session {
     SessionId("demo"),
     system_prompt="You are a helpful agent.",
   )
-  let s1 = s0.append(User(UserMessage("list the files")))
+  let s1 = s0.append(User(UserMessage(Content([Text("list the files")]))))
   let s2 = s1.append(
     Assistant(
       AssistantMessage(
@@ -32,11 +32,9 @@ fn sample_session() -> @agent_session.Session {
   )
   let s3 = s2.append(
     Tool(
-      ToolResult(
-        tool_call_id="call_1",
-        tool_name="shell",
-        content="README.md\nsrc",
-      ),
+      ToolResult(tool_call_id="call_1", tool_name="shell", content=[
+        Text("README.md\nsrc"),
+      ]),
     ),
   )
   let s4 = s3.append(Runtime(RuntimeNotice("plan reminder: run tests")))
@@ -82,7 +80,7 @@ fn error_tool_session() -> @agent_session.Session {
       ToolResult(
         tool_call_id="c1",
         tool_name="shell",
-        content="boom",
+        content=[Text("boom")],
         is_error=true,
       ),
     ),
@@ -121,7 +119,7 @@ test "mbtx activity and build-error counts follow durable events" {
         ToolResult(
           tool_call_id="b1",
           tool_name="mbtx",
-          content="diag",
+          content=[Text("diag")],
           is_error=true,
           brief="mbtx build",
         ),
@@ -148,7 +146,7 @@ test "mbtx activity and build-error counts follow durable events" {
       ToolResult(
         tool_call_id="ghost",
         tool_name="mbtx",
-        content="diag",
+        content=[Text("diag")],
         is_error=true,
         brief="mbtx build",
       ),

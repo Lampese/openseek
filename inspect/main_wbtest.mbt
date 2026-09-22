@@ -270,7 +270,7 @@ async test "session listing uses jsonl files and ignores junk entries" {
     source_store.create(Session(SessionId("flat-a"), system_prompt=""))
     source_store.create(
       @agent_session.Session(SessionId("flat-b"), system_prompt="").append(
-        User(UserMessage("copied prompt")),
+        User(UserMessage(Content([Text("copied prompt")]))),
       ),
     )
     let sessions = "\{root}/.openseek/sessions"
@@ -430,7 +430,7 @@ async test "raw session file route decodes the file segment like the key" {
     let store = @store.SessionStore("\{root}/.openseek")
     // An id with a space forces percent-encoding in both URL segments.
     let session = @agent_session.Session(SessionId("run 1"), system_prompt="").append(
-      User(UserMessage("hi")),
+      User(UserMessage(Content([Text("hi")]))),
     )
     store.create(session)
     let catalog : SessionCatalog = { roots: [marker_root(root, ".openseek")], }
@@ -447,7 +447,7 @@ async test "session_envelope_reply includes event log byte size" {
   @vfs.with_tmpdir(prefix="openseek-viz-envelope-", root => {
     let store = @store.SessionStore("\{root}/.openseek")
     let session = @agent_session.Session(SessionId("demo"), system_prompt="").append(
-      User(UserMessage("hi")),
+      User(UserMessage(Content([Text("hi")]))),
     )
     store.create(session)
     let reply = session_envelope_reply(store.session_file(SessionId("demo")))

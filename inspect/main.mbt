@@ -761,7 +761,7 @@ async fn first_prompt_in_log(path : String) -> String {
       _ => return ""
     }
     if event.item() is User(message) {
-      return message.content()
+      return message.content().text()
     }
   }
   ""
