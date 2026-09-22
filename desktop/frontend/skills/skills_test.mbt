@@ -409,3 +409,29 @@ test "an uninstall retains its source after removal and releases only itself" {
   )
   assert_false(installing == done)
 }
+
+///|
+test "opening either kind of detail clears the previous notice without mutating state" {
+  let skill : @skills.InstalledItem = {
+    id: "acme-widget",
+    name: "widget",
+    description: "",
+    source: "acme/widget@1.0.0",
+  }
+  let clean = @skills.State::empty()
+  let failed = clean.with_notice("another skill could not be removed")
+  for
+    msg in [
+      @skills.PreviewMarket(market_item()),
+      @skills.PreviewInstalled(skill),
+    ] {
+    let (_, expected, _) = clean.handle(emit(), msg, input())
+    let (_, opened, _) = failed.handle(emit(), msg, input())
+    let (_, repeated, _) = failed.handle(emit(), msg, input())
+    assert_true(opened == expected)
+    assert_true(opened == repeated)
+    assert_true(
+      failed == clean.with_notice("another skill could not be removed"),
+    )
+  }
+}

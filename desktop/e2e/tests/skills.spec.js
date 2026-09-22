@@ -149,3 +149,34 @@ for (const removing of [false, true]) {
     expect(app.pageErrors).toEqual([]);
   });
 }
+
+for (const targetInstalled of [false, true]) {
+  test(`opening ${targetInstalled ? 'installed' : 'catalog'} details clears another skill's error, including cached previews`, async ({ page }) => {
+    const app = new SkillsHarness(page, true);
+    const other = { ...market, name: 'widget', module_name: 'acme/widget' };
+    app.catalogSkills.push(other);
+    if (targetInstalled) {
+      app.installedSkills.push({ ...installed, id: 'acme-widget', name: 'widget', source: 'acme/widget@0.1.0' });
+    }
+    app.rpcErrors.set('skills.uninstall', 'Cannot remove wayfinder: permission denied');
+    await app.openDetails();
+    const contentMethod = targetInstalled ? 'skills.installed_content' : 'skills.content';
+    const initialReads = app.requests.filter(r => r.method === contentMethod).length;
+    for (const cached of [false, true]) {
+      await page.locator('.skill-detail-page').getByRole('button', { name: 'Uninstall', exact: true }).click();
+      await expect(page.locator('.skill-detail-page')).toContainText('Cannot remove wayfinder: permission denied');
+      await page.getByRole('button', { name: '← Back to skills', exact: true }).click();
+      await page.locator('.skill-summary').filter({ hasText: 'widget' }).first().click();
+      await expect(page.locator('.skill-detail-header h1')).toHaveText('widget');
+      await expect(page.locator('.skill-preview-markdown')).toBeVisible();
+      await expect(page.locator('.skill-detail-page .skills-notice')).toHaveCount(0);
+      // The second navigation exercises the cached branch without another read.
+      expect(app.requests.filter(r => r.method === contentMethod)).toHaveLength(initialReads + 1);
+      if (!cached) {
+        await page.getByRole('button', { name: '← Back to skills', exact: true }).click();
+        await page.locator('.skill-summary').filter({ hasText: 'wayfinder' }).first().click();
+      }
+    }
+    expect(app.pageErrors).toEqual([]);
+  });
+}

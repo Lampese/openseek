@@ -160,14 +160,18 @@ pub fn State::handle(
         Some(content) =>
           (
             @cmd.none,
-            { ..self, preview: Ready(target~, request=0, content~), },
+            {
+              ..self,
+              notice: "",
+              preview: Ready(target~, request=0, content~),
+            },
             None,
           )
         None => {
           let request = preview_request_id(self.preview) + 1
           (
             fetch_content(emit, input.channel, request, target),
-            { ..self, preview: Loading(target~, request~), },
+            { ..self, notice: "", preview: Loading(target~, request~), },
             None,
           )
         }
@@ -179,14 +183,18 @@ pub fn State::handle(
         Some(content) =>
           (
             @cmd.none,
-            { ..self, preview: Ready(target~, request=0, content~), },
+            {
+              ..self,
+              notice: "",
+              preview: Ready(target~, request=0, content~),
+            },
             None,
           )
         None => {
           let request = preview_request_id(self.preview) + 1
           (
             fetch_installed_content(emit, input.channel, request, item),
-            { ..self, preview: Loading(target~, request~), },
+            { ..self, notice: "", preview: Loading(target~, request~), },
             None,
           )
         }
