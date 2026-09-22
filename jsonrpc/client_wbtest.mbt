@@ -20,7 +20,6 @@ impl Transport for FakeTransport with fn send(self, message) {
 ///|
 impl Transport for FakeTransport with fn recv(self) {
   Some(self.inbound.get()) catch {
-    error if @async.is_being_cancelled() => raise error
     _ => None
   }
 }
@@ -52,7 +51,6 @@ impl Transport for SendFailTransport with fn send(self, _message) {
 ///|
 impl Transport for SendFailTransport with fn recv(self) {
   Some(self.inbound.get()) catch {
-    error if @async.is_being_cancelled() => raise error
     _ => None
   }
 }
@@ -116,8 +114,7 @@ fn error_for(request : Json, code : Int, message : String) -> Json {
 ///|
 /// Issue a request expected to fail, rendering the outcome as a comparable
 /// string — so an unexpected success is a readable assertion rather than a
-/// hang. The cancellation guard is the easy thing to forget when adding the
-/// next one of these; it lives here now, once.
+/// hang. Cancellation signals propagate past these ordinary error handlers.
 async fn request_outcome(client : Client, method_ : String) -> String {
   try {
     client.request(method_~, params=Json::empty_object()) |> ignore
@@ -125,7 +122,6 @@ async fn request_outcome(client : Client, method_ : String) -> String {
   } catch {
     Failed(code~, message~, data=_) => "failed \{code} \{message}"
     Closed => "closed"
-    error if @async.is_being_cancelled() => raise error
     _ => "other error"
   }
 }
@@ -468,6 +464,24 @@ async test "cancelling the reader closes the client and fails in-flight requests
     let request = group.spawn(() => request_outcome(client, "ping"))
     pump.cancel()
     assert_eq(request.wait(), "closed")
+    assert_true(client.is_closed())
+  })
+}
+
+///|
+/// Regression guard: cancelling a parked writer must also close the client.
+/// Cancellation no longer enters the writer's `catch`, so the close has to be
+/// a `defer` — otherwise `is_closed` stays false and every outstanding request
+/// waits for a reply that can never arrive.
+async test "cancelling a parked writer closes the client" {
+  @async.with_task_group(group => {
+    let transport = new_transport()
+    let client = Client::Client(transport)
+    // Parked on an empty outbox; no reader is needed for this property.
+    let writer = group.spawn(() => client.run_writer())
+    @async.pause()
+    writer.cancel()
+    let _ = writer.wait() catch { _ => () }
     assert_true(client.is_closed())
   })
 }

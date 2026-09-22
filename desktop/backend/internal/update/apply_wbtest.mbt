@@ -3,9 +3,13 @@
 async test "bundle replacement checks the containing directory" {
   @async.with_task_group() <| group => {
     let root = @fs.tmpdir(prefix="openseek-update-replacement-")
+    // async 0.22: group defers are `nocancel`; shield the cancellable
+    // chmod (rmdir is already non-cancellable in this version).
     group.add_defer(() => {
-      @fs.chmod(root, 0o700)
-      @fs.rmdir(root, recursive=true)
+      @async.protect_from_cancel(() => {
+        @fs.chmod(root, 0o700)
+        @fs.rmdir(root, recursive=true)
+      })
     })
     let bundle = "\{root}/SeekMoon.app"
     @fs.mkdir(bundle)
@@ -24,8 +28,10 @@ async test "an unavailable destination stops apply before any mutation" {
   @async.with_task_group() <| group => {
     let root = @fs.tmpdir(prefix="openseek-update-apply-")
     group.add_defer(() => {
-      @fs.chmod(root, 0o700)
-      @fs.rmdir(root, recursive=true)
+      @async.protect_from_cancel(() => {
+        @fs.chmod(root, 0o700)
+        @fs.rmdir(root, recursive=true)
+      })
     })
     let bundle = "\{root}/SeekMoon.app"
     let staged = "\{root}/Staged.app"

@@ -44,8 +44,7 @@ async fn request(
     }
     body.json()
   }) catch {
-    error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>
-      raise error
+    @async.TaskCancelled as error => raise error
     TransportError(message) => raise TransportError(message)
     _ =>
       raise TransportError(

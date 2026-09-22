@@ -62,12 +62,8 @@ pub async fn drain_stdout() -> Unit {
   guard sink.val is Some(queue) else { return }
   for ;; {
     let line = queue.get() catch {
-      error if @async.is_cancellation_error(error) => raise error
       // The queue is closed and empty: every queued line has been written.
-      // This must not test `is_being_cancelled`: when the run body fails, the
-      // `defer` close and the group's cancellation race, and re-raising the
-      // close error here would replace the run's real failure with
-      // `QueueAlreadyClosed` in the report the user sees.
+      // Cancellation bypasses catch; only the closed queue ends the drain.
       _ => return
     }
     @stdio.stdout.write("\{line}\n")

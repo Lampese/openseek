@@ -25,7 +25,7 @@ async test "a file gate grant followed by cancellation cannot enter the mutation
 }
 
 ///|
-/// The cancelled waiter must unwind with the runtime's cancellation error, not
+/// The cancelled waiter must unwind with the runtime's cancellation signal, not
 /// an ordinary failure: a failure would cancel every sibling in its group.
 async test "a cancelled file gate waiter leaves its siblings running" {
   @async.with_task_group(group => {
@@ -52,7 +52,7 @@ async test "a cancelled file gate waiter leaves its siblings running" {
     } noraise {
       _ => None
     }
-    assert_true(error is Some(error) && @async.is_cancellation_error(error))
+    assert_true(error is Some(error) && error is @async.TaskCancelled)
     assert_eq(mutations.val, 0)
     sibling_done.put(())
     sibling.wait()

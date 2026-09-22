@@ -137,8 +137,7 @@ pub async fn[X] Service::start(
         }
         Some((program, reader.body(headers)))
       }) catch {
-        error if @async.is_being_cancelled() ||
-          @async.is_cancellation_error(error) => raise error
+        @async.TaskCancelled as error => raise error
         _ => {
           send(
             conn,
@@ -208,8 +207,7 @@ pub async fn[X] Service::start(
         })
         task.wait()
       }) catch {
-        error if @async.is_being_cancelled() ||
-          @async.is_cancellation_error(error) => raise error
+        @async.TaskCancelled as error => raise error
         error => {
           abandon()
           let response = error_result(
@@ -238,7 +236,7 @@ pub async fn[X] Service::start(
     worker.cancel()
     @async.protect_from_cancel(() => worker.wait() catch { _ => () })
   })
-  group.add_defer(() => service.close())
+  group.add_defer(() => @async.protect_from_cancel(() => service.close()))
   service
 }
 
@@ -470,6 +468,9 @@ async fn Program::execute(
   arguments : Json,
 ) -> Json {
   let tools = self.service.tools
+  errdefer (if @async.is_being_cancelled() {
+    self.calls[index] = call_entry(name, arguments, "interrupted")
+  })
   let result = try {
     self.publish_trace()
     match tools.find(name) {
@@ -496,7 +497,7 @@ async fn Program::execute(
       }
     }
   } catch {
-    error if @async.is_being_cancelled() || @async.is_cancellation_error(error) => {
+    @async.TaskCancelled as error => {
       self.calls[index] = call_entry(name, arguments, "interrupted")
       raise error
     }
@@ -594,8 +595,7 @@ async fn Program::deliver_trace(self : Program) -> Unit {
   @async.with_timeout(self.service.trace_timeout_ms, () => {
     (self.on_trace)(self.trace())
   }) catch {
-    error if @async.is_being_cancelled() || @async.is_cancellation_error(error) =>
-      raise error
+    @async.TaskCancelled as error => raise error
     error =>
       self.trace_error = Some(@agent_tool.brief_line("\{error}", limit=512))
   }
