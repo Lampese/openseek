@@ -1679,6 +1679,7 @@ pub fn subscriptions(
     changes_poll_subscription(state, ctx, dispatch),
     review_diff_navigation_subscription(state, ctx, dispatch),
     review_context_dismiss_subscription(),
+    @markdown.github_html_subscription(),
     state.search.subscription(
       ctx.search_input(),
       dispatch.map(msg => Search(msg)),

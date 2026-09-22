@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
 
-test('PR Markdown resolves hosted links and opens images only on an explicit click', async ({ page }) => {
+test('PR Markdown resolves hosted links and embeds images automatically', async ({ page }) => {
   const app = new DesktopBrowserHarness(page);
   const originalReply = app.replyFor.bind(app);
   const url = 'https://github.com/owner/project/pull/42';
@@ -9,7 +9,7 @@ test('PR Markdown resolves hosted links and opens images only on an explicit cli
   const remoteRequests = [];
   await page.context().route('https://**/*', route => {
     remoteRequests.push(route.request().url());
-    return route.fulfill({ contentType: 'text/html', body: '<title>Explicit image navigation</title>' });
+    return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="blue"/></svg>' });
   });
   app.replyFor = request => {
     if (request.method === 'github.list') return {
@@ -39,21 +39,16 @@ test('PR Markdown resolves hosted links and opens images only on an explicit cli
   await expect(body.getByRole('link', { name: 'Guide', exact: true }))
     .toHaveAttribute('href', 'https://github.com/owner/project/blob/main/README.md');
   await expect(body.getByRole('link', { name: 'Discussion', exact: true })).toHaveAttribute('href', url + '#discussion');
-  await expect(body.getByRole('link', { name: 'Open image: Relative screenshot', exact: true }))
-    .toHaveAttribute('href', 'https://github.com/owner/project/pull/docs/shot.png');
-  await expect(body.locator('img, .transcript-image, .file-link')).toHaveCount(0);
+  await expect(body.getByRole('img', { name: 'Relative screenshot', exact: true }))
+    .toHaveAttribute('src', 'https://github.com/owner/project/pull/docs/shot.png');
+  await expect(body.locator('.transcript-image, .file-link')).toHaveCount(0);
   await expect(body.getByRole('link', { name: 'Local file', exact: true })).toHaveCount(0);
   await expect(body.getByRole('link', { name: 'Unsafe script', exact: true })).toHaveCount(0);
-  expect(remoteRequests).toEqual([]);
-  const popupPromise = page.waitForEvent('popup');
-  const navigationPromise = page.context().waitForEvent('request', {
-    predicate: request => request.url() === 'https://image.example.test/tracker.png',
-  });
-  await body.getByRole('link', { name: 'Open image: Remote screenshot', exact: true }).click();
-  const popup = await popupPromise;
-  await navigationPromise;
-  await popup.close();
-  expect(remoteRequests).toEqual(['https://image.example.test/tracker.png']);
+  await expect.poll(() => body.locator('img').evaluateAll(images => images.every(image => image.naturalWidth > 0))).toBe(true);
+  expect(remoteRequests.sort()).toEqual([
+    'https://github.com/owner/project/pull/docs/shot.png',
+    'https://image.example.test/tracker.png',
+  ]);
   expect(app.requests.filter(request => request.method === 'fs.read_file' && request.params?.path === 'docs/shot.png')).toEqual([]);
   expect(app.pageErrors).toEqual([]);
 });

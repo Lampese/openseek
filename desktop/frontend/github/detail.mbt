@@ -244,7 +244,7 @@ fn comment_card(
         } else {
           @html.div(
             class="msg-content markdown",
-            @markdown.markdown_nodes(body, web_source=url),
+            @markdown.markdown_nodes(body, web_source=url, render_html=true),
           )
         },
       ]),

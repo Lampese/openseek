@@ -2,14 +2,18 @@ import {
   "openseek_desktop/frontend/i18n",
   "openseek_desktop/uri",
   "moonbit-community/cmark/cmark",
+  "moonbit-community/cmark/cmark_html",
+  "moonbit-community/cmark/cmark_renderer",
   "moonbit-community/rabbita/clipboard",
   "moonbit-community/rabbita/cmd",
   "moonbit-community/rabbita/dom",
   "moonbit-community/rabbita/html",
   "moonbit-community/rabbita/js",
+  "moonbit-community/rabbita/sub",
   "moonbitlang/editor/base/common",
   "moonbitlang/editor/viewer" @editor_viewer,
   "moonbitlang/editor/viewer/html" @syntax_html,
+  "moonbitlang/editor/viewer/browser/diagram_viewport",
   "openseek_desktop/frontend/icons",
 }
 

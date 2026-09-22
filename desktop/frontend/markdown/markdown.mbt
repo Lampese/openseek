@@ -1,9 +1,9 @@
 // Markdown rendering for transcript content. The engine's assistant text is
 // CommonMark (with the GFM-ish cmark extensions: tables, strikethrough, task
 // lists); this module parses it with moonbit-community/cmark and maps the
-// document tree directly onto Rabbita nodes. Untrusted model output therefore
-// is never injected as HTML: raw HTML blocks and spans are rendered as visible
-// text. Diagram containers accept only escaped source or renderer-generated SVG.
+// document tree directly onto Rabbita nodes by default. Hosted PR content can
+// opt into the inert HTML parser and allowlist in html.mbt. Chat keeps raw HTML
+// visible as text. No input HTML is inserted into the live document.
 
 ///|
 /// Render a markdown string to a list of block-level Rabbita nodes.
@@ -22,12 +22,14 @@
 /// Absent (tests, plain rendering), explicit links remain ordinary anchors.
 /// Inline code stays inert.
 /// `web_source` renders a hosted document: relative links resolve against its
-/// URL, local file actions are disabled, and images require an explicit click.
+/// URL and local file actions are disabled. `render_html` opts into sanitized
+/// GFM HTML and inline media; its default preserves the transcript behavior.
 pub fn markdown_nodes(
   locale? : @i18n.Locale = English,
   source : String,
   open_file? : (String) -> @cmd.Cmd,
   web_source? : String,
+  render_html? : Bool = false,
 ) -> Array[@html.Html] {
   @js.Error_::wrap(() => {
     let doc = @cmark.Doc::from_string(source, strict=false)
@@ -41,7 +43,14 @@ pub fn markdown_nodes(
       },
       web_source,
     }
-    @js.Value::cast_from(render.block_nodes(doc.block))
+    let nodes = if render_html {
+      render.html_nodes(doc, source) catch {
+        _ => [@html.pre(class="markdown-fallback", source)]
+      }
+    } else {
+      render.block_nodes(doc.block)
+    }
+    @js.Value::cast_from(nodes)
   }) catch {
     _ => [@html.pre(class="markdown-fallback", source)]
   }

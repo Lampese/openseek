@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
+import { fixture as markdownFixture } from './support/github_markdown.js';
 
 const oldSource = '///|\npub fn retry_delay(attempt : Int) -> Int {\n  500 * attempt\n}\n\n///|\npub fn max_retries() -> Int {\n  3\n}\n';
 const newSource = oldSource.replace('500 *', '250 *').replace('  3\n', '  5\n');
@@ -66,22 +67,35 @@ async function openComments(page, { holdReview = false, missingRevision = false,
   return { app, fixture };
 }
 
-test('inline comment Markdown uses the hosted document context without loading images', async ({ page }) => {
+test('inline Review comments render HTML and media and preserve disclosure state across edits', async ({ page }, testInfo) => {
   const requests = [];
   await page.route('https://**/*', route => {
     requests.push(route.request().url());
-    return route.fulfill({ body: '' });
+    return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"/>' });
   });
   const { app, fixture } = await openComments(page, { holdReview: true });
-  fixture.threads[0].comments[0].body = '[Guide](../blob/main/README.md)\n\n![Screenshot](https://image.example.test/comment.png)';
+  fixture.threads[0].comments[0].body = markdownFixture('mixed') + '\n\n[Guide](../blob/main/README.md)\n\n![Screenshot](https://image.example.test/comment.png)';
   fixture.releaseReview();
   const comment = page.locator('.github-review-inline-block [data-thread-id="right"] .markdown');
   await expect(comment.getByRole('link', { name: 'Guide', exact: true }))
     .toHaveAttribute('href', 'https://github.com/owner/project/blob/main/README.md');
-  await expect(comment.getByRole('link', { name: 'Open image: Screenshot', exact: true }))
-    .toHaveAttribute('href', 'https://image.example.test/comment.png');
-  await expect(comment.locator('img, .transcript-image')).toHaveCount(0);
-  expect(requests).toEqual([]);
+  await expect(comment.getByRole('img', { name: 'Screenshot', exact: true }))
+    .toHaveAttribute('src', 'https://image.example.test/comment.png');
+  await expect(comment.locator('.transcript-image')).toHaveCount(0);
+  await expect.poll(() => comment.locator('img').evaluate(img => img.naturalWidth)).toBe(32);
+  expect([...new Set(requests)]).toEqual(['https://image.example.test/comment.png']);
+  await expect(comment.locator('details')).toHaveCount(2);
+  await expect(comment.locator('table')).toHaveCount(1);
+  await expect(comment).not.toContainText('seekmoon-hidden-comment');
+  const outer = comment.locator('details').first();
+  await outer.locator(':scope > summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(outer.getByText('Final paragraph still inside', { exact: false })).toBeVisible();
+  const handle = await outer.elementHandle();
+  await page.locator('.github-review-inline-block [data-thread-id="right"]').getByRole('textbox', { name: 'Reply', exact: true }).fill('Local draft triggers a render');
+  await expect.poll(() => handle.evaluate(el => el.isConnected && el.open)).toBe(true);
+  await expect.poll(() => comment.locator('relative-time').evaluate(el => Boolean(el.shadowRoot?.textContent))).toBe(true);
+  await comment.screenshot({ path: testInfo.outputPath('review-html-comment.png') });
   expect(app.pageErrors).toEqual([]);
 });
 
