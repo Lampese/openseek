@@ -2211,10 +2211,10 @@ pub impl @json.FromJson for PatternRepairPayload
 pub(all) struct PatternRepairReply {
   root : String
   generation : Int
-  candidate_pattern : String
-  valid : Bool
-  validation_status : String
+  candidate_pattern : String?
+  validation_status : PatternRepairStatus
   message : String
+  trace : Array[String]
 } derive(Eq, @debug.Debug)
 pub fn PatternRepairReply::equal(Self, Self) -> Bool
 pub fn PatternRepairReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
@@ -2223,6 +2223,16 @@ pub fn PatternRepairReply::to_json(Self) -> Json
 pub fn PatternRepairReply::to_repr(Self) -> @debug.Repr
 pub impl ToJson for PatternRepairReply
 pub impl @json.FromJson for PatternRepairReply
+
+pub(all) enum PatternRepairStatus {
+  Passed
+  Unavailable
+  TimedOut
+  Failed
+} derive(Eq, @debug.Debug)
+pub fn PatternRepairStatus::equal(Self, Self) -> Bool
+pub fn PatternRepairStatus::not_equal(Self, Self) -> Bool
+pub fn PatternRepairStatus::to_repr(Self) -> @debug.Repr
 
 pub(all) struct PendingApprovalPayload {
   id : String

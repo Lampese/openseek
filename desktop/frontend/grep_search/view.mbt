@@ -244,71 +244,97 @@ fn pattern_repair_control(
   emit : @cmd.Emit[Msg],
 ) -> @html.Html {
   let requested = page.pattern_repair_phase is PatternRepairRequested
-  let settled = page.pattern_repair_phase
-    is (PatternRepairPreview | PatternRepairFailed)
-  let composing = page.pattern_repair_phase is PatternRepairComposer
   let label = if requested {
     ui(locale, RepairingPattern)
   } else {
     ui(locale, FixPattern)
   }
   @html.button(
-    class=if requested || settled {
-      "search-option pressed pattern-repair-button"
+    class=if requested {
+      "search-option pattern-repair-button is-loading"
     } else {
       "search-option pattern-repair-button"
     },
     title=label,
     attrs=@html.Attrs::build()
       .aria_label(label)
-      .aria_pressed((requested || settled || composing).to_string())
-      .on_click(_ => {
-        if requested {
-          @cmd.none
-        } else if composing || settled {
-          emit(RejectPatternRepair)
-        } else {
-          emit(FixPattern)
-        }
-      }),
+      .aria_busy(requested.to_string())
+      .disabled(requested)
+      .on_click(_ => emit(FixPattern)),
     @icons.icon(@icons.icon_sparkle),
   )
+}
+
+///|
+/// Select recovery copy from the closed repair state. Unavailable messages are
+/// Host-controlled setup guidance (for example, a missing API key), so retain
+/// them instead of replacing the user's recovery action with generic advice.
+fn pattern_repair_failure_label(page : Page) -> String {
+  match page.pattern_repair_phase {
+    PatternRepairInputRequired => "Enter a pattern before repairing it."
+    PatternRepairUnavailable =>
+      page.pattern_repair_message.unwrap_or(
+        "Pattern repair is unavailable. Check Settings and retry.",
+      )
+    PatternRepairTimedOut =>
+      "Pattern Repair Agent timed out after 120 seconds. Try again."
+    PatternRepairValidationFailed =>
+      "Pattern repair failed. The current pattern was not changed."
+    _ => "Pattern repair failed. Update the pattern or retry."
+  }
+}
+
+///|
+fn pattern_repair_details(page : Page) -> @html.Html {
+  let has_candidate = page.pattern_repair_candidate is Some(_)
+  let has_diagnostic = page.pattern_repair_phase
+    is PatternRepairValidationFailed &&
+    page.pattern_repair_message is Some(_)
+  guard has_candidate || has_diagnostic || !page.pattern_repair_trace.is_empty() else {
+    return @html.nothing
+  }
+  let candidate = match page.pattern_repair_candidate {
+    Some(candidate) =>
+      @html.div(class="search-pattern-repair-candidate", [
+        @html.p("Candidate pattern (not applied)"),
+        @html.pre(class="search-pattern-repair-candidate-value", candidate),
+      ])
+    None => @html.nothing
+  }
+  let diagnostic = if page.pattern_repair_phase is PatternRepairValidationFailed {
+    match page.pattern_repair_message {
+      Some(diagnostic) =>
+        @html.pre(class="search-pattern-repair-diagnostic", diagnostic)
+      None => @html.nothing
+    }
+  } else {
+    @html.nothing
+  }
+  let trace = if page.pattern_repair_trace.is_empty() {
+    @html.nothing
+  } else {
+    let rows = page.pattern_repair_trace.map(item => @html.li(item))
+    @html.div(class="search-pattern-repair-trace", [
+      @html.p("Repair trace"),
+      @html.ol(class="search-pattern-repair-trace-list", rows),
+    ])
+  }
+  @html.details(class="search-pattern-repair-details", [
+    @html.summary("Show repair details"),
+    candidate,
+    diagnostic,
+    trace,
+  ])
 }
 
 ///|
 fn pattern_repair_notice(
   locale? : @i18n.Locale = English,
   page : Page,
-  emit : @cmd.Emit[Msg],
 ) -> @html.Html {
-  if page.pattern_repair_phase is PatternRepairComposer {
-    @html.div(class="search-pattern-repair-composer", [
-      @html.div(class="search-pattern-repair-composer-header", [
-        @html.span(
-          class="search-pattern-repair-kicker",
-          ui(locale, PatternRepair),
-        ),
-        @html.span(class="search-pattern-repair-caption", ui(locale, NoHistory)),
-      ]),
-      @html.div(class="search-pattern-repair-composer-row", [
-        @html.textarea(
-          value=page.pattern_repair_instruction,
-          placeholder=ui(locale, PatternInstruction),
-          on_input=emit.map(value => PatternRepairInstructionChanged(value)),
-          attrs=@html.Attrs::build().aria_label(ui(locale, RepairInstruction)),
-          "",
-        ),
-        @html.button(
-          class="search-pattern-repair-submit",
-          attrs=@html.Attrs::build().aria_label(ui(locale, SubmitRepair)),
-          on_click=emit(SubmitPatternRepair),
-          ui(locale, SubmitLabel),
-        ),
-      ]),
-    ])
-  } else if page.pattern_repair_phase is PatternRepairRequested {
+  if page.pattern_repair_phase is PatternRepairRequested {
     @html.div(
-      class="search-pattern-repair-thinking",
+      class="search-pattern-repair-status",
       attrs=@html.Attrs::build().role("status").aria_live("polite"),
       [
         @html.span(class="search-pattern-repair-orbit", "✦"),
@@ -316,71 +342,19 @@ fn pattern_repair_notice(
         @html.span(class="search-pattern-repair-dots", "···"),
       ],
     )
-  } else if (
-      page.pattern_repair_phase is PatternRepairPreview ||
-      page.pattern_repair_phase is PatternRepairFailed
-    ) &&
-    page.pattern_repair_candidate is Some(candidate) {
-    let failed = page.pattern_repair_phase is PatternRepairFailed
-    let validation = match page.pattern_repair_validation_status {
-      Some("passed") => ui(locale, ValidationPassed)
-      Some("unavailable") => ui(locale, ValidationUnavailable)
-      Some("failed") => ui(locale, ValidationFailed)
-      _ => ui(locale, ValidationUnknown)
-    }
-    @html.div(
-      class=if failed {
-        "search-pattern-repair-preview error"
-      } else {
-        "search-pattern-repair-preview"
-      },
-      [
-        @html.div(class="search-pattern-repair-title", [
-          @html.span(
-            class="search-pattern-repair-kicker",
-            ui(locale, SuggestedPattern),
-          ),
-          @html.span(class="search-pattern-repair-caption", validation),
-        ]),
-        @html.pre(class="search-pattern-repair-candidate", candidate),
-        if page.pattern_repair_message is Some(message) {
-          @html.div(class="search-pattern-repair-message", message)
-        } else {
-          @html.nothing
-        },
-        if failed {
-          @html.div(
-            class="search-pattern-repair-message",
-            ui(locale, RequiresValidation),
-          )
-        } else {
-          @html.nothing
-        },
-        @html.div(class="search-pattern-repair-actions", [
-          @html.button(
-            class="search-pattern-repair-accept",
-            attrs=@html.Attrs::build().disabled(failed),
-            on_click=emit(AcceptPatternRepair),
-            ui(locale, UsePattern),
-          ),
-          @html.button(
-            class="search-pattern-repair-discard",
-            on_click=emit(RejectPatternRepair),
-            ui(locale, DiscardLabel),
-          ),
-        ]),
-      ],
-    )
-  } else if page.pattern_repair_message is Some(message) {
-    @html.div(
-      class=if page.pattern_repair_phase is PatternRepairFailed {
-        "search-empty error"
-      } else {
-        "search-empty"
-      },
-      attrs=@html.Attrs::build().role("status").aria_live("polite"),
-      message,
-    )
+  } else if page.pattern_repair_phase
+    is (PatternRepairInputRequired
+    | PatternRepairUnavailable
+    | PatternRepairTimedOut
+    | PatternRepairValidationFailed
+    | PatternRepairFailed) {
+    @html.div(class="search-pattern-repair-status error", [
+      @html.span(
+        attrs=@html.Attrs::build().role("alert"),
+        pattern_repair_failure_label(page),
+      ),
+      pattern_repair_details(page),
+    ])
   } else {
     @html.nothing
   }
@@ -538,14 +512,7 @@ fn search_message(
                 (code == "invalid_pattern" || code == "search_failed") {
                 @html.button(
                   class="search-fix-pattern-link",
-                  on_click=emit(
-                    OpenPatternRepair(
-                      dynamic_text(
-                        locale,
-                        DRepairDiagnostic(message.to_string()),
-                      ),
-                    ),
-                  ),
+                  on_click=emit(FixPattern),
                   ui(locale, FixPattern),
                 )
               } else {
@@ -982,7 +949,7 @@ fn page_view(
       @html.nothing
     },
     if page.mode is Semantic {
-      pattern_repair_notice(locale~, page, emit)
+      pattern_repair_notice(locale~, page)
     } else {
       @html.nothing
     },

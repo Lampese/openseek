@@ -48,13 +48,7 @@ pub(all) enum Msg {
   ToggleRegex
   ToggleDetails
   FixPattern
-  OpenPatternRepair(String)
-  PatternRepairInstructionChanged(String)
-  SubmitPatternRepair
-  PatternRepairPreview(root~ : String, generation~ : Int, candidate_pattern~ : String, validation_status~ : String, message~ : String)
-  PatternRepairFailed(root~ : String, generation~ : Int, candidate_pattern~ : String, validation_status~ : String, message~ : String)
-  AcceptPatternRepair
-  RejectPatternRepair
+  PatternRepairFinished(root~ : String, generation~ : Int, reply~ : @protocol.PatternRepairReply?)
   IncludeChanged(String)
   ExcludeChanged(String)
   PatternChanged(Int, String)

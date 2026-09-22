@@ -120,3 +120,66 @@ for (const mode of ['Text', 'Code']) {
     expect(app.pageErrors).toEqual([]);
   });
 }
+
+test('code search repairs a pattern in one click', async ({ page }) => {
+  const app = new DesktopBrowserHarness(page);
+  const replyFor = app.replyFor.bind(app);
+  let repairRequest;
+  let resolveRepairReply;
+  let signalRepairRequest;
+  const repairReply = new Promise(resolve => { resolveRepairReply = resolve; });
+  const repairRequestStarted = new Promise(resolve => { signalRepairRequest = resolve; });
+  app.replyFor = request => {
+    if (request.method === 'pattern.repair') {
+      repairRequest = request.params;
+      signalRepairRequest();
+      return repairReply;
+    }
+    return replyFor(request);
+  };
+  await app.install();
+  await app.goto();
+  await app.openSession();
+  const shortcut = await page.evaluate(() =>
+    navigator.platform.includes('Mac') ? 'Meta+Shift+F' : 'Control+Shift+F');
+  await page.keyboard.press(shortcut);
+  await page.getByRole('button', { name: 'Code search', exact: true }).click();
+  const pattern = page.getByRole('textbox', { name: 'pattern', exact: true }).first();
+  await pattern.fill('inspect($(x:arg');
+  await expect(page.getByRole('button', { name: 'Fix Pattern', exact: true })).toBeVisible();
+  const repair = page.locator('.pattern-repair-button');
+  const repairStatus = page.locator('.search-pattern-repair-status');
+  try {
+    await repair.click();
+    await expect(repair).toBeDisabled();
+    await repairRequestStarted;
+    await expect(repairStatus).toContainText('Thinking');
+    expect(repairRequest).toMatchObject({
+      pattern: 'inspect($(x:arg',
+      instruction: 'Repair this MoonBit pattern with the smallest syntax-only change.',
+    });
+    expect(repairRequest.root).toBeTruthy();
+    expect(Number.isInteger(repairRequest.generation)).toBe(true);
+    expect(app.requests.filter(request => request.method === 'pattern.repair')).toHaveLength(1);
+  } finally {
+    if (repairRequest) {
+      resolveRepairReply({
+        root: repairRequest.root,
+        generation: repairRequest.generation,
+        candidate_pattern: 'inspect($_)',
+        validation_status: 'passed',
+        message: 'Repaired.',
+        trace: [],
+      });
+    }
+  }
+  await expect(pattern).toHaveValue('inspect($_)');
+  await expect(repairStatus).toBeHidden();
+  await expect(repair).toBeEnabled();
+  await expect.poll(() => app.requests
+    .filter(request => request.method === 'fs.search_semantic')
+    .at(-1)?.params?.patterns?.[0]).toBe('inspect($_)');
+  await expect(page.getByRole('textbox', { name: 'Pattern repair instruction' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Use pattern' })).toHaveCount(0);
+  expect(app.pageErrors).toEqual([]);
+});
