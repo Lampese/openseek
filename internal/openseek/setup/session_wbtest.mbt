@@ -145,6 +145,64 @@ async test "new durable session header persists project layout" {
 }
 
 ///|
+async test "new durable session stores AGENTS.md instructions" {
+  @vfs.with_tmpdir(prefix="openseek-cli-session-agents-", root => {
+    let workspace = "\{root}/workspace"
+    @fs.mkdir(workspace, recursive=true)
+    @fs.write_file(
+      "\{workspace}/AGENTS.md",
+      "workspace instructions",
+      create_mode=CreateOrTruncate,
+    )
+    @fs.write_file(
+      "\{workspace}/prompt.md",
+      "system",
+      create_mode=CreateOrTruncate,
+    )
+    let real_workspace = @fs.realpath(workspace)
+    let store = @store.SessionStore("\{real_workspace}/.openseek")
+    let id : @agent_session.SessionId = SessionId("cli-test")
+    let parsed = @testkit.run_matches(
+      argv=[
+        "--dir",
+        workspace,
+        "--session-root",
+        ".openseek",
+        "--session",
+        id.value(),
+        "--system-prompt-file",
+        "prompt.md",
+        "write",
+        "MoonBit",
+      ],
+      env={
+        "DEEPSEEK": "test-key",
+        "OPENSEEK_GLOBAL_SKILLS_DIR": "\{workspace}/no-global-skills",
+      },
+    )
+    let created = load_or_new_session(
+      store,
+      id,
+      parsed,
+      Deepseek(V4Pro),
+      workspace_root=real_workspace,
+    )
+    let _ = store.append(created, User(UserMessage("hello")))
+    let loaded = store.load(id)
+    assert_true(loaded.system_prompt().contains("workspace instructions"))
+    @fs.remove("\{workspace}/AGENTS.md")
+    let resumed = load_or_new_session(
+      store,
+      id,
+      parsed,
+      Deepseek(V4Pro),
+      workspace_root=real_workspace,
+    )
+    assert_true(resumed.system_prompt().contains("workspace instructions"))
+  })
+}
+
+///|
 async test "load_or_new_session recovers empty interrupted session directory" {
   @vfs.with_tmpdir(prefix="openseek-cli-session-empty-dir-", root => {
     let id : @agent_session.SessionId = SessionId("cli-test")
