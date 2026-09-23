@@ -39,6 +39,7 @@ import {
   "openseek_desktop/frontend/icons",
   "openseek_desktop/frontend/interop",
   "openseek_desktop/frontend/resource",
+  "moonbitlang/openseek/workspace_file_ref",
 }
 
 supported_targets = "js"

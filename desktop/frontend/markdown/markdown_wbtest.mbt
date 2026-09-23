@@ -72,6 +72,26 @@ test "markdown survives streaming-truncated input" {
 }
 
 ///|
+test "workspace file fences become cards only after the fence closes" {
+  inspect(
+    markdown_nodes(
+      "intro\n\n```openseek-file\nreports/matrix.xlsx\n```\n\noutro",
+    ).length(),
+    content="3",
+  )
+  inspect(
+    markdown_nodes("```openseek-file\nreports/matrix.xlsx").length(),
+    content="1",
+  )
+  // Invalid references stay ordinary code so a model cannot make the
+  // renderer hide a path that does not satisfy the portable-reference rules.
+  inspect(
+    markdown_nodes("```openseek-file\n../matrix.xlsx\n```").length(),
+    content="1",
+  )
+}
+
+///|
 test "moonbit-family fences keep their block shape" {
   // The fence languages that route through the shared MoonBit tokenizer
   // (`moonbit` itself, plus the editor markdown pipeline's `mbt`/`mbtx`

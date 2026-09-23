@@ -3265,6 +3265,7 @@ fn tree_row(
         @html.nothing
       },
     ),
+    tree_entry_icon(entry, expanded),
     @html.span(class="tree-name", entry.name),
     // Decorative guides never intercept clicks or change the label's slot.
     @html.span(
@@ -3335,6 +3336,33 @@ fn tree_row(
       },
     ]),
     children,
+  )
+}
+
+///|
+/// Keep the workspace tree's entry slot aligned with the compact file cards:
+/// folders use the existing sidebar folder glyph, while files use the shared
+/// type-specific 16px path without a surrounding badge.
+fn tree_entry_icon(entry : FileEntry, expanded : Bool) -> @html.Html {
+  let icon = if entry.is_dir {
+    @icons.icon(
+      if expanded {
+        @icons.icon_folder_opened
+      } else {
+        @icons.icon_folder
+      },
+    )
+  } else {
+    @icons.codicon(
+      @workspace_file_ref.file_icon_path(
+        @workspace_file_ref.file_kind(entry.name),
+      ),
+    )
+  }
+  @html.span(
+    class="tree-entry-icon",
+    attrs=@html.Attrs::build().aria_hidden("true"),
+    [icon],
   )
 }
 

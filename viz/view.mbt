@@ -1009,7 +1009,7 @@ fn assistant_card(
       ]
     },
     ..if !message.content().is_blank() {
-      [text_block(message.content())]
+      workspace_file_content(message.content())
     },
     ..if !calls.is_empty() {
       [
@@ -2418,17 +2418,125 @@ fn model_failed_call_ids(
 
 ///|
 /// Renders the provider's ordered content without treating a file ID as a URL.
-fn model_content_view(content : @deepseek.Content) -> Array[@html.Html] {
-  content
-  .iter()
-  .filter_map(part => {
+/// Assistant text can additionally project `openseek-file` fences into static
+/// cards; user, system, and tool content keep the raw viewer presentation.
+fn model_content_view(
+  content : @deepseek.Content,
+  render_workspace_files? : Bool = false,
+) -> Array[@html.Html] {
+  let out : Array[@html.Html] = []
+  for part in content.iter() {
     match part {
-      Text(text) => if text.is_blank() { None } else { Some(text_block(text)) }
-      File(file_id~) => Some(text_block("Image file: \{file_id}"))
-      ImageUrl(_) => Some(text_block("[Image]"))
+      Text(text) =>
+        if !text.is_blank() {
+          if render_workspace_files {
+            out.append(workspace_file_content(text))
+          } else {
+            out.push(text_block(text))
+          }
+        }
+      File(file_id~) => out.push(text_block("Image file: \{file_id}"))
+      ImageUrl(_) => out.push(text_block("[Image]"))
     }
-  })
-  .collect()
+  }
+  out
+}
+
+///|
+/// Project assistant text into ordinary preformatted pieces and static file
+/// cards. The source remains in the durable JSONL; this function only changes
+/// the visual projection used by the standalone viewer.
+fn workspace_file_content(content : String) -> Array[@html.Html] {
+  let out : Array[@html.Html] = []
+  for part in @workspace_file_ref.markdown_parts(content) {
+    match part {
+      Text(text) => if !text.is_blank() { out.push(text_block(text)) }
+      File(reference) => out.push(workspace_file_card(reference))
+    }
+  }
+  if out.is_empty() {
+    [text_block(content)]
+  } else {
+    out
+  }
+}
+
+///|
+/// A standalone export has no desktop host to open a path through. Keep this
+/// card inert and show the reference without embedding or fetching its bytes.
+fn workspace_file_card(
+  reference : @workspace_file_ref.WorkspaceFileRef,
+) -> @html.Html {
+  let kind_class = workspace_file_kind_class(reference.kind)
+  @html.div(
+    class="workspace-file-card \{kind_class} workspace-file-card-static",
+    attrs=@html.Attrs::build().aria_label("Workspace file: \{reference.path}"),
+    [
+      @html.span(
+        class="workspace-file-glyph \{kind_class}",
+        attrs=@html.Attrs::build().aria_hidden("true"),
+        [workspace_file_icon(reference.kind)],
+      ),
+      @html.span(class="workspace-file-copy", [
+        @html.span(class="workspace-file-name", reference.name),
+        @html.span(
+          class="workspace-file-kind",
+          workspace_file_kind_label(reference.kind),
+        ),
+      ]),
+    ],
+  )
+}
+
+///|
+fn workspace_file_icon(kind : @workspace_file_ref.FileKind) -> @html.Html {
+  @svg.svg(
+    width=22,
+    height=22,
+    view_box="0 0 16 16",
+    attrs=@svg.Attrs::build().fill("currentColor"),
+    [@svg.path(d=@workspace_file_ref.file_icon_path(kind))],
+  )
+}
+
+///|
+fn workspace_file_kind_class(kind : @workspace_file_ref.FileKind) -> String {
+  match kind {
+    Spreadsheet => "spreadsheet"
+    Document => "document"
+    Presentation => "presentation"
+    Image => "image"
+    Pdf => "pdf"
+    Archive => "archive"
+    Code => "code"
+    Text => "text"
+    Generic => "generic"
+  }
+}
+
+///|
+fn workspace_file_kind_label(kind : @workspace_file_ref.FileKind) -> String {
+  match kind {
+    Spreadsheet => "Spreadsheet"
+    Document => "Document"
+    Presentation => "Presentation"
+    Image => "Image"
+    Pdf => "PDF document"
+    Archive => "Archive"
+    Code => "Code file"
+    Text => "Text file"
+    Generic => "File"
+  }
+}
+
+///|
+test "viz projects workspace file fences without accepting unsafe paths" {
+  let blocks = workspace_file_content(
+    "intro\n\n```openseek-file\nreports/matrix.xlsx\n```\n\noutro",
+  )
+  assert_eq(blocks.length(), 3)
+  let invalid = workspace_file_content("```openseek-file\n../matrix.xlsx\n```")
+  assert_eq(invalid.length(), 1)
 }
 
 ///|
@@ -2740,7 +2848,10 @@ fn model_card(
         ],
       ]
     },
-    ..model_content_view(message.content),
+    ..model_content_view(
+      message.content,
+      render_workspace_files=message.role is Assistant,
+    ),
     ..if !message.tool_calls.is_empty() {
       [
         @html.div(class="tool-calls") <| [

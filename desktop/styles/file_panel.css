@@ -2066,6 +2066,17 @@ button.git-history-file.selected {
 .tree-twistie svg { width: 16px; height: 16px; transform: rotate(-90deg); }
 .tree-twistie.expanded svg { transform: rotate(0deg); }
 
+.tree-entry-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-secondary);
+}
+.tree-entry-icon svg { width: 16px; height: 16px; }
+
 .tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
