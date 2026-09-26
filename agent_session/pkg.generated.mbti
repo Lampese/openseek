@@ -26,6 +26,8 @@ pub const GoalReminderPrefix : String = "[goal reminder]"
 
 pub const GoalUnblockedNotice : String = "[goal unblocked]"
 
+pub const MaxStepsExhaustedMessage : String = "max steps exhausted"
+
 pub const PlanReminderPrefix : String = "[plan reminder]"
 
 pub fn goal_baseline_notice(sha~ : String, dirty~ : Bool) -> String
@@ -45,6 +47,8 @@ pub fn AssistantMessage::content(Self) -> String
 pub fn AssistantMessage::is_replay(Self) -> Bool
 pub fn AssistantMessage::reasoning_content(Self) -> String?
 pub fn AssistantMessage::tool_calls(Self) -> Array[@deepseek.ToolCall]
+pub fn AssistantMessage::usage(Self) -> TokenUsage?
+pub fn AssistantMessage::with_usage(Self, @deepseek.Usage) -> Self
 
 pub(all) struct GoalBaseline {
   sha : String
@@ -73,6 +77,7 @@ pub fn Session::current_goal_baseline(Self) -> GoalBaseline?
 pub fn Session::events(Self) -> @vector.Vector[SessionEvent]
 pub fn Session::id(Self) -> SessionId
 pub fn Session::last_sequence(Self) -> Int
+pub fn Session::last_terminal(Self) -> TurnTerminal?
 pub fn Session::summary_item(Self, content~ : String, from_sequence~ : Int, to_sequence~ : Int) -> SessionItem raise
 pub fn Session::system_prompt(Self) -> String
 pub impl ToJson for Session
@@ -112,6 +117,14 @@ pub fn StandingGoal::blocked(Self) -> Bool
 pub fn StandingGoal::set_sequence(Self) -> Int
 pub fn StandingGoal::text(Self) -> String
 
+pub(all) struct TokenUsage {
+  prompt_tokens : Int
+  completion_tokens : Int
+  total_tokens : Int
+  prompt_cache_hit_tokens : Int
+  prompt_cache_miss_tokens : Int
+} derive(Eq, ToJson, @debug.Debug, @json.FromJson)
+
 type ToolResult derive(Eq, ToJson, @debug.Debug, @json.FromJson)
 pub fn ToolResult::ToolResult(tool_call_id~ : String, tool_name~ : String, content~ : Array[@openseek_protocol.ContentPart], is_error? : Bool, brief? : String, data? : Json) -> Self
 pub fn ToolResult::brief(Self) -> String?
@@ -123,8 +136,10 @@ pub fn ToolResult::tool_name(Self) -> String
 
 pub(all) enum TurnTerminal {
   Finished(String)
+  ContextYield(String)
   Aborted(String)
   Interrupted(String)
+  MaxStepsExhausted
   Failed(String)
 } derive(Eq, @debug.Debug)
 pub impl @json.FromJson for TurnTerminal

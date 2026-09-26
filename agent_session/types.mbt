@@ -1,19 +1,16 @@
 ///|
-/// The answer prefix every context-yield terminal carries. A turn that ends
-/// at the model's context ceiling is persisted as `Terminal(Finished(...))`
-/// — a distinct terminal kind would break old readers (the decoder is
-/// strict) and continuation machinery chains finished turns — so this
-/// prefix is how durable-log consumers distinguish a ceiling yield from
-/// task success. Lives here, next to the session model, because it is a
-/// raw-log contract: analyzers, fleet classification, and replay tooling
-/// all match on it.
-///
-/// Known, accepted limitation: a real answer that happens to START with
-/// this text (e.g. a task asking the model to echo it) classifies as a
-/// yield. The collision fails toward NOT-success — never false success —
-/// and the durable format has no terminal-metadata side channel, so a
-/// spoof-proof sentinel is not worth the format change.
+/// The text every context-yield notice starts with. New logs record a yield
+/// as its own `TurnTerminal::ContextYield`; older logs saved it as a
+/// `finished` terminal whose answer starts with this prefix, and the decoder
+/// still reads those as `ContextYield`.
 pub const ContextYieldAnswerPrefix : String = "[context ceiling]"
+
+///|
+/// The status text for a `TurnTerminal::MaxStepsExhausted`, wherever a
+/// terminal is shown as a status and message. Older logs saved step
+/// exhaustion as a `failed` terminal with exactly this message, and the
+/// decoder still reads those as `MaxStepsExhausted`.
+pub const MaxStepsExhaustedMessage : String = "max steps exhausted"
 
 ///|
 /// Stable identifier for one OpenSeek conversation.
@@ -165,7 +162,34 @@ struct AssistantMessage {
   // True only when a checkpoint re-appends an answer that an earlier durable
   // provider step already owns. Absent on ordinary messages.
   is_replay : Bool?
+  // The provider response's token usage, on the first durable record of that
+  // response only. Absent on replays and on logs written before it existed.
+  usage : TokenUsage?
 } derive(Eq, Debug, ToJson, FromJson)
+
+///|
+/// Token counts for one provider response, as its durable `AssistantMessage`
+/// records them. The fields and JSON match the `usage` event, so a reader of
+/// the session log can account for a run without its event stream: summed
+/// over a turn's messages, they equal the turn's `usage` events.
+pub(all) struct TokenUsage {
+  prompt_tokens : Int
+  completion_tokens : Int
+  total_tokens : Int
+  prompt_cache_hit_tokens : Int
+  prompt_cache_miss_tokens : Int
+} derive(Eq, Debug, ToJson, FromJson)
+
+///|
+fn TokenUsage::from_deepseek(usage : @deepseek.Usage) -> TokenUsage {
+  {
+    prompt_tokens: usage.prompt_tokens,
+    completion_tokens: usage.completion_tokens,
+    total_tokens: usage.total_tokens,
+    prompt_cache_hit_tokens: usage.prompt_cache_hit_tokens,
+    prompt_cache_miss_tokens: usage.prompt_cache_miss_tokens,
+  }
+}
 
 ///|
 /// Build an assistant event payload from model response parts.
@@ -193,7 +217,25 @@ pub fn AssistantMessage::AssistantMessage(
     } else {
       None
     },
+    usage: None,
   }
+}
+
+///|
+/// The same message, recording the token usage of the provider response it
+/// is the first durable record of.
+pub fn AssistantMessage::with_usage(
+  self : AssistantMessage,
+  usage : @deepseek.Usage,
+) -> AssistantMessage {
+  { ..self, usage: Some(TokenUsage::from_deepseek(usage)), }
+}
+
+///|
+/// The provider response's token usage, when this message is its first
+/// durable record. `None` on replays and on messages from older logs.
+pub fn AssistantMessage::usage(self : AssistantMessage) -> TokenUsage? {
+  self.usage
 }
 
 ///|
@@ -361,15 +403,17 @@ pub fn SessionSummary::to_sequence(self : SessionSummary) -> Int {
 ///|
 /// How an agent turn ended.
 ///
-/// `Finished` carries the final assistant answer. `Aborted` carries the
-/// agent's own abort reason. `Interrupted` carries an external cancellation
-/// reason. `Failed` carries the failure message. In a complete turn, the last
-/// event is exactly one `Terminal`; if a session ends without one, replay is
-/// seeing a turn that was cut off mid-flight.
+/// Only `Finished` means the task ran to completion. In a complete turn, the
+/// last event is exactly one `Terminal`; if a session ends without one,
+/// replay is seeing a turn that was cut off mid-flight.
 pub(all) enum TurnTerminal {
   /// The agent completed normally and produced a final assistant answer.
   /// Non-blank text projects as an assistant message for later turns.
   Finished(String)
+  /// The turn reached the model's context window and was checkpointed; the
+  /// work is not necessarily complete, and a new turn continues it. Carries
+  /// the yield notice, which never projects to the model.
+  ContextYield(String)
   /// The agent intentionally stopped before normal completion, usually because
   /// a control tool requested abort. The reason projects as an assistant status
   /// message.
@@ -377,6 +421,9 @@ pub(all) enum TurnTerminal {
   /// The turn was externally cancelled, for example by task cancellation or
   /// user interruption. The reason projects as an assistant status message.
   Interrupted(String)
+  /// The step budget ran out before the model finished. Projects as the
+  /// same assistant status message as a `Failed("max steps exhausted")`.
+  MaxStepsExhausted
   /// The turn ended because an unexpected error escaped the agent loop. The
   /// failure message projects as an assistant status message.
   Failed(String)
@@ -558,6 +605,23 @@ pub fn Session::last_sequence(self : Session) -> Int {
 }
 
 ///|
+/// How the session's latest turn ended: its last `Terminal`, unless a later
+/// `User` item opened a turn that has not been sealed yet. `None` when the
+/// latest turn has no terminal (it was cut off, or is still running), so a
+/// cut-off turn never reports the previous turn's ending.
+pub fn Session::last_terminal(self : Session) -> TurnTerminal? {
+  let events = self.events
+  for i in (events.length() - 1)>=..0 {
+    match events[i].item {
+      Terminal(terminal) => return Some(terminal)
+      User(_) => return None
+      _ => ()
+    }
+  }
+  None
+}
+
+///|
 fn Session::next_sequence(self : Session) -> Int {
   self.last_sequence() + 1
 }
@@ -674,6 +738,26 @@ pub extend AssistantMessage with Eq::{equal, not_equal}
 #doc(hidden)
 #deprecated
 pub extend AssistantMessage with ToJson::{to_json}
+
+///|
+#doc(hidden)
+#deprecated
+pub extend TokenUsage with Debug::{to_repr}
+
+///|
+#doc(hidden)
+#deprecated
+pub extend TokenUsage with FromJson::{from_json}
+
+///|
+#doc(hidden)
+#deprecated
+pub extend TokenUsage with Eq::{equal, not_equal}
+
+///|
+#doc(hidden)
+#deprecated
+pub extend TokenUsage with ToJson::{to_json}
 
 ///|
 #doc(hidden)

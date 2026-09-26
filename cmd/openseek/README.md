@@ -17,7 +17,7 @@ process-level error handling. Command parsing, handlers, and shared setup live u
 [`internal/openseek`](../../internal/openseek/README.md).
 
 ```
-openseek run [options] TASK    run one task headlessly; JSONL events on stdout
+openseek run [options] TASK    run one task headlessly; answer on stdout, progress on stderr
 openseek serve                 JSONL command server (stdin: prompt/steer/cancel/compact)
 openseek review [--base REF]   read-only code review of REF...HEAD → one JSON report
 openseek mcp                   list configured MCP servers and their tools
@@ -49,6 +49,11 @@ be supplied with
 window instead of a step count. `--api-url` can also be supplied
 with `OPENSEEK_API_URL`; when omitted, OpenSeek uses the official endpoint for
 the model's provider.
+The run exits non-zero unless its turn completes: running out of steps,
+stopping at the model's context window, an agent abort, and a failure each end
+with `error: run did not complete: …` on stderr, after the last JSONL event. A
+fleet run (`--concurrency`) exits non-zero unless at least one attempt
+completes.
 `--dir` defaults to `.` and becomes the workspace root for relative prompt
 files, sessions, workspace skills, and agent tools. If the directory itself is
 missing but its parent exists, OpenSeek creates that final component and logs a
@@ -71,8 +76,8 @@ The standalone `openseek review --base REF` command still runs the review
 engine directly, without a workflow.
 
 Every run records a durable session: without `--session`, a generated
-`cli-YYYYMMDD-HHMMSS-mmm` id is used and announced by a `session_started` event
-on stdout, so the conversation is reviewable afterwards with `openseek sessions
+`cli-YYYYMMDD-HHMMSS-mmm` id is used and announced on a `session` line on
+stderr, so the conversation is reviewable afterwards with `openseek sessions
 list` / `openseek sessions show <id>` (or the viz server) and resumable with
 `--session <id>`. Pass `--no-session` to run ephemerally; combining it with
 `--session` is rejected.

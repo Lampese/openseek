@@ -122,6 +122,10 @@ async fn run_case(
   let snapshot_ready = @cond_var.Cond()
   let mut requests = 0
   let events : Array[Json] = []
+  // `run` prints text for a person, not the JSONL event stream `serve` writes:
+  // the answer on stdout, its progress on stderr.
+  let text_lines : Array[String] = []
+  let progress_lines : Array[String] = []
   let environment = { "DEEPSEEK": "test", "OPENSEEK_RETRY_ATTEMPTS": "1" }
   @async.with_timeout(120000, () => {
     @async.with_task_group(group => {
@@ -161,6 +165,7 @@ async fn run_case(
                     // Exercise reading with the checked-in workflow directly.
                     "filename": root + "/share/workflow/read.mbtx",
                     "args": ["sample.mbt:2:3", "note.txt"],
+                    "description": "Read the sample files",
                   })
                 2 => {
                   let outputs = array_field(request, "messages").filter_map(message => {
@@ -309,6 +314,10 @@ async fn run_case(
         writer.close()
       }
       while reader.read_until("\n") is Some(line) {
+        if !serve {
+          text_lines.push(line)
+          continue
+        }
         if !line.has_prefix("{") {
           continue
         }
@@ -402,6 +411,11 @@ async fn run_case(
       }
       let code = process.wait()
       let diagnostics = stderr.wait()
+      if !serve {
+        for line in diagnostics.split("\n") {
+          progress_lines.push(line.to_owned())
+        }
+      }
       guard code == 0 else {
         fail(
           "CLI exit \{code}: \{diagnostics}\n\{events.to_json().stringify()}",
@@ -458,22 +472,25 @@ async fn run_case(
       }
     })
   })
-  let finishes = events.filter(e => has_event(e, "agent_finished"))
-  assert_eq(finishes.length(), 1)
-  assert_eq(
-    string_field(finishes[0], "answer"),
+  let answer = if read {
+    "checked the read workflow"
+  } else {
+    "checked the background result"
+  }
+  if !serve {
+    // One finished turn: stdout is its answer alone.
+    assert_eq(text_lines.filter(line => line.trim() != ""), [answer])
+    assert_true(!progress_lines.any(line => line.has_prefix("tool error: ")))
     if read {
-      "checked the read workflow"
-    } else {
-      "checked the background result"
-    },
-  )
-  if read {
-    let results = events.filter(e => {
-      e is { "event": "tool_result", "tool_name": "mbtx", .. }
-    })
-    assert_eq(results.length(), 1)
-    assert_eq(field(results[0], "is_error"), false)
+      // The call's description is its progress line.
+      assert_eq(progress_lines.filter(line => line.has_prefix("· ")), [
+        "· Read the sample files",
+      ])
+    }
+  } else {
+    let finishes = events.filter(e => has_event(e, "agent_finished"))
+    assert_eq(finishes.length(), 1)
+    assert_eq(string_field(finishes[0], "answer"), answer)
   }
   println(
     if read {
