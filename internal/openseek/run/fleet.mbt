@@ -1,8 +1,9 @@
 ///|
 /// "Best-of-N" fleet mode (`--concurrency N`, any explicit N including 1): run
 /// the same task in N sibling copies of `--dir` concurrently, each recording
-/// its own durable session, then print a summary. The original `--dir` is
-/// never written to.
+/// its own durable session. The original `--dir` is never written to. Returns
+/// the attempts for `report_fleet`, which the caller runs once the event
+/// output has drained: the summary shares stderr with that drain.
 ///
 /// Naming uses `<base>_run_<i>` (underscores, not a dotted suffix that reads as a
 /// file extension) so the run directories are unambiguous and easy to recognize.
@@ -10,7 +11,7 @@ async fn run_fleet(
   matches : @argparse.Matches,
   concurrency~ : Int,
   approval_policy~ : @execution.ApprovalPolicy,
-) -> Unit {
+) -> FleetResult {
   // Fleet mode owns session creation and is a one-shot batch, so it conflicts
   // with the single-session and no-session modes of `openseek run`.
   guard !(matches is { flags: { "no-session": true, .. }, .. }) else {
@@ -95,16 +96,32 @@ async fn run_fleet(
       )
     }
   })
-  print_fleet_summary(task, outcomes, session_root_value)
-  guard outcomes.any(outcome => outcome is Some(result) && result.ok) else {
-    fail("all \{concurrency} run(s) failed")
+  { task, outcomes, session_root_value, }
+}
+
+///|
+/// A finished fleet, for its summary.
+priv struct FleetResult {
+  task : String
+  outcomes : Array[AttemptOutcome?]
+  session_root_value : String
+}
+
+///|
+/// Print the fleet summary, then fail unless some attempt finished. Run it
+/// only after the event output has drained: both write to stderr, and the
+/// failure would otherwise cancel the drain.
+async fn report_fleet(result : FleetResult) -> Unit {
+  print_fleet_summary(result.task, result.outcomes, result.session_root_value)
+  guard result.outcomes.any(outcome => outcome is Some(attempt) && attempt.ok) else {
+    fail("all \{result.outcomes.length()} run(s) failed")
   }
 }
 
 ///|
 /// Outcome of one fleet attempt, for the summary. `ok` is true only for a
-/// `finished` terminal; everything else (aborted/interrupted/failed/no terminal,
-/// or a thrown error) is a non-success.
+/// completed turn; everything else (a context yield, aborted/interrupted/failed,
+/// no terminal, or a thrown error) is a non-success.
 priv struct AttemptOutcome {
   index : Int
   dir : String
@@ -195,17 +212,18 @@ async fn run_one_attempt(
       workspace_root=run_dir,
       approval?,
     )
-    let (status, detail) = terminal_summary(completed)
+    let terminal = completed.last_terminal()
+    let (status, detail) = terminal_summary(terminal)
     {
       index,
       dir: run_dir,
       session: id.value(),
       status,
       detail,
-      // A context-ceiling yield is durably Finished (replay/chaining) but is
-      // not task success for a one-shot fleet run.
-      ok: status == "finished" &&
-      !detail.has_prefix(@agent_session.ContextYieldAnswerPrefix),
+      // Only a completed turn is task success: a context-ceiling yield also
+      // reads as `finished` in the summary, but its work was checkpointed
+      // mid-flight.
+      ok: terminal is Some(Finished(_)),
     }
   } catch {
     error =>
@@ -223,20 +241,20 @@ async fn run_one_attempt(
 }
 
 ///|
-/// The terminal status and message of a finished run, read from its last
-/// `Terminal` event. `("(no terminal)", "")` when the run recorded none.
-fn terminal_summary(session : @agent_session.Session) -> (String, String) {
-  session
-  .events()
-  .fold(init=("(no terminal)", ""), (out, event) => {
-    match event.item() {
-      Terminal(Finished(answer)) => ("finished", answer)
-      Terminal(Aborted(reason)) => ("aborted", reason)
-      Terminal(Interrupted(reason)) => ("interrupted", reason)
-      Terminal(Failed(message)) => ("failed", message)
-      _ => out
-    }
-  })
+/// The summary status and message for a run's latest terminal.
+/// `("(no terminal)", "")` when its latest turn recorded none.
+fn terminal_summary(
+  terminal : @agent_session.TurnTerminal?,
+) -> (String, String) {
+  match terminal {
+    Some(Finished(answer)) | Some(ContextYield(answer)) => ("finished", answer)
+    Some(Aborted(reason)) => ("aborted", reason)
+    Some(Interrupted(reason)) => ("interrupted", reason)
+    Some(MaxStepsExhausted) =>
+      ("failed", @agent_session.MaxStepsExhaustedMessage)
+    Some(Failed(message)) => ("failed", message)
+    None => ("(no terminal)", "")
+  }
 }
 
 ///|
@@ -362,8 +380,8 @@ fn inspect_hint(session_root_value : String) -> String {
 }
 
 ///|
-/// Print the fleet summary to stderr (stdout stays the JSONL event stream): a
-/// header line plus one row per attempt, and where to view the results.
+/// Print the fleet summary to stderr (stdout holds only the answers): a header
+/// line plus one row per attempt, and where to view the results.
 async fn print_fleet_summary(
   task : String,
   outcomes : Array[AttemptOutcome?],
