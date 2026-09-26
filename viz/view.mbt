@@ -1080,7 +1080,10 @@ fn tool_call_view(
     @html.strong(call.name),
     ..if call_brief_display(briefs.get(call.id), failed.contains(call.id))
       is Some(brief) &&
-      !brief.is_blank() {
+      !brief.is_blank() &&
+      // mbtx briefs a successful call with its description, shown next.
+      !(mbtx_description(call) is Some(description) &&
+      description.trim() == brief) {
       [@html.span(class="tool-call-brief") <| " · \{brief}"]
     },
     ..if mbtx_description(call) is Some(description) {
@@ -1471,9 +1474,12 @@ fn terminal_card(
   step_label~ : String,
 ) -> @html.Html {
   let (kind, message) = match terminal {
-    Finished(answer) => ("finished", answer)
+    // A yield and step exhaustion keep the badges older logs rendered them
+    // with, so a session reads the same whichever build wrote it.
+    Finished(answer) | ContextYield(answer) => ("finished", answer)
     Aborted(reason) => ("aborted", reason)
     Interrupted(reason) => ("interrupted", reason)
+    MaxStepsExhausted => ("failed", @agent_session.MaxStepsExhaustedMessage)
     Failed(message) => ("failed", message)
   }
   let body : Array[@html.Html] = [
@@ -1856,10 +1862,9 @@ fn terminal_projects_model_message(
     // context-yield terminals never reach the model, so they must not
     // consume a model-view label either — one extra label here shifts
     // every later timestamp/step chip after a continued yield.
-    Finished(answer) =>
-      !answer.is_blank() &&
-      !answer.has_prefix(@agent_session.ContextYieldAnswerPrefix)
-    Aborted(_) | Interrupted(_) | Failed(_) => true
+    Finished(answer) => !answer.is_blank()
+    ContextYield(_) => false
+    Aborted(_) | Interrupted(_) | MaxStepsExhausted | Failed(_) => true
   }
 }
 

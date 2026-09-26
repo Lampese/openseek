@@ -9,7 +9,10 @@ export DEEPSEEK=sk-...            # a real provider API key
 moon cram test tests/live
 ```
 
-The agent streams one JSON object per line (JSONL) to stdout. Instead of an
+`openseek run` prints its answer for a person. The machine-readable
+stream is `openseek serve`: fed one `prompt` command on stdin, it runs that
+turn, exits at stdin EOF, and writes one JSON object per line (JSONL) to
+stdout. Instead of an
 external tool such as `jq`, we parse that log with MoonBit itself: the published
 [`moonbitlang/jsonl`](https://mooncakes.io/docs/moonbitlang/jsonl) package reads stdin
 and hands back typed `Json` values, so the assertions are plain MoonBit `is`
@@ -28,6 +31,16 @@ runs may also emit `reasoning_delta` progress before the completed
 may ignore it. Tool-only responses, such as the forced `finish` examples below,
 may skip content events and go straight to tool execution.
 
+## `openseek run` Prints The Answer
+
+`run` prints only the answer on stdout, once the turn finishes. Its progress
+(the session, one line per tool call, and how the run ended) goes to stderr.
+
+```mooncram
+$ openseek.exe run --no-session --model deepseek-flash --max-steps 3 "Call the finish tool immediately with the answer DONE. Use no other tool." 2>/dev/null
+DONE
+```
+
 ## A Real Round Trip That Finishes
 
 This proves two things from the real log: that the request reached DeepSeek and
@@ -37,7 +50,7 @@ invoked the `finish` tool with the requested answer (`finished_with_DONE`). The
 count, and a `=~ re"…"` regex match for the answer text.
 
 ```mooncram
-$ openseek.exe run --model deepseek-flash --max-steps 3 "Call the finish tool immediately with the answer DONE. Use no other tool." 2>/dev/null \
+$ printf '%s\n' '{"command":"prompt","content":"Call the finish tool immediately with the answer DONE. Use no other tool."}' | openseek.exe serve --model deepseek-flash --max-steps 3 2>/dev/null \
 >   | moon run --target native -e 'import {
 >   "moonbitlang/jsonl@0.2.0",
 >   "moonbitlang/async",
@@ -71,7 +84,7 @@ run, and asserting the full set would break every time the engine grows a new
 event kind.
 
 ```mooncram
-$ openseek.exe run --model deepseek-flash --max-steps 3 "Call the finish tool immediately with the answer DONE. Use no other tool." 2>/dev/null \
+$ printf '%s\n' '{"command":"prompt","content":"Call the finish tool immediately with the answer DONE. Use no other tool."}' | openseek.exe serve --model deepseek-flash --max-steps 3 2>/dev/null \
 >   | moon run --target native -e 'import {
 >   "moonbitlang/jsonl@0.2.0",
 >   "moonbitlang/async",
@@ -98,7 +111,7 @@ match the event tag and bind the answer at once, pulling the value straight out
 of the log — here it is exactly what we asked the model to finish with.
 
 ```mooncram
-$ openseek.exe run --model deepseek-flash --max-steps 3 "Call the finish tool immediately with the answer DONE. Use no other tool." 2>/dev/null \
+$ printf '%s\n' '{"command":"prompt","content":"Call the finish tool immediately with the answer DONE. Use no other tool."}' | openseek.exe serve --model deepseek-flash --max-steps 3 2>/dev/null \
 >   | moon run --target native -e 'import {
 >   "moonbitlang/jsonl@0.2.0",
 >   "moonbitlang/async",
@@ -124,7 +137,7 @@ its `tool_name`, and use a regex on its `content` to confirm the snippet really
 ran and its output flowed back.
 
 ```mooncram
-$ openseek.exe run --model deepseek-flash --max-steps 6 "Use the mbtx tool to run a snippet that prints exactly: openseek-cram. Then call finish with the word done." 2>/dev/null \
+$ printf '%s\n' '{"command":"prompt","content":"Use the mbtx tool to run a snippet that prints exactly: openseek-cram. Then call finish with the word done."}' | openseek.exe serve --model deepseek-flash --max-steps 6 2>/dev/null \
 >   | moon run --target native -e 'import {
 >   "moonbitlang/jsonl@0.2.0",
 >   "moonbitlang/async",

@@ -25,6 +25,10 @@ priv struct AgentLoop {
   /// handler uses it to persist a terminal failure/interruption even when the
   /// local loop state is behind the last durable session.
   mut last_session : @agent_session.Session
+  /// The latest provider response's usage, until `append` records it on the
+  /// first non-replay `Assistant` item — so every `usage` event lands in the
+  /// log exactly once, whichever path records the response.
+  mut unrecorded_usage : @deepseek.Usage?
 }
 
 ///|
@@ -60,6 +64,7 @@ fn AgentLoop::AgentLoop(
         definition.is_control(),
     ),
     last_session: session,
+    unrecorded_usage: None,
   }
 }
 
@@ -126,7 +131,7 @@ let ceiling_skip_note : String = "skipped: the turn is yielding at the context c
 ///     │   ├─ salvaged ── (done │ continue │ yield)
 ///     │   └─ close the batch with skip notes ── yield
 ///     └─ tool batch ── handle_tool_calls ── (continue │ done │ budget yield)
-///   nobreak ── Terminal(Failed("max steps exhausted"))
+///   nobreak ── Terminal(MaxStepsExhausted)
 ///   errdefer ── Terminal(Interrupted │ Failed) ── propagate exit
 ///
 /// "seal │ continue": finishing consults the checkpoint policy — a turn that
@@ -282,10 +287,7 @@ async fn AgentLoop::run(
     } nobreak {
       // A goal met in the last step's batch still needs its durable clear.
       let session = self.flush_goal_tombstone(session)
-      let session = self.append(
-        session,
-        Terminal(Failed("max steps exhausted")),
-      )
+      let session = self.append(session, Terminal(MaxStepsExhausted))
       @emit.emit(MaxStepsExhausted)
       session
     }
@@ -326,6 +328,13 @@ async fn AgentLoop::append(
   session : @agent_session.Session,
   item : @agent_session.SessionItem,
 ) -> @agent_session.Session {
+  let item : @agent_session.SessionItem = match (item, self.unrecorded_usage) {
+    (Assistant(message), Some(usage)) if !message.is_replay() => {
+      self.unrecorded_usage = None
+      Assistant(message.with_usage(usage))
+    }
+    _ => item
+  }
   let next = (self.append_item)(session, item)
   self.last_session = next
   next
@@ -512,6 +521,7 @@ async fn AgentLoop::chat(self : Self, step : Int) -> @deepseek.ChatResponse {
       },
     ),
   )
+  self.unrecorded_usage = Some(response.usage)
   response.log_and_reasoning_content()
 }
 
