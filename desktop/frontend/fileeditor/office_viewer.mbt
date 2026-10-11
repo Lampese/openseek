@@ -6,6 +6,16 @@
 const OfficeSurfaceId = "openseek-office-surface"
 
 ///|
+/// The XLSX renderer emits its own body/table rules and workbook style classes.
+/// Scope its generated style blocks before either the view or interaction
+/// commands mount them; application fonts and widgets stay owned by the host.
+fn scope_excel_styles(surface_html : String) -> String {
+  surface_html
+  .replace(old="<style>", new="<style>@scope (#\{OfficeSurfaceId}) {\n")
+  .replace(old="</style>", new="\n}</style>")
+}
+
+///|
 fn empty_office_surface_config(state : State) -> @office_viewer.SurfaceConfig {
   {
     surface_id: OfficeSurfaceId,

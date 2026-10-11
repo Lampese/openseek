@@ -286,7 +286,15 @@ fn render_office_document(
   let bytes = @base64.decode(data_base64) catch {
     _ => return Err("The Office file payload was not valid base64.")
   }
-  @office_viewer.render_document(name, path.path, bytes)
+  let rendered = @office_viewer.render_document(name, path.path, bytes)
+  match rendered {
+    Ok(document) if document.kind == @office_viewer.Excel =>
+      Ok({
+        ..document,
+        surface_html: scope_excel_styles(document.surface_html),
+      })
+    _ => rendered
+  }
 }
 
 ///|

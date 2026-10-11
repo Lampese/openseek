@@ -2,6 +2,32 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
 
+async function applicationStyles(page) {
+  return page.evaluate(() => {
+    let probe = document.getElementById('xlsx-style-probe');
+    if (!probe) {
+      probe = document.createElement('div');
+      probe.id = 'xlsx-style-probe';
+      probe.style.display = 'none';
+      probe.innerHTML = '<h2>Outside heading</h2><table><tbody><tr><td class="s1">Outside cell</td></tr></tbody></table>';
+      document.body.append(probe);
+    }
+    const snapshot = (element) => {
+      const style = getComputedStyle(element);
+      return Object.fromEntries([
+        'font-family', 'font-size', 'font-weight', 'color', 'margin',
+        'padding', 'border', 'border-collapse',
+      ].map(property => [property, style.getPropertyValue(property)]));
+    };
+    return {
+      body: snapshot(document.body),
+      heading: snapshot(probe.querySelector('h2')),
+      table: snapshot(probe.querySelector('table')),
+      cell: snapshot(probe.querySelector('td')),
+    };
+  });
+}
+
 test('the sales demonstration workbook opens both sheets and quotes calculated cells', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const app = new DesktopBrowserHarness(page);
@@ -19,6 +45,7 @@ test('the sales demonstration workbook opens both sheets and quotes calculated c
   await page.getByRole('button', { name: 'Hide sidebar', exact: true }).click();
   await app.openReview({ waitForHistory: false });
   await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  const outsideStyles = await applicationStyles(page);
   await app.openQuickOpen();
   await page.locator('#quick-open-input').fill('季度销售演示.xlsx');
   await page.getByRole('option', { name: /季度销售演示\.xlsx/ }).click();
@@ -28,6 +55,8 @@ test('the sales demonstration workbook opens both sheets and quotes calculated c
   await expect(detail).toBeVisible();
   await expect(summary).toBeHidden();
   await expect(detail.locator('td[data-cell="E11"]')).toHaveText('¥195,855.00');
+  await expect(detail.locator('td[data-cell="A1"]')).toHaveCSS('font-weight', '700');
+  expect(await applicationStyles(page)).toEqual(outsideStyles);
   await expect(page.locator('td[data-formula]')).toHaveCount(20);
   await expect(page.locator('td.formula-pending')).toHaveCount(0);
   await page.getByRole('tab', { name: '季度汇总', exact: true }).click();
@@ -45,6 +74,7 @@ test('the sales demonstration workbook opens both sheets and quotes calculated c
   await page.getByRole('tab', { name: '销售明细', exact: true }).click();
   await expect(detail).toBeVisible();
   await expect(detail.locator('td[data-cell="E5"]')).toHaveText('¥23,880.00');
+  expect(await applicationStyles(page)).toEqual(outsideStyles);
   expect(app.pageErrors).toEqual([]);
 });
 

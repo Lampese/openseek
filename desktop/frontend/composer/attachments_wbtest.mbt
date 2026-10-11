@@ -29,6 +29,11 @@ test "document attachment confirmation blocks send and cancel preserves the draf
   assert_eq(model.active(input).draft.task, "keep this text")
   assert_true(model.active(input).draft.mentions.is_empty())
   assert_false(model.active(input).can_send(input))
+  assert_true(
+    model
+    .active(input)
+    .action_buttons(Msg::test_emit(), Action::test_emit(), input)[0].disabled,
+  )
   let waiting = attachment_step(
     model,
     input,
@@ -41,6 +46,11 @@ test "document attachment confirmation blocks send and cancel preserves the draf
   )
   let blocked = attachment_step(waiting, input, SubmitRequested)
   assert_true(blocked.active(input).pending_submission is None)
+  assert_true(
+    waiting
+    .active(input)
+    .action_buttons(Msg::test_emit(), Action::test_emit(), input)[0].disabled,
+  )
   let cancelled = attachment_step(
     waiting,
     input,
@@ -49,6 +59,56 @@ test "document attachment confirmation blocks send and cancel preserves the draf
   assert_eq(cancelled.active(input).draft, input.draft)
   assert_true(cancelled.active(input).can_send(input))
   assert_true(cancelled.active(input).attachment_requests.is_empty())
+  assert_false(
+    cancelled
+    .active(input)
+    .action_buttons(Msg::test_emit(), Action::test_emit(), input)[0].disabled,
+  )
+}
+
+///|
+test "pending document attachments disable steering while Stop remains available" {
+  let base = Input::fixture("steer after attaching the document")
+  let input = {
+    ..base,
+    presentation: {
+      ..base.presentation,
+      primary_action: Running(
+        steer_available=true,
+        can_stop=true,
+        submit=Steer,
+        queue_available=true,
+      ),
+    },
+  }
+  let model = attachment_reading(input)
+  let request = model.active(input).attachment_requests[0]
+  let actions = model
+    .active(input)
+    .action_buttons(Msg::test_emit(), Action::test_emit(), input)
+  assert_eq(actions.map(action => action.id), ["stop", "send"])
+  assert_false(actions[0].disabled)
+  assert_true(actions[1].disabled)
+  let waiting = attachment_step(
+    model,
+    input,
+    AttachmentPrepared(
+      input.identity,
+      request.root,
+      request.id,
+      Ok(@protocol.AttachmentUploadRequired(name="report.pdf")),
+    ),
+  )
+  let cancelled = attachment_step(
+    waiting,
+    input,
+    AttachmentCancelled(input.identity, request.root, request.id),
+  )
+  assert_false(
+    cancelled
+    .active(input)
+    .action_buttons(Msg::test_emit(), Action::test_emit(), input)[1].disabled,
+  )
 }
 
 ///|
