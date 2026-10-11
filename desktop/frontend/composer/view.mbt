@@ -804,6 +804,7 @@ fn MentionChip::render(
 /// callers cannot construct it or pass rendered fragments through it.
 priv struct View {
   images : @cmd.Emit[@image_input.Event]?
+  allow_images : Bool
   before_inner : Array[@html.Html]
   mentions : Array[@html.Html]
   value : String
@@ -909,8 +910,12 @@ fn View::render(locale? : @i18n.Locale = English, self : View) -> @html.Html {
   let attrs = @html.Attrs::build().data_set("focus-owner", "")
   let attrs = if self.images is Some(emit) {
     attrs
-    .on_paste(event => @image_input.pasted(locale~, event, emit))
-    .on_drop(event => @image_input.dropped(locale~, event, emit))
+    .on_paste(event => {
+      @image_input.pasted(locale~, allow_images=self.allow_images, event, emit)
+    })
+    .on_drop(event => {
+      @image_input.dropped(locale~, allow_images=self.allow_images, event, emit)
+    })
     .on_dragover(event => @image_input.dragged(event))
   } else {
     attrs

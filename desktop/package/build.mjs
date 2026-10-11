@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import { execFileSync, spawnSync } from "node:child_process";
 import { stageResources } from "./resources.mjs";
 import { OfficeFontFiles, resolveOfficeFontSource } from "./office_fonts.mjs";
+import { OfficePdfArchive, stageOfficePdfAssets } from "./office_pdf.mjs";
 
 const Hosts = {
   darwin: {
@@ -54,6 +55,7 @@ const DevelopmentProduct = "SeekMoonDev";
 // exact tarballs avoids installing a package manager or recreating its
 // dependency graph during an application build.
 const WebArchives = {
+  pdfjs: OfficePdfArchive,
   xterm: {
     filename: "xterm-6.1.0-beta.304.tgz",
     url: "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.1.0-beta.304.tgz",
@@ -180,7 +182,7 @@ class Build {
 
   officeFontSource() {
     return resolveOfficeFontSource([
-      join(this.repo, "..", "office-viewer", "public", "fonts"),
+      join(this.repo, ".mooncakes", "Lampese", "office-viewer", "public", "fonts"),
       join(this.desktop, "package/assets/fonts"),
     ]);
   }
@@ -231,6 +233,10 @@ class Build {
         "--external:*.woff2", `--outfile=${join(output, name)}`]);
     }
     await cp(this.officeFontSource(), join(output, "fonts"), { recursive: true });
+    await stageOfficePdfAssets(
+      join(work, "pdfjs"), output,
+      join(this.repo, ".mooncakes", "Lampese", "office-viewer", "public", "pdf-runtime.js"),
+    );
     await cp(join(this.desktop, "frontend/build/xterm-entry.js"), join(work, "xterm-entry.js"));
     await cp(join(this.desktop, "frontend/build/xterm.css"), join(work, "xterm.css"));
     await this.commandRun(esbuildBinary, [join(work, "xterm-entry.js"), "--bundle",
@@ -298,6 +304,8 @@ class Build {
       throw new Error(`generated Office font assets are missing under ${officeFonts}`);
     }
     await cp(officeFonts, join(output, "fonts"), { recursive: true });
+    await cp(join(generated, "pdf-runtime.js"), join(output, "pdf-runtime.js"));
+    await cp(join(generated, "vendor/pdfjs"), join(output, "vendor/pdfjs"), { recursive: true });
     await cp(join(generated, "mermaid"), join(output, "mermaid"), { recursive: true });
   }
 

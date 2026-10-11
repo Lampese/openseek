@@ -231,7 +231,7 @@ pub fn label(mention : MentionRef) -> String {
     }
     SemanticSearchArtifact(artifact) =>
       "Semantic search · \{artifact.pattern_count} patterns · \{artifact.match_count} matches (file)"
-    OfficeSelection(_) => "Office selection"
+    OfficeSelection(materialized~) => office_selection_label(materialized)
     Annotation(file~, start_line~, end_line~, side~, ..) => {
       let suffix = if side is OriginalRevision { " (original)" } else { "" }
       "\{file}:\{start_line}-\{end_line}\{suffix}"

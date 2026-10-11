@@ -10,5 +10,4 @@ members = [
   "./desktop/backend",
   "./desktop/app",
   "./desktop/frontend",
-  "./desktop/vendor/office-viewer",
 ]

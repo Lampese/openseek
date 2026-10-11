@@ -315,7 +315,7 @@ pub fn body_view(
       None => false
     }
   }
-  let office_document = active_office_document(state, ctx)
+  let office_document = active_office_surface(state, ctx)
   let use_office_surface = !use_diff_surface && office_document is Some(_)
   let use_markdown_surface = !use_diff_surface &&
     !use_office_surface &&
@@ -363,7 +363,7 @@ pub fn body_view(
   )
   let office_surface = @office_viewer.render_surface(
     match office_document {
-      Some(document) => office_surface_config(state, document)
+      Some(config) => config
       None => empty_office_surface_config(state)
     },
   )
@@ -444,6 +444,7 @@ pub fn body_view(
     @html.div(class="viewer-stack", [
       viewer_host,
       office_surface,
+      pdf_password_dialog(dispatch, state, ctx),
       markdown_viewer_host,
       mbti_diagram_host,
       package_diagram_host,
@@ -451,6 +452,7 @@ pub fn body_view(
       semantic_review_host,
       viewer_notice(locale~, state, ctx),
       github_review_line_layer(locale~, dispatch, state, ctx),
+      office_selection_preview_view(locale, dispatch, state, ctx),
     ]),
     tree_pane(locale~, dispatch, state, ctx),
   ])
@@ -459,17 +461,19 @@ pub fn body_view(
 ///|
 /// An Office tab owns the same stable surface as the standalone viewer. Keep
 /// history, diffs, Markdown, and code tabs on their existing surfaces; an
-/// Office document is selected only after its package bytes have rendered
-/// successfully into `TabOffice`.
-fn active_office_document(
+/// Office document is selected after its package renders into `TabOffice`;
+/// `TabPdf` owns the asynchronous PDF surface and its loading/error notice.
+fn active_office_surface(
   state : State,
   ctx : Ctx,
-) -> @office_viewer.RenderedDocument? {
+) -> @office_viewer.SurfaceConfig? {
   guard ctx.active_history_diff is None && ctx.active_file is Some(path) else {
     return None
   }
   match state.docs.get(path) {
-    Some({ state: TabOffice(document~, ..), .. }) => Some(document)
+    Some({ state: TabOffice(document~, ..), .. }) =>
+      Some(office_surface_config(state, document))
+    Some({ state: TabPdf(..), .. }) => Some(pdf_surface_config(state, path))
     _ => None
   }
 }
@@ -538,6 +542,12 @@ fn viewer_notice(
                 )
               }
             TabUnavailable(message) => message
+            TabPdf(document~, ..) =>
+              match document.status {
+                PdfLoading => "Loading PDF…"
+                PdfFailed(message) => message
+                PdfReady | PdfPasswordRequired(_) => ""
+              }
             TabLoading | TabLoaded(..) | TabOffice(..) => ""
           }
         None => ""
@@ -1977,15 +1987,18 @@ fn office_viewer_toolbar(
   state : State,
   ctx : Ctx,
 ) -> @html.Html {
-  guard active_office_document(state, ctx) is Some(_) else {
+  guard active_office_surface(state, ctx) is Some(_) else {
     return @html.nothing
   }
-  let zoom_out = if state.office_zoom <= 50 {
+  let pdf = active_pdf_document(state, ctx) is Some(_)
+  let minimum = if pdf { 25 } else { 50 }
+  let maximum = if pdf { 400 } else { 200 }
+  let zoom_out = if state.office_zoom <= minimum {
     @cmd.none
   } else {
     dispatch(OfficeZoomChanged((state.office_zoom - 10).to_string()))
   }
-  let zoom_in = if state.office_zoom >= 200 {
+  let zoom_in = if state.office_zoom >= maximum {
     @cmd.none
   } else {
     dispatch(OfficeZoomChanged((state.office_zoom + 10).to_string()))
@@ -2009,7 +2022,7 @@ fn office_viewer_toolbar(
         type_="button",
         class="office-viewer-control",
         title="Zoom out",
-        disabled=state.office_zoom <= 50,
+        disabled=state.office_zoom <= minimum,
         on_click=zoom_out,
         attrs=@html.Attrs::build().aria_label("Zoom out"),
         "−",
@@ -2019,29 +2032,33 @@ fn office_viewer_toolbar(
         type_="button",
         class="office-viewer-control",
         title="Zoom in",
-        disabled=state.office_zoom >= 200,
+        disabled=state.office_zoom >= maximum,
         on_click=zoom_in,
         attrs=@html.Attrs::build().aria_label("Zoom in"),
         "+",
       ),
-      @html.button(
-        type_="button",
-        class=if state.office_prefer_system_fonts {
-          "office-viewer-control active"
-        } else {
-          "office-viewer-control"
-        },
-        title=if state.office_prefer_system_fonts {
-          "Use bundled Office fonts"
-        } else {
-          "Prefer installed Office fonts"
-        },
-        on_click=dispatch(OfficeSystemFontsToggled),
-        attrs=@html.Attrs::build()
-          .aria_label("Office font source")
-          .aria_pressed(state.office_prefer_system_fonts.to_string()),
-        "Aa",
-      ),
+      if pdf {
+        @html.nothing
+      } else {
+        @html.button(
+          type_="button",
+          class=if state.office_prefer_system_fonts {
+            "office-viewer-control active"
+          } else {
+            "office-viewer-control"
+          },
+          title=if state.office_prefer_system_fonts {
+            "Use bundled Office fonts"
+          } else {
+            "Prefer installed Office fonts"
+          },
+          on_click=dispatch(OfficeSystemFontsToggled),
+          attrs=@html.Attrs::build()
+            .aria_label("Office font source")
+            .aria_pressed(state.office_prefer_system_fonts.to_string()),
+          "Aa",
+        )
+      },
     ],
   )
 }
@@ -2155,7 +2172,8 @@ pub fn breadcrumb_view(
     path_row.push(review_badge(locale~, dispatch, state, ctx))
   }
   path_row.push(review_progress(locale~, dispatch, state, ctx))
-  if active_office_document(state, ctx) is Some(_) {
+  let pdf = active_pdf_document(state, ctx) is Some(_)
+  if !pdf && active_office_surface(state, ctx) is Some(_) {
     path_row.push(office_viewer_toolbar(dispatch, state, ctx))
   }
   if mbti_view_available(state, ctx) {
@@ -2188,6 +2206,19 @@ pub fn breadcrumb_view(
       icon(icon_folder),
     ),
   )
+  if pdf && !review {
+    let children : Array[@html.Html] = [
+      @html.div(class="viewer-breadcrumb-row", path_row),
+      @html.div(class="pdf-command-row", [
+        office_viewer_toolbar(dispatch, state, ctx),
+        pdf_viewer_toolbar(dispatch, state, ctx),
+      ]),
+    ]
+    if state.highlighted is Some(directory) {
+      children.push(breadcrumb_picker(locale~, dispatch, state, ctx, directory))
+    }
+    return @html.div(class="viewer-breadcrumb review-toolbar", children)
+  }
   if review {
     let children : Array[@html.Html] = [
       @html.div(class="viewer-breadcrumb-row", path_row),

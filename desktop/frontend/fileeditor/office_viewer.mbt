@@ -43,12 +43,22 @@ fn show_office_document(
   dispatch : @cmd.Emit[Msg],
   owner : @interop.ConversationKey,
   state : State,
+  path : @common.Uri,
   document : @office_viewer.RenderedDocument,
+  sig : String,
 ) -> @cmd.Cmd {
   let config = office_surface_config(state, document)
   @cmd.batch([
     @office_viewer.interactions_command(config, selection => {
-      dispatch(OfficeSelectionChanged(owner~, selection~))
+      dispatch(
+        OfficeSelectionChanged(
+          owner~,
+          epoch=state.request_epoch,
+          path~,
+          sig~,
+          selection~,
+        ),
+      )
     }),
     @office_viewer.visual_command(config),
   ])
@@ -62,10 +72,13 @@ fn refresh_office_visual(state : State, ctx : Ctx) -> @cmd.Cmd {
   guard ctx.active_history_diff is None && ctx.active_file is Some(path) else {
     return @cmd.none
   }
-  guard state.docs.get(path) is Some({ state: TabOffice(document~, ..), .. }) else {
-    return @cmd.none
+  match state.docs.get(path) {
+    Some({ state: TabOffice(document~, ..), .. }) =>
+      @office_viewer.visual_command(office_surface_config(state, document))
+    Some({ state: TabPdf(..), .. }) =>
+      @office_viewer.visual_command(pdf_surface_config(state, path))
+    _ => @cmd.none
   }
-  @office_viewer.visual_command(office_surface_config(state, document))
 }
 
 ///|

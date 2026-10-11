@@ -1277,7 +1277,7 @@ pub fn State::with_semantic_selection(
 
 ///|
 /// Keep Office selections in Codex's independently owned composer using the
-/// same single-selection rule as the OpenSeek composer.
+/// same explicit-confirmation and accumulation rules as the OpenSeek composer.
 pub fn State::with_office_selection(
   self : State,
   materialized : String?,

@@ -288,9 +288,29 @@ async fn read_file_op(payload : ReadFilePayload) -> ReadFileReply {
     error => raise HostError("failed to read file: \{error}")
   }
   defer source.close()
-  let office_media_type = office_media_type(file.to_string())
-  // Check the size before reading anything: a multi-gigabyte build artifact
-  // must produce the notice, not a host-sized allocation.
+  let office_media_type = match office_media_type(file.to_string()) {
+    Some(media_type) => Some(media_type)
+    None => {
+      // Retain signature-based PDF routing even for a file with no .pdf
+      // suffix. Only the small header is read before the allocation limit.
+      let size = source.size()
+      let header = source.read_exactly_at(
+        if size < 12 {
+          size.to_int()
+        } else {
+          12
+        },
+        position=0,
+      )
+      if @filekind.classify(header) is Pdf {
+        Some("application/pdf")
+      } else {
+        None
+      }
+    }
+  }
+  // Check the size before reading the body so a large build artifact produces
+  // the notice without a host-sized allocation.
   let size_limit = match office_media_type {
     Some(_) => @openpath.MaxOfficeFileBytes
     None => @openpath.MaxEditorFileBytes
@@ -339,8 +359,42 @@ fn office_media_type(path : String) -> String? {
     )
   } else if lower.has_suffix(".xlsx") {
     Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+  } else if lower.has_suffix(".pdf") {
+    Some("application/pdf")
   } else {
     None
+  }
+}
+
+///|
+async test "PDF reads preserve bytes and use the document limit with or without an extension" {
+  let dir = @fs.tmpdir(prefix="openseek-read-pdf-")
+  defer @fs.rmdir(dir, recursive=true)
+  let bytes = @utf8.encode(
+    "%PDF-1.7\n" + "x".repeat(@openpath.MaxEditorFileBytes + 1),
+  )
+  for name in ["report.PDF", "report-without-extension"] {
+    let file = "\{dir}/\{name}"
+    @fs.write_file(file, bytes, create_mode=CreateOrTruncate)
+    let absolute = @pathx.Path(@fs.realpath(file))
+      .to_absolute()
+      .unwrap()
+      .to_uri_path()
+      .unwrap()
+    match read_file_op({ path: absolute, root: None, }) {
+      BinaryContent(data_base64~, media_type~, sig~) => {
+        assert_eq(media_type, "application/pdf")
+        assert_eq(@base64.decode(data_base64), bytes)
+        assert_true(!sig.is_empty())
+      }
+      _ => fail("PDF reads must retain the original binary payload")
+    }
+    @fs.write_file(
+      file,
+      "%PDF-1.7\n" + "x".repeat(@openpath.MaxOfficeFileBytes),
+      create_mode=TruncateExisting,
+    )
+    assert_eq(read_file_op({ path: absolute, root: None, }), Oversized)
   }
 }
 

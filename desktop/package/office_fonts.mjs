@@ -29,7 +29,7 @@ export function resolveOfficeFontSource(candidates, exists = existsSync) {
     OfficeFontFiles.every(name => exists(join(candidate, name))));
   if (!source) {
     throw new Error(
-      "Office viewer fonts are missing; restore the sibling viewer export " +
+      "Office viewer fonts are missing; resolve the Mooncakes dependency " +
       "or desktop/package/assets/fonts.",
     );
   }

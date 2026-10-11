@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { OfficeFontFiles, resolveOfficeFontSource } from "./office_fonts.mjs";
 
-test("Office fonts prefer the sibling viewer and fall back to checked-in assets", () => {
+test("Office fonts prefer the published viewer and fall back to checked-in assets", () => {
   const complete = new Set(OfficeFontFiles.map(name => `/fallback/${name}`));
-  const exists = path => complete.has(path) || path.startsWith("/sibling/");
+  const exists = path => complete.has(path) || path.startsWith("/registry/");
   assert.equal(
-    resolveOfficeFontSource(["/sibling", "/fallback"], exists),
-    "/sibling",
+    resolveOfficeFontSource(["/registry", "/fallback"], exists),
+    "/registry",
   );
   assert.equal(
     resolveOfficeFontSource(["/missing", "/fallback"], exists),

@@ -61,8 +61,11 @@ import {
   "openseek_desktop/frontend/workspace_settings",
   "openseek_desktop/frontend/crash_page",
   "openseek_desktop/frontend/composer",
-  "moonbit-community/office-viewer/viewer" @office_viewer,
 }
+
+import {
+  "Lampese/office-viewer/viewer" @office_viewer,
+} for "wbtest"
 
 supported_targets = "js"
 

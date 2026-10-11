@@ -349,21 +349,26 @@ pub fn Draft::with_semantic_selection(
 }
 
 ///|
-/// Replace the current Office selection while retaining unrelated context
-/// chips. The viewer owns only one active document selection at a time, so a
-/// later drag updates this single mention instead of accumulating stale ranges.
+/// Keep each explicitly accepted Office quotation. Accepting the same payload
+/// again is idempotent; None clears Office quotations without changing others.
 pub fn Draft::with_office_selection(
   self : Draft,
   materialized : String?,
 ) -> Draft {
-  let mentions = self.mentions.filter(mention => {
-    !(mention.ref_ is @mention_context.OfficeSelection(_))
-  })
-  if materialized is Some(materialized) {
-    mentions.push({
-      ref_: @mention_context.OfficeSelection(materialized~),
-      range: None,
-    })
+  let mentions = match materialized {
+    None =>
+      self.mentions.filter(mention => {
+        !(mention.ref_ is @mention_context.OfficeSelection(_))
+      })
+    Some(materialized) => {
+      let ref_ = @mention_context.OfficeSelection(materialized~)
+      if self.mentions.any(mention => mention.ref_ == ref_) {
+        return self
+      }
+      let mentions = self.mentions.copy()
+      mentions.push({ ref_, range: None, })
+      mentions
+    }
   }
   { ..self, mentions, }
 }

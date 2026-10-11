@@ -251,8 +251,8 @@ fn FileContent::from_reply(reply : @protocol.ReadFileReply) -> FileContent {
   match reply {
     @protocol.Binary => Binary
     @protocol.Oversized => Oversized
-    // Office packages are the one binary class this panel can render. Raster
-    // images continue to use the transcript-only BinaryContent path.
+    // Office packages and PDFs render in this panel. Raster images continue
+    // to use the transcript-only BinaryContent path.
     @protocol.BinaryContent(data_base64~, media_type~, sig~) =>
       if is_office_media_type(media_type) {
         Office(data_base64~, media_type~, sig~)
@@ -270,7 +270,8 @@ fn is_office_media_type(media_type : String) -> Bool {
   media_type ==
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
   media_type ==
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+  media_type == "application/pdf"
 }
 
 ///|

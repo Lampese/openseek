@@ -498,6 +498,15 @@ async fn State::materialized_turn_inputs(
   channel : @interop.ChannelId,
   cwd : String?,
 ) -> Array[Json] {
+  if cwd is Some(workspace) && self.active_thread() is Some(thread) {
+    @composer.stage_attachments(
+      channel,
+      thread.id,
+      workspace,
+      thread.project_root.unwrap_or(thread.cwd.unwrap_or(workspace)),
+      self.mentions.map(mention => mention.ref_),
+    )
+  }
   let mentions : Array[@composer.Mention] = []
   for mention in self.mentions {
     if mention.ref_ is @mention_context.SemanticSearch(reference) &&

@@ -107,6 +107,16 @@ export class DesktopBrowserHarness {
     // `searchFiles` or a directory listing and exercise the actual reader and
     // Office surface instead of a synthetic HTML mock.
     this.officeFiles = {
+      'docs/report.pdf': {
+        data_base64: officeFixture('two-pages.pdf'),
+        media_type: 'application/pdf',
+        sig: 'office:pdf',
+      },
+      'docs/encrypted.pdf': {
+        data_base64: officeFixture('encrypted.pdf'),
+        media_type: 'application/pdf',
+        sig: 'office:encrypted-pdf',
+      },
       'docs/report.docx': {
         data_base64: officeFixture('single-paragraph.docx'),
         media_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -861,6 +871,29 @@ export class DesktopBrowserHarness {
         return { entries: this.directoryEntries[request.params?.path] || [] };
       case 'fs.read_file':
         return this.readWorkingFile(request.params || {});
+      case 'fs.prepare_attachment': {
+        const source = request.params.source;
+        if (source.kind === 'path' && source.path.startsWith('/workspace/')) {
+          return { kind: 'reference', path: source.path.slice('/workspace/'.length) };
+        }
+        return { kind: 'upload_required', name: source.name || source.path.split('/').at(-1) };
+      }
+      case 'fs.import_attachment': {
+        const source = request.params.source;
+        const name = source.name || source.path.split('/').at(-1);
+        const id = this.requests.filter(r => r.method === 'fs.import_attachment').length;
+        const path = `.openseek/attachments/upload-${id}/${name}`;
+        const extension = name.split('.').at(-1).toLowerCase();
+        const media_type = {
+          pdf: 'application/pdf',
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }[extension];
+        this.officeFiles[path] = { data_base64: source.data_base64, media_type, sig: `upload:${id}` };
+        return { path };
+      }
+      case 'fs.stage_attachments':
+        return {};
       case 'fs.create_unnamed_workspace':
         return {
           path: '/Users/test/Library/Application Support/SeekMoon/workspaces/Unnamed workspace',

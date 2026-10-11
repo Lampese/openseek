@@ -60,7 +60,7 @@ fn Doc::diff_content(self : Doc) -> (String, String)? {
   }
   let modified = match self.state {
     TabLoaded(content~, ..) => content
-    TabOffice(..) => return None
+    TabOffice(..) | TabPdf(..) => return None
     TabDeleted => ""
     TabLoading
     | TabBinary
@@ -245,10 +245,15 @@ fn show_tab_impl(
         show
       }
     }
-    TabOffice(document~, ..) =>
+    TabOffice(document~, sig~) =>
       @cmd.batch([
         clear_document(),
-        show_office_document(dispatch, ctx.owner, state, document),
+        show_office_document(dispatch, ctx.owner, state, path, document, sig),
+      ])
+    TabPdf(document~, sig~) =>
+      @cmd.batch([
+        clear_document(),
+        show_pdf_document(dispatch, state, ctx, path, document, sig),
       ])
     // A deleted change, or a transiently unreadable working file, can still
     // have a useful textual HEAD side. Show that baseline under explicit
@@ -354,6 +359,7 @@ fn show_activated_tab(
   doc : Doc,
   generation : Int,
 ) -> (@cmd.Cmd, Doc, Int) {
+  let doc = doc.prepare_pdf_runtime(state.pdf_generation + 1)
   guard doc.stale &&
     !(doc.state is TabLoading) &&
     doc.review is Some(review) &&
@@ -501,6 +507,7 @@ pub fn open_document(
       doc,
       state.review_generation,
     )
+    let state = state.record_pdf_generation(doc)
     let docs = state.docs.copy()
     docs[path] = doc
     // Gaining the first active tab reveals the breadcrumb row, and the
@@ -640,6 +647,7 @@ pub fn open_changed_document(
       doc,
       state.review_generation,
     )
+    let state = state.record_pdf_generation(next_doc)
     let docs = state.docs.copy()
     docs[path] = next_doc
     let cmds = [show, delayed_diff_loading(dispatch, ctx.owner, path, next_doc)]
@@ -1154,6 +1162,7 @@ pub fn activate(
     doc,
     state.review_generation,
   )
+  let state = state.record_pdf_generation(doc)
   let docs = state.docs.copy()
   docs[path] = doc
   // The narrow drill-down closing the tree reveals a viewer that was last
@@ -1236,6 +1245,7 @@ pub fn close_document(
           doc,
           state.review_generation,
         )
+        let state = state.record_pdf_generation(doc)
         docs[next_path] = doc
         (
           @cmd.batch([show, forget_view_state(path)]),
@@ -2105,6 +2115,10 @@ pub fn sync(
         // reconciles from `PlacementUnknown` rather than the outgoing value.
         placement: PlacementUnknown.reconcile(ctx.placement),
         tree_open: state.tree_open,
+        office_zoom: state.office_zoom,
+        office_query: state.office_query,
+        office_prefer_system_fonts: state.office_prefer_system_fonts,
+        pdf_generation: state.pdf_generation,
         explorer_mode: state.explorer_mode,
         search: state.search.reset_checkout(),
         review_diff_layout: state.review_diff_layout,
@@ -2242,6 +2256,7 @@ pub fn sync(
       }
     }
     let mut review_generation = state.review_generation
+    let mut pdf_generation = state.pdf_generation
     let restore_cmd = if ctx.panel_open &&
       ctx.active_file is Some(path) &&
       docs.get(path) is Some(doc) {
@@ -2256,6 +2271,7 @@ pub fn sync(
       )
       docs[path] = doc
       review_generation = generation
+      pdf_generation = state.record_pdf_generation(doc).pdf_generation
       cmd
     } else {
       @cmd.none
@@ -2265,6 +2281,7 @@ pub fn sync(
         ..state,
         docs,
         review_generation,
+        pdf_generation,
         placement: state.placement.reconcile(ctx.placement),
       },
       restore_cmd,
@@ -2356,6 +2373,7 @@ pub fn sync(
     dispatch, state, ctx,
   )
   let state = state.sync_review_navigation_display(ctx)
+  let state = state.sync_office_selection(ctx)
   let pending_cmd = @cmd.batch([
     retire_index_cmd,
     reroot_cmd,
@@ -2517,12 +2535,33 @@ fn update_inner(
   match msg {
     // Checkout ownership and the unsaved-change dialog belong to the shell.
     UpdatePullRequest => (@cmd.none, state)
-    // The root converts this browser selection into a composer mention. Keep
+    // The root owns the pending selection and confirmed composer mention. Keep
     // the file-editor reducer total for embedders that delegate every message.
-    OfficeSelectionChanged(..) => (@cmd.none, state)
+    OfficeSelectionChanged(..)
+    | PdfSelectionChanged(..)
+    | OfficeSelectionConfirmed(_) => (@cmd.none, state)
+    OfficeSelectionDismissed(preview) =>
+      state.dismiss_office_selection(ctx, preview)
+    PdfStateChanged(..)
+    | PdfPageChanged(_)
+    | PdfFitWidth
+    | PdfRotated
+    | PdfFind(_)
+    | PdfPasswordChanged(_)
+    | PdfPasswordSubmitted
+    | PdfPasswordCancelled => update_pdf(state, ctx, msg)
     OfficeZoomChanged(raw) => {
       let zoom = @string.parse_int(raw) catch { _ => state.office_zoom }
-      let bounded = if zoom < 50 { 50 } else if zoom > 200 { 200 } else { zoom }
+      let pdf = active_pdf_document(state, ctx) is Some(_)
+      let minimum = if pdf { 25 } else { 50 }
+      let maximum = if pdf { 400 } else { 200 }
+      let bounded = if zoom < minimum {
+        minimum
+      } else if zoom > maximum {
+        maximum
+      } else {
+        zoom
+      }
       let next = { ..state, office_zoom: bounded, }
       (refresh_office_visual(next, ctx), next)
     }
@@ -3757,13 +3796,18 @@ fn update_inner(
         let previous = doc.state
         let doc_state = match file {
           Content(content~, sig~) => TabState::TabLoaded(content~, sig~)
-          Office(data_base64~, media_type~, sig~) => {
-            ignore(media_type)
-            match render_office_document(name, path, data_base64) {
-              Ok(document) => TabState::TabOffice(document~, sig~)
-              Err(message) => TabState::TabReadFailed(message)
+          Office(data_base64~, media_type~, sig~) =>
+            if media_type == "application/pdf" {
+              match decode_pdf_document(data_base64, state.pdf_generation + 1) {
+                Ok(document) => TabPdf(document~, sig~)
+                Err(message) => TabReadFailed(message)
+              }
+            } else {
+              match render_office_document(name, path, data_base64) {
+                Ok(document) => TabState::TabOffice(document~, sig~)
+                Err(message) => TabState::TabReadFailed(message)
+              }
             }
-          }
           Binary => TabBinary
           Oversized => TabOversized
         }
@@ -3824,10 +3868,22 @@ fn update_inner(
                 show
               }
             }
-            TabOffice(document~, ..) =>
+            TabOffice(document~, sig~) =>
               @cmd.batch([
                 clear_document(),
-                show_office_document(dispatch, ctx.owner, state, document),
+                show_office_document(
+                  dispatch,
+                  ctx.owner,
+                  state,
+                  path,
+                  document,
+                  sig,
+                ),
+              ])
+            TabPdf(document~, sig~) =>
+              @cmd.batch([
+                clear_document(),
+                show_pdf_document(dispatch, state, ctx, path, document, sig),
               ])
             // The notice overlay (rendered from the tab's new state) covers
             // the viewer; drop whatever document it was showing.
@@ -3837,7 +3893,18 @@ fn update_inner(
         } else {
           @cmd.none
         }
-        (cmd, { ..state, docs, })
+        (
+          cmd,
+          {
+            ..state,
+            docs,
+            pdf_generation: if doc_state is TabPdf(..) {
+              state.pdf_generation + 1
+            } else {
+              state.pdf_generation
+            },
+          },
+        )
       } else {
         (@cmd.none, state)
       }
@@ -4177,7 +4244,8 @@ fn update_inner(
               // deletion row reviews HEAD rather than whatever now sits at
               // its path.
               let affected = match doc.state {
-                TabLoaded(..) | TabOffice(..) | TabReadFailed(_) => true
+                TabLoaded(..) | TabOffice(..) | TabPdf(..) | TabReadFailed(_) =>
+                  true
                 TabDeleted =>
                   doc.review
                   .map(review => review.selected.has_working_tree_file())
@@ -4223,7 +4291,7 @@ fn update_inner(
           let changed = match doc.state {
             // The loaded baseline says whether the disk moved on.
             TabLoaded(sig~, ..) => sig != current_sig
-            TabOffice(sig~, ..) => sig != current_sig
+            TabOffice(sig~, ..) | TabPdf(sig~, ..) => sig != current_sig
             // A deleted file whose signature came back ordinarily reappeared.
             // A selected deletion row is different: porcelain can also carry
             // a same-path untracked row, so the current filesystem object is

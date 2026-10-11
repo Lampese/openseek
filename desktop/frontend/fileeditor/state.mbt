@@ -25,7 +25,7 @@ pub(all) enum FileContent {
   Oversized
   // Office packages are returned as base64 because the host's text editor
   // contract cannot carry ZIP bytes in a String. The renderer consumes them
-  // only for `.docx` and `.xlsx` files.
+  // for `.docx`, `.xlsx`, and `.pdf` files.
   Office(data_base64~ : String, media_type~ : String, sig~ : String)
   // `sig` is the file's mtime signature, stat'ed by the host from the same
   // handle it read — the baseline `stat_files` results are compared against.
@@ -48,6 +48,10 @@ pub(all) enum TabState {
   TabLoaded(content~ : String, sig~ : String)
   // A read-only Office surface rendered from the original package bytes.
   TabOffice(document~ : @office_viewer.RenderedDocument, sig~ : String)
+  // PDF.js owns rendering after the surface is mounted. Keep the original
+  // bytes and the runtime state on this tab; other tabs never receive events
+  // from its asynchronous loader.
+  TabPdf(document~ : PdfDocument, sig~ : String)
   TabBinary
   TabOversized
   // The host could not read this file. Unlike `TabDeleted`, this keeps the
@@ -461,6 +465,11 @@ pub(all) struct State {
   office_zoom : Int
   office_query : String
   office_prefer_system_fonts : Bool
+  // Browser selection is provisional until the user accepts its preview.
+  office_selection : OfficeSelectionPreview?
+  // Monotonic across document reloads and owner changes, so late PDF runtime
+  // callbacks cannot settle a later load of the same path and signature.
+  pdf_generation : Int
   // The explorer's Files/Changes/Search selection. The selection survives a
   // conversation switch; checkout-derived inventories do not (see `sync`).
   explorer_mode : ExplorerMode
@@ -641,6 +650,8 @@ pub fn State::empty() -> State {
     office_zoom: 100,
     office_query: "",
     office_prefer_system_fonts: false,
+    office_selection: None,
+    pdf_generation: 0,
     explorer_mode: ExplorerFiles,
     search: @grep_search.State::empty(),
     github_review: @github_review.State::empty(),
@@ -752,6 +763,7 @@ pub fn State::prepare_owner(
     office_zoom: self.office_zoom,
     office_query: self.office_query,
     office_prefer_system_fonts: self.office_prefer_system_fonts,
+    pdf_generation: self.pdf_generation,
     explorer_mode: self.explorer_mode,
     search: self.search.reset_checkout(),
     github_review: self.github_review,
@@ -907,14 +919,45 @@ pub(all) enum Msg {
     reference~ : @mention_context.SemanticSearchReference?
   )
   // The Office viewer emits a versioned `office.selection.v1` envelope after
-  // a native Word text or Excel range selection. The root materializes it and
-  // attaches the result to the active conversation's composer.
-  OfficeSelectionChanged(owner~ : @interop.ConversationKey, selection~ : String)
+  // a native Word text or Excel range selection. The root prepares a preview;
+  // only a subsequent confirmation attaches it to the composer.
+  OfficeSelectionChanged(
+    owner~ : @interop.ConversationKey,
+    epoch~ : Int,
+    path~ : @common.Uri,
+    sig~ : String,
+    selection~ : String
+  )
+  OfficeSelectionConfirmed(OfficeSelectionPreview)
+  OfficeSelectionDismissed(OfficeSelectionPreview)
   // Office surface controls are kept in the file panel so standalone viewer
   // behavior remains reusable while embedded hosts own their chrome.
   OfficeZoomChanged(String)
   OfficeSearchChanged(String)
   OfficeSystemFontsToggled
+  PdfStateChanged(
+    owner~ : @interop.ConversationKey,
+    epoch~ : Int,
+    path~ : @common.Uri,
+    sig~ : String,
+    generation~ : Int,
+    event~ : String
+  )
+  PdfSelectionChanged(
+    owner~ : @interop.ConversationKey,
+    epoch~ : Int,
+    path~ : @common.Uri,
+    sig~ : String,
+    generation~ : Int,
+    selection~ : String
+  )
+  PdfPageChanged(String)
+  PdfFitWidth
+  PdfRotated
+  PdfFind(Bool)
+  PdfPasswordChanged(String)
+  PdfPasswordSubmitted
+  PdfPasswordCancelled
   // Expand or collapse a directory row in the file tree; the first expansion
   // lazily lists the directory through the host.
   ChangeExtensionToggled(String?)

@@ -23,6 +23,8 @@ pub fn component(@rabbita.Val[@i18n.Locale], @rabbita.Val[Input], @cmd.Emit[Acti
 
 pub fn focus_message_end() -> @cmd.Cmd
 
+pub async fn stage_attachments(@interop.ChannelId, String, String, String, Array[@mention_context.MentionRef]) -> Unit
+
 // Errors
 
 // Types and methods
