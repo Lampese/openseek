@@ -349,6 +349,26 @@ pub fn Draft::with_semantic_selection(
 }
 
 ///|
+/// Replace the current Office selection while retaining unrelated context
+/// chips. The viewer owns only one active document selection at a time, so a
+/// later drag updates this single mention instead of accumulating stale ranges.
+pub fn Draft::with_office_selection(
+  self : Draft,
+  materialized : String?,
+) -> Draft {
+  let mentions = self.mentions.filter(mention => {
+    !(mention.ref_ is @mention_context.OfficeSelection(_))
+  })
+  if materialized is Some(materialized) {
+    mentions.push({
+      ref_: @mention_context.OfficeSelection(materialized~),
+      range: None,
+    })
+  }
+  { ..self, mentions, }
+}
+
+///|
 /// Review selections are root-authored, just like editor feedback. Ordinary
 /// local chips keep their exact selection ranges while these are reconciled.
 pub fn Draft::with_review_changes(

@@ -280,7 +280,8 @@ pub fn resize_handle_view() -> @html.Html {
 /// always rooted at the workspace root) as a toggleable pane on
 /// the viewer's right. Always rendered so the viewer's host element
 /// (`viewer-host`, `markdown-viewer-host`, `mbti-diagram-host`,
-/// `package-diagram-host`, `diff-editor-host`, and `semantic-review-host`) stay put
+/// `package-diagram-host`, `diff-editor-host`, `semantic-review-host`, and the
+/// Office surface) stay put
 /// across renders and screen
 /// switches; CSS hides the inactive surface and the tree pane when toggled off,
 /// and collapses the whole panel to zero width when it is closed. The children's
@@ -314,7 +315,10 @@ pub fn body_view(
       None => false
     }
   }
+  let office_document = active_office_document(state, ctx)
+  let use_office_surface = !use_diff_surface && office_document is Some(_)
   let use_markdown_surface = !use_diff_surface &&
+    !use_office_surface &&
     (match ctx.active_file {
       Some(path) =>
         uses_markdown_presentation(
@@ -324,10 +328,12 @@ pub fn body_view(
     })
   let use_mbti_surface = !use_diff_surface &&
     !use_markdown_surface &&
+    !use_office_surface &&
     uses_mbti_diagram_surface(state, ctx)
   let use_package_surface = !use_diff_surface &&
     !use_markdown_surface &&
     !use_mbti_surface &&
+    !use_office_surface &&
     uses_package_diagram_surface(state, ctx)
   let use_semantic_surface = use_diff_surface &&
     state.review_diff_mode != ReviewDiffLine &&
@@ -343,6 +349,7 @@ pub fn body_view(
       .id(ViewerHostId)
       .class(
         if use_diff_surface ||
+          use_office_surface ||
           use_markdown_surface ||
           use_mbti_surface ||
           use_package_surface {
@@ -353,6 +360,12 @@ pub fn body_view(
       )
       .data_set("theme", if ctx.dark_mode { "dark" } else { "light" }),
     ([] : Array[@html.Html]),
+  )
+  let office_surface = @office_viewer.render_surface(
+    match office_document {
+      Some(document) => office_surface_config(state, document)
+      None => empty_office_surface_config(state)
+    },
   )
   let markdown_viewer_host = @html.div(
     attrs=@html.Attrs::build()
@@ -430,6 +443,7 @@ pub fn body_view(
   @html.div(class="editor-body", [
     @html.div(class="viewer-stack", [
       viewer_host,
+      office_surface,
       markdown_viewer_host,
       mbti_diagram_host,
       package_diagram_host,
@@ -440,6 +454,24 @@ pub fn body_view(
     ]),
     tree_pane(locale~, dispatch, state, ctx),
   ])
+}
+
+///|
+/// An Office tab owns the same stable surface as the standalone viewer. Keep
+/// history, diffs, Markdown, and code tabs on their existing surfaces; an
+/// Office document is selected only after its package bytes have rendered
+/// successfully into `TabOffice`.
+fn active_office_document(
+  state : State,
+  ctx : Ctx,
+) -> @office_viewer.RenderedDocument? {
+  guard ctx.active_history_diff is None && ctx.active_file is Some(path) else {
+    return None
+  }
+  match state.docs.get(path) {
+    Some({ state: TabOffice(document~, ..), .. }) => Some(document)
+    _ => None
+  }
 }
 
 ///|
@@ -506,7 +538,7 @@ fn viewer_notice(
                 )
               }
             TabUnavailable(message) => message
-            TabLoading | TabLoaded(..) => ""
+            TabLoading | TabLoaded(..) | TabOffice(..) => ""
           }
         None => ""
       }
@@ -1936,6 +1968,85 @@ fn crumb_link(
 }
 
 ///|
+/// Embedded Office controls stay beside the document breadcrumb so they do
+/// not cover the page or sheet. They operate on the shared surface config;
+/// the reducer applies the visual change after Rabbita has rendered the new
+/// input values.
+fn office_viewer_toolbar(
+  dispatch : @cmd.Emit[Msg],
+  state : State,
+  ctx : Ctx,
+) -> @html.Html {
+  guard active_office_document(state, ctx) is Some(_) else {
+    return @html.nothing
+  }
+  let zoom_out = if state.office_zoom <= 50 {
+    @cmd.none
+  } else {
+    dispatch(OfficeZoomChanged((state.office_zoom - 10).to_string()))
+  }
+  let zoom_in = if state.office_zoom >= 200 {
+    @cmd.none
+  } else {
+    dispatch(OfficeZoomChanged((state.office_zoom + 10).to_string()))
+  }
+  @html.div(
+    class="office-viewer-toolbar",
+    attrs=@html.Attrs::build()
+      .role("group")
+      .aria_label("Office viewer controls"),
+    [
+      @html.input(
+        input_type=@html.InputType::Search,
+        value=state.office_query,
+        placeholder="Find in document",
+        on_input=dispatch.map(value => OfficeSearchChanged(value)),
+        attrs=@html.Attrs::build()
+          .aria_label("Find in document")
+          .data_set("focus-owner", ""),
+      ),
+      @html.button(
+        type_="button",
+        class="office-viewer-control",
+        title="Zoom out",
+        disabled=state.office_zoom <= 50,
+        on_click=zoom_out,
+        attrs=@html.Attrs::build().aria_label("Zoom out"),
+        "−",
+      ),
+      @html.span(class="office-viewer-zoom-value", "\{state.office_zoom}%"),
+      @html.button(
+        type_="button",
+        class="office-viewer-control",
+        title="Zoom in",
+        disabled=state.office_zoom >= 200,
+        on_click=zoom_in,
+        attrs=@html.Attrs::build().aria_label("Zoom in"),
+        "+",
+      ),
+      @html.button(
+        type_="button",
+        class=if state.office_prefer_system_fonts {
+          "office-viewer-control active"
+        } else {
+          "office-viewer-control"
+        },
+        title=if state.office_prefer_system_fonts {
+          "Use bundled Office fonts"
+        } else {
+          "Prefer installed Office fonts"
+        },
+        on_click=dispatch(OfficeSystemFontsToggled),
+        attrs=@html.Attrs::build()
+          .aria_label("Office font source")
+          .aria_pressed(state.office_prefer_system_fonts.to_string()),
+        "Aa",
+      ),
+    ],
+  )
+}
+
+///|
 /// The breadcrumb under the tab bar: the active file's path as
 /// `dir › dir › file` (the file segment emphasized) behind a leading
 /// ui(locale, WorkspaceLabel) crumb. Every crumb but the last opens a VS Code-style picker
@@ -2044,6 +2155,9 @@ pub fn breadcrumb_view(
     path_row.push(review_badge(locale~, dispatch, state, ctx))
   }
   path_row.push(review_progress(locale~, dispatch, state, ctx))
+  if active_office_document(state, ctx) is Some(_) {
+    path_row.push(office_viewer_toolbar(dispatch, state, ctx))
+  }
   if mbti_view_available(state, ctx) {
     path_row.push(mbti_view_toolbar(locale~, dispatch, state, ctx))
   }

@@ -1,4 +1,8 @@
 import { posix } from 'node:path';
+import { readFileSync } from 'node:fs';
+
+const officeFixture = name =>
+  readFileSync(new URL(`../../fixtures/office/${name}`, import.meta.url)).toString('base64');
 
 export class DesktopBrowserHarness {
   constructor(page) {
@@ -98,6 +102,22 @@ export class DesktopBrowserHarness {
       ].join('\n'),
     };
     this.searchFiles = ['src/main.mbt', 'README.md'];
+    // Small real packages keep the browser fixture on the same binary path as
+    // Desktop's `fs.read_file` host reply. Tests can add these paths to
+    // `searchFiles` or a directory listing and exercise the actual reader and
+    // Office surface instead of a synthetic HTML mock.
+    this.officeFiles = {
+      'docs/report.docx': {
+        data_base64: officeFixture('single-paragraph.docx'),
+        media_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        sig: 'office:report',
+      },
+      'docs/book1.xlsx': {
+        data_base64: officeFixture('book1.xlsx'),
+        media_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        sig: 'office:book1',
+      },
+    };
     // `moon.package_graph` returns the command's JSON verbatim. The default
     // UML filter keeps branching nodes, so the fixture has one package with
     // two source dependencies and exercises the real renderer path.
@@ -931,6 +951,16 @@ export class DesktopBrowserHarness {
         kind: 'binary_content',
         data_base64: binary.data_base64,
         media_type: binary.media_type,
+        sig: binary.sig || `working:${path}`,
+      };
+    }
+    const office = this.officeFiles[path];
+    if (office !== undefined) {
+      return {
+        kind: 'binary_content',
+        data_base64: office.data_base64,
+        media_type: office.media_type,
+        sig: office.sig,
       };
     }
     const content = this.workingFiles[path];

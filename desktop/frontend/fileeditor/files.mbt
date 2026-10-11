@@ -251,13 +251,41 @@ fn FileContent::from_reply(reply : @protocol.ReadFileReply) -> FileContent {
   match reply {
     @protocol.Binary => Binary
     @protocol.Oversized => Oversized
-    // Supported raster files carry display bytes for transcript rendering.
-    // The text editor still presents them through its ordinary binary notice.
-    @protocol.BinaryContent(..) => Binary
+    // Office packages are the one binary class this panel can render. Raster
+    // images continue to use the transcript-only BinaryContent path.
+    @protocol.BinaryContent(data_base64~, media_type~, sig~) =>
+      if is_office_media_type(media_type) {
+        Office(data_base64~, media_type~, sig~)
+      } else {
+        Binary
+      }
     // The host echoes the requested path as `absolute`; the document key
     // already names it, so the echo is not read.
     @protocol.Content(content~, sig~, ..) => Content(content~, sig~)
   }
+}
+
+///|
+fn is_office_media_type(media_type : String) -> Bool {
+  media_type ==
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+  media_type ==
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+}
+
+///|
+/// Decode one Host office payload and hand it to the same reader/layout
+/// pipeline used by the standalone viewer. Parsing errors become a normal
+/// tab read failure so a malformed package cannot leave a stale surface up.
+fn render_office_document(
+  name : String,
+  path : @common.Uri,
+  data_base64 : String,
+) -> Result[@office_viewer.RenderedDocument, String] {
+  let bytes = @base64.decode(data_base64) catch {
+    _ => return Err("The Office file payload was not valid base64.")
+  }
+  @office_viewer.render_document(name, path.path, bytes)
 }
 
 ///|
@@ -489,4 +517,18 @@ test "typed file replies map to viewer content" {
   )
   assert_true(FileContent::from_reply(@protocol.Binary) is Binary)
   assert_true(FileContent::from_reply(@protocol.Oversized) is Oversized)
+  assert_true(
+    FileContent::from_reply(
+      @protocol.BinaryContent(
+        data_base64="UEsDBA==",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        sig="1:2",
+      ),
+    )
+    is Office(
+      data_base64="UEsDBA==",
+      media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      sig="1:2"
+    ),
+  )
 }

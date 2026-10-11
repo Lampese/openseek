@@ -288,9 +288,14 @@ async fn read_file_op(payload : ReadFilePayload) -> ReadFileReply {
     error => raise HostError("failed to read file: \{error}")
   }
   defer source.close()
+  let office_media_type = office_media_type(file.to_string())
   // Check the size before reading anything: a multi-gigabyte build artifact
   // must produce the notice, not a host-sized allocation.
-  if source.size() > @openpath.MaxEditorFileBytes.to_int64() {
+  let size_limit = match office_media_type {
+    Some(_) => @openpath.MaxOfficeFileBytes
+    None => @openpath.MaxEditorFileBytes
+  }
+  if source.size() > size_limit.to_int64() {
     return Oversized
   }
   let data = source.read_all() catch {
@@ -305,14 +310,37 @@ async fn read_file_op(payload : ReadFilePayload) -> ReadFileReply {
   // raster signatures rather than extensions and returns decoded text without
   // making callers perform a second UTF-8 pass.
   let bytes = data.binary()
-  match @filekind.classify(bytes) {
-    Image(media_type~) =>
-      BinaryContent(data_base64=@base64.encode(bytes), media_type~)
-    Utf8Text(content) => {
-      let absolute = file.resource_path()
-      Content(content~, absolute~, sig~)
-    }
-    Pdf | UnknownBinary => Binary
+  match office_media_type {
+    Some(media_type) =>
+      BinaryContent(data_base64=@base64.encode(bytes), media_type~, sig~)
+    None =>
+      match @filekind.classify(bytes) {
+        Image(media_type~) =>
+          BinaryContent(data_base64=@base64.encode(bytes), media_type~, sig~)
+        Utf8Text(content) => {
+          let absolute = file.resource_path()
+          Content(content~, absolute~, sig~)
+        }
+        Pdf | UnknownBinary => Binary
+      }
+  }
+}
+
+///|
+/// Office packages are ZIP-based and intentionally classified as generic
+/// binary by the shared text/image policy. The extension is the host's only
+/// format signal here; the viewer performs the structural parse after the
+/// bytes arrive in the JS frontend.
+fn office_media_type(path : String) -> String? {
+  let lower = path.to_lower()
+  if lower.has_suffix(".docx") {
+    Some(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+  } else if lower.has_suffix(".xlsx") {
+    Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+  } else {
+    None
   }
 }
 
@@ -330,18 +358,26 @@ async test "binary file reads expose only recognized raster signatures" {
     .unwrap()
     .to_uri_path()
     .unwrap()
-  assert_eq(
-    read_file_op({ path: absolute, root: None, }),
-    BinaryContent(data_base64="iVBORw0KGgpzbWFsbA==", media_type="image/png"),
+  assert_true(
+    read_file_op({ path: absolute, root: None, })
+    is BinaryContent(
+      data_base64="iVBORw0KGgpzbWFsbA==",
+      media_type="image/png",
+      sig=_
+    ),
   )
   let root = @pathx.Path(@fs.realpath(dir))
     .to_absolute()
     .unwrap()
     .to_uri_path()
     .unwrap()
-  assert_eq(
-    read_file_op({ path: "image.png", root: Some(root), }),
-    BinaryContent(data_base64="iVBORw0KGgpzbWFsbA==", media_type="image/png"),
+  assert_true(
+    read_file_op({ path: "image.png", root: Some(root), })
+    is BinaryContent(
+      data_base64="iVBORw0KGgpzbWFsbA==",
+      media_type="image/png",
+      sig=_
+    ),
   )
   let disguised = "\{dir}/not-an-image.png"
   @fs.write_file(disguised, b"\xffnot an image", create_mode=CreateOrTruncate)
@@ -351,6 +387,34 @@ async test "binary file reads expose only recognized raster signatures" {
     .to_uri_path()
     .unwrap()
   assert_eq(read_file_op({ path: disguised_absolute, root: None, }), Binary)
+  @fs.rmdir(dir, recursive=true)
+}
+
+///|
+async test "Office file reads return original package bytes and media type" {
+  let dir = "_build/host-read-file-office-test"
+  if @fs.exists(dir) {
+    @fs.rmdir(dir, recursive=true)
+  }
+  @fs.mkdir(dir, recursive=true)
+  let xlsx = "\{dir}/example.xlsx"
+  let package_bytes = b"PK\x03\x04office fixture"
+  @fs.write_file(xlsx, package_bytes, create_mode=CreateOrTruncate)
+  let absolute = @pathx.Path(@fs.realpath(xlsx))
+    .to_absolute()
+    .unwrap()
+    .to_uri_path()
+    .unwrap()
+  match read_file_op({ path: absolute, root: None, }) {
+    BinaryContent(data_base64~, media_type~, sig~) => {
+      assert_eq(
+        media_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      )
+      assert_eq(data_base64, @base64.encode(package_bytes))
+      assert_true(!sig.is_empty())
+    }
+    _ => fail("an .xlsx read must preserve its original package bytes")
+  }
   @fs.rmdir(dir, recursive=true)
 }
 

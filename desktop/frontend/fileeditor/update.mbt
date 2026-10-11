@@ -60,6 +60,7 @@ fn Doc::diff_content(self : Doc) -> (String, String)? {
   }
   let modified = match self.state {
     TabLoaded(content~, ..) => content
+    TabOffice(..) => return None
     TabDeleted => ""
     TabLoading
     | TabBinary
@@ -183,6 +184,7 @@ fn Doc::review_generation(self : Doc) -> Int? {
 /// review baseline for the document that is already on screen.
 fn show_tab_impl(
   dispatch : @cmd.Emit[Msg],
+  state : State,
   ctx : Ctx,
   search_highlights : @grep_search.EditorHighlights?,
   path : @common.Uri,
@@ -243,6 +245,11 @@ fn show_tab_impl(
         show
       }
     }
+    TabOffice(document~, ..) =>
+      @cmd.batch([
+        clear_document(),
+        show_office_document(dispatch, ctx.owner, state, document),
+      ])
     // A deleted change, or a transiently unreadable working file, can still
     // have a useful textual HEAD side. Show that baseline under explicit
     // review chrome; other unavailable cases use the panel notice overlay.
@@ -291,12 +298,13 @@ fn show_tab_impl(
 ///|
 fn show_tab(
   dispatch : @cmd.Emit[Msg],
+  state : State,
   ctx : Ctx,
   search_highlights : @grep_search.EditorHighlights?,
   path : @common.Uri,
   doc : Doc,
 ) -> @cmd.Cmd {
-  show_tab_impl(dispatch, ctx, search_highlights, path, doc, true, true)
+  show_tab_impl(dispatch, state, ctx, search_highlights, path, doc, true, true)
 }
 
 ///|
@@ -306,12 +314,13 @@ fn show_tab(
 /// quick-diff baseline or the deleted/unavailable preview.
 fn show_settled_review(
   dispatch : @cmd.Emit[Msg],
+  state : State,
   ctx : Ctx,
   search_highlights : @grep_search.EditorHighlights?,
   path : @common.Uri,
   doc : Doc,
 ) -> @cmd.Cmd {
-  show_tab_impl(dispatch, ctx, search_highlights, path, doc, true, false)
+  show_tab_impl(dispatch, state, ctx, search_highlights, path, doc, true, false)
 }
 
 ///|
@@ -320,12 +329,15 @@ fn show_settled_review(
 /// it must neither start a duplicate file read nor another full `moon check`.
 fn show_pending_review(
   dispatch : @cmd.Emit[Msg],
+  state : State,
   ctx : Ctx,
   search_highlights : @grep_search.EditorHighlights?,
   path : @common.Uri,
   doc : Doc,
 ) -> @cmd.Cmd {
-  show_tab_impl(dispatch, ctx, search_highlights, path, doc, false, false)
+  show_tab_impl(
+    dispatch, state, ctx, search_highlights, path, doc, false, false,
+  )
 }
 
 ///|
@@ -335,6 +347,7 @@ fn show_pending_review(
 /// makes an older in-flight reply harmless.
 fn show_activated_tab(
   dispatch : @cmd.Emit[Msg],
+  state : State,
   ctx : Ctx,
   search_highlights : @grep_search.EditorHighlights?,
   path : @common.Uri,
@@ -346,7 +359,7 @@ fn show_activated_tab(
     doc.review is Some(review) &&
     review.selected.has_working_tree_file() else {
     return (
-      show_tab(dispatch, ctx, search_highlights, path, doc),
+      show_tab(dispatch, state, ctx, search_highlights, path, doc),
       doc,
       generation,
     )
@@ -355,7 +368,9 @@ fn show_activated_tab(
   let next_doc = { ..doc, review: Some({ ..review, working_generation, }), }
   (
     @cmd.batch([
-      show_pending_review(dispatch, ctx, search_highlights, path, next_doc),
+      show_pending_review(
+        dispatch, state, ctx, search_highlights, path, next_doc,
+      ),
       read_file(
         dispatch,
         ctx.owner,
@@ -479,6 +494,7 @@ pub fn open_document(
     | TabDeleted)) {
     let (show, doc, review_generation) = show_activated_tab(
       dispatch,
+      state,
       ctx,
       state.editor_search_highlights(ctx, path),
       path,
@@ -617,6 +633,7 @@ pub fn open_changed_document(
     let doc = { ..doc, review: Some({ ..review, view_mode: ReviewDiff, }), }
     let (show, next_doc, review_generation) = show_activated_tab(
       dispatch,
+      state,
       ctx,
       state.editor_search_highlights(ctx, path),
       path,
@@ -708,6 +725,7 @@ pub fn open_changed_document(
       cmds.push(
         show_pending_review(
           dispatch,
+          state,
           ctx,
           state.editor_search_highlights(ctx, path),
           path,
@@ -723,6 +741,7 @@ pub fn open_changed_document(
       cmds.push(
         show_pending_review(
           dispatch,
+          state,
           ctx,
           state.editor_search_highlights(ctx, path),
           path,
@@ -903,6 +922,7 @@ fn reconcile_reviews_after_changes(
           cmds.push(
             show_tab(
               dispatch,
+              state,
               ctx,
               state.editor_search_highlights(ctx, path),
               path,
@@ -927,6 +947,7 @@ fn reconcile_reviews_after_changes(
           cmds.push(
             show_tab(
               dispatch,
+              state,
               ctx,
               state.editor_search_highlights(ctx, path),
               path,
@@ -1031,6 +1052,7 @@ fn reconcile_reviews_after_changes(
             cmds.push(
               show_pending_review(
                 dispatch,
+                state,
                 ctx,
                 state.editor_search_highlights(ctx, path),
                 path,
@@ -1055,6 +1077,7 @@ fn reconcile_reviews_after_changes(
           cmds.push(
             show_tab(
               dispatch,
+              state,
               ctx,
               state.editor_search_highlights(ctx, path),
               path,
@@ -1124,6 +1147,7 @@ pub fn activate(
   let state = { ..state.invalidate_review_hunk_surface(), highlighted: None, }
   let (show, doc, review_generation) = show_activated_tab(
     dispatch,
+    state,
     ctx,
     state.editor_search_highlights(ctx, path),
     path,
@@ -1205,6 +1229,7 @@ pub fn close_document(
       if docs.get(next_path) is Some(doc) {
         let (show, doc, review_generation) = show_activated_tab(
           dispatch,
+          state,
           ctx,
           state.editor_search_highlights(ctx, next_path),
           next_path,
@@ -2222,6 +2247,7 @@ pub fn sync(
       docs.get(path) is Some(doc) {
       let (cmd, doc, generation) = show_activated_tab(
         dispatch,
+        state,
         ctx,
         state.editor_search_highlights(ctx, path),
         path,
@@ -2399,6 +2425,7 @@ fn select_review_view_mode(
   docs[path] = next_doc
   let show = show_pending_review(
     dispatch,
+    state,
     ctx,
     state.editor_search_highlights(ctx, path),
     path,
@@ -2490,6 +2517,26 @@ fn update_inner(
   match msg {
     // Checkout ownership and the unsaved-change dialog belong to the shell.
     UpdatePullRequest => (@cmd.none, state)
+    // The root converts this browser selection into a composer mention. Keep
+    // the file-editor reducer total for embedders that delegate every message.
+    OfficeSelectionChanged(..) => (@cmd.none, state)
+    OfficeZoomChanged(raw) => {
+      let zoom = @string.parse_int(raw) catch { _ => state.office_zoom }
+      let bounded = if zoom < 50 { 50 } else if zoom > 200 { 200 } else { zoom }
+      let next = { ..state, office_zoom: bounded, }
+      (refresh_office_visual(next, ctx), next)
+    }
+    OfficeSearchChanged(query) => {
+      let next = { ..state, office_query: query, }
+      (refresh_office_visual(next, ctx), next)
+    }
+    OfficeSystemFontsToggled => {
+      let next = {
+        ..state,
+        office_prefer_system_fonts: !state.office_prefer_system_fonts,
+      }
+      (refresh_office_visual(next, ctx), next)
+    }
     PullRequestUpdated => {
       let (comments, state) = update_inner(
         dispatch,
@@ -3561,6 +3608,7 @@ fn update_inner(
         working_side_ready_for_review(next_doc) {
         show_settled_review(
           dispatch,
+          state,
           ctx,
           state.editor_search_highlights(ctx, path),
           path,
@@ -3607,6 +3655,7 @@ fn update_inner(
         !(next_doc.state is TabLoading) {
         show_settled_review(
           dispatch,
+          state,
           ctx,
           state.editor_search_highlights(ctx, path),
           path,
@@ -3708,6 +3757,13 @@ fn update_inner(
         let previous = doc.state
         let doc_state = match file {
           Content(content~, sig~) => TabState::TabLoaded(content~, sig~)
+          Office(data_base64~, media_type~, sig~) => {
+            ignore(media_type)
+            match render_office_document(name, path, data_base64) {
+              Ok(document) => TabState::TabOffice(document~, sig~)
+              Err(message) => TabState::TabReadFailed(message)
+            }
+          }
           Binary => TabBinary
           Oversized => TabOversized
         }
@@ -3729,14 +3785,14 @@ fn update_inner(
         let reveal_range = if stale_file_link { None } else { range }
         let reveal_annotation = if stale_file_link { None } else { annotation }
         let cmd = if ctx.active_file is Some(active) && active == path {
-          match file {
+          match next_doc.state {
             // A real MoonBit file also gets a diagnostics request: the host
             // runs `moon check` over the file's module and returns its
             // current diagnostics, and future re-analysis arrives as
             // `diagnostics` events. Other files have nothing behind
             // `lsp_open` — moon has no diagnostics for a README or JSON file
             // — so only the viewer shows.
-            Content(content~, ..) => {
+            TabLoaded(content~, ..) => {
               let show = show_file_in_viewer(
                 ctx.owner,
                 root=ctx.root(),
@@ -3768,9 +3824,15 @@ fn update_inner(
                 show
               }
             }
+            TabOffice(document~, ..) =>
+              @cmd.batch([
+                clear_document(),
+                show_office_document(dispatch, ctx.owner, state, document),
+              ])
             // The notice overlay (rendered from the tab's new state) covers
             // the viewer; drop whatever document it was showing.
-            Binary | Oversized => clear_document()
+            TabBinary | TabOversized | TabReadFailed(_) => clear_document()
+            TabLoading | TabDeleted | TabUnavailable(_) => clear_document()
           }
         } else {
           @cmd.none
@@ -4092,6 +4154,7 @@ fn update_inner(
                   cmds.push(
                     show_tab(
                       dispatch,
+                      state,
                       ctx,
                       state.editor_search_highlights(ctx, stat.path),
                       stat.path,
@@ -4114,7 +4177,7 @@ fn update_inner(
               // deletion row reviews HEAD rather than whatever now sits at
               // its path.
               let affected = match doc.state {
-                TabLoaded(..) | TabReadFailed(_) => true
+                TabLoaded(..) | TabOffice(..) | TabReadFailed(_) => true
                 TabDeleted =>
                   doc.review
                   .map(review => review.selected.has_working_tree_file())
@@ -4144,6 +4207,7 @@ fn update_inner(
                   cmds.push(
                     show_tab(
                       dispatch,
+                      state,
                       ctx,
                       state.editor_search_highlights(ctx, stat.path),
                       stat.path,
@@ -4159,6 +4223,7 @@ fn update_inner(
           let changed = match doc.state {
             // The loaded baseline says whether the disk moved on.
             TabLoaded(sig~, ..) => sig != current_sig
+            TabOffice(sig~, ..) => sig != current_sig
             // A deleted file whose signature came back ordinarily reappeared.
             // A selected deletion row is different: porcelain can also carry
             // a same-path untracked row, so the current filesystem object is
@@ -4296,6 +4361,7 @@ fn update_inner(
               active == path {
               show_tab(
                 dispatch,
+                state,
                 ctx,
                 state.editor_search_highlights(ctx, path),
                 path,
@@ -4326,6 +4392,7 @@ fn update_inner(
         let cmd = if ctx.active_file is Some(active) && active == path {
           show_tab(
             dispatch,
+            state,
             ctx,
             state.editor_search_highlights(ctx, path),
             path,

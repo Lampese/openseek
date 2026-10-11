@@ -2384,7 +2384,7 @@ pub fn ReadFilePayload::to_repr(Self) -> @debug.Repr
 pub(all) enum ReadFileReply {
   Binary
   Oversized
-  BinaryContent(data_base64~ : String, media_type~ : String)
+  BinaryContent(data_base64~ : String, media_type~ : String, sig~ : String)
   Content(content~ : String, absolute~ : String, sig~ : String)
 } derive(Eq, @debug.Debug)
 pub fn ReadFileReply::equal(Self, Self) -> Bool

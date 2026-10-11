@@ -23,6 +23,10 @@ pub(all) struct FileEntry {
 pub(all) enum FileContent {
   Binary
   Oversized
+  // Office packages are returned as base64 because the host's text editor
+  // contract cannot carry ZIP bytes in a String. The renderer consumes them
+  // only for `.docx` and `.xlsx` files.
+  Office(data_base64~ : String, media_type~ : String, sig~ : String)
   // `sig` is the file's mtime signature, stat'ed by the host from the same
   // handle it read — the baseline `stat_files` results are compared against.
   Content(content~ : String, sig~ : String)
@@ -42,6 +46,8 @@ pub(all) enum TabState {
   // but deletion still shows, since that compares against `""`, not a
   // baseline.
   TabLoaded(content~ : String, sig~ : String)
+  // A read-only Office surface rendered from the original package bytes.
+  TabOffice(document~ : @office_viewer.RenderedDocument, sig~ : String)
   TabBinary
   TabOversized
   // The host could not read this file. Unlike `TabDeleted`, this keeps the
@@ -449,6 +455,12 @@ pub(all) struct State {
   // is shown. A panel preference, not per-conversation state, so it
   // survives conversation switches.
   tree_open : Bool
+  // Office surface preferences are panel-level settings. They apply to both
+  // DOCX and XLSX tabs and survive switching conversations, just like the
+  // file-tree preference.
+  office_zoom : Int
+  office_query : String
+  office_prefer_system_fonts : Bool
   // The explorer's Files/Changes/Search selection. The selection survives a
   // conversation switch; checkout-derived inventories do not (see `sync`).
   explorer_mode : ExplorerMode
@@ -626,6 +638,9 @@ pub fn State::empty() -> State {
     owner: None,
     placement: PlacementUnknown,
     tree_open: true,
+    office_zoom: 100,
+    office_query: "",
+    office_prefer_system_fonts: false,
     explorer_mode: ExplorerFiles,
     search: @grep_search.State::empty(),
     github_review: @github_review.State::empty(),
@@ -734,6 +749,9 @@ pub fn State::prepare_owner(
     ..State::empty(),
     owner: Some(owner),
     tree_open: self.tree_open,
+    office_zoom: self.office_zoom,
+    office_query: self.office_query,
+    office_prefer_system_fonts: self.office_prefer_system_fonts,
     explorer_mode: self.explorer_mode,
     search: self.search.reset_checkout(),
     github_review: self.github_review,
@@ -888,6 +906,15 @@ pub(all) enum Msg {
     owner~ : @interop.ConversationKey,
     reference~ : @mention_context.SemanticSearchReference?
   )
+  // The Office viewer emits a versioned `office.selection.v1` envelope after
+  // a native Word text or Excel range selection. The root materializes it and
+  // attaches the result to the active conversation's composer.
+  OfficeSelectionChanged(owner~ : @interop.ConversationKey, selection~ : String)
+  // Office surface controls are kept in the file panel so standalone viewer
+  // behavior remains reusable while embedded hosts own their chrome.
+  OfficeZoomChanged(String)
+  OfficeSearchChanged(String)
+  OfficeSystemFontsToggled
   // Expand or collapse a directory row in the file tree; the first expansion
   // lazily lists the directory through the host.
   ChangeExtensionToggled(String?)

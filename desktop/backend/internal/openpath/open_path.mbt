@@ -9,6 +9,15 @@
 pub const MaxEditorFileBytes = 1048576
 
 ///|
+/// Office packages are compressed ZIP containers and need their original
+/// bytes for the read-only office viewer. Keep their limit separate from the
+/// text editor limit so a normal document is not rejected merely because its
+/// embedded media makes the package larger than one megabyte.
+// Keep the decoded package below the 32 MiB remote JSON frame limit after
+// base64 expansion and JSON overhead.
+pub const MaxOfficeFileBytes : Int = 20 * 1024 * 1024
+
+///|
 /// One literal path surfaced by the agent and clicked by the user.
 pub(all) struct Reference(String) derive(Debug, Eq)
 
@@ -71,15 +80,20 @@ async fn ExistingPath::resolve(self : ExistingPath) -> Resolution {
   guard @fs.kind(self.path) is Regular else { return SystemPath(self.path) }
   let source = @fs.open(self.path, mode=ReadOnly)
   defer source.close()
+  let office = is_office_path(self.path)
   let size = source.size()
-  // Twelve bytes cover every supported raster signature, including WebP.
-  let header_size = if size < 12 { size.to_int() } else { 12 }
-  let header = source.read_exactly_at(header_size, position=0)
-  if @filekind.classify(header) is (Pdf | Image(_)) {
-    return BrowserPath(self.path)
+  if !office {
+    // Twelve bytes cover every supported raster signature, including WebP.
+    let header_size = if size < 12 { size.to_int() } else { 12 }
+    let header = source.read_exactly_at(header_size, position=0)
+    if @filekind.classify(header) is (Pdf | Image(_)) {
+      return BrowserPath(self.path)
+    }
   }
-  guard size <= MaxEditorFileBytes.to_int64() else {
-    return SystemPath(self.path)
+  let size_limit = if office { MaxOfficeFileBytes } else { MaxEditorFileBytes }
+  guard size <= size_limit.to_int64() else { return SystemPath(self.path) }
+  if office {
+    return EditorPath(path=self.path, line=self.line, column=self.column)
   }
   let data = source.read_all()
   match @filekind.classify(data.binary()) {
@@ -88,6 +102,15 @@ async fn ExistingPath::resolve(self : ExistingPath) -> Resolution {
     Pdf | Image(_) => BrowserPath(self.path)
     UnknownBinary => SystemPath(self.path)
   }
+}
+
+///|
+/// Office packages are ZIP containers, so their bytes intentionally classify
+/// as generic binary. The extension is the routing signal; the frontend still
+/// validates the package through office.mbt's reader before showing a surface.
+fn is_office_path(path : String) -> Bool {
+  let lower = path.to_lower()
+  lower.has_suffix(".docx") || lower.has_suffix(".xlsx")
 }
 
 ///|

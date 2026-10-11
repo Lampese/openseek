@@ -3188,6 +3188,66 @@ fn update_msg(
         }),
       )
     }
+    FileEditor(@fileeditor.OfficeSelectionChanged(owner~, selection~)) => {
+      // Reject callbacks from a tab that outlived its conversation before
+      // parsing/materializing any payload. This keeps a late browser event
+      // from producing a notification in the newly focused conversation.
+      if model.screen is Codex {
+        guard owner.channel == model.focused &&
+          model.codex.active_id() is Some(session) &&
+          session == owner.session else {
+          return (@cmd.none, model)
+        }
+      } else {
+        guard model.active_conversation() is Some(conv) &&
+          conv.device == owner.channel &&
+          conv.session_id == owner.session else {
+          return (@cmd.none, model)
+        }
+      }
+      // Materialize at the application boundary so the composer receives a
+      // bounded, Agent-ready schema rather than browser-only DOM selection
+      // facts. Preview is the default policy; the source anchors and selector
+      // metadata remain in the materialized JSON for the Agent.
+      let materialized = match
+        @office_viewer.materialize_selection_preview(selection, 4000) {
+        Ok(value) => value
+        Err(message) => {
+          let (notice, next) = model.notify_error(
+            dispatch,
+            "Could not prepare Office selection: \{message}",
+          )
+          return (notice, next)
+        }
+      }
+      // The file editor is shared by the OpenSeek and Codex screens. Keep a
+      // stale callback from another screen or conversation from mutating the
+      // currently visible composer.
+      if model.screen is Codex {
+        return (
+          @cmd.none,
+          {
+            ..model,
+            codex: model.codex.with_office_selection(Some(materialized)),
+          },
+        )
+      }
+      guard model.active_conversation() is Some(conv) else {
+        return (@cmd.none, model)
+      }
+      let draft : @composer.Draft = {
+        task: conv.task,
+        mentions: conv.mentions,
+        images: conv.images,
+      }
+      (
+        @cmd.none,
+        model.replace_conversation({
+          ..conv,
+          mentions: draft.with_office_selection(Some(materialized)).mentions,
+        }),
+      )
+    }
     // The host classifies tree selections before the dock opens their viewer.
     FileEditor(FileSelected(path~, ..)) =>
       request_open_path(dispatch, model, path.0, None)

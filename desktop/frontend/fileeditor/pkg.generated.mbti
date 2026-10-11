@@ -2,6 +2,7 @@
 package "openseek_desktop/frontend/fileeditor"
 
 import {
+  "moonbit-community/office-viewer/viewer",
   "moonbit-community/rabbita/cmd",
   "moonbit-community/rabbita/html",
   "moonbit-community/rabbita/sub",
@@ -173,6 +174,7 @@ pub fn FileChange::not_equal(Self, Self) -> Bool
 pub(all) enum FileContent {
   Binary
   Oversized
+  Office(data_base64~ : String, media_type~ : String, sig~ : String)
   Content(content~ : String, sig~ : String)
 }
 
@@ -267,6 +269,10 @@ pub(all) enum Msg {
   Search(@grep_search.Msg)
   SearchMatchSelected(path~ : String, range~ : @common.Range)
   SemanticSelectionChanged(owner~ : @interop.ConversationKey, reference~ : @mention_context.SemanticSearchReference?)
+  OfficeSelectionChanged(owner~ : @interop.ConversationKey, selection~ : String)
+  OfficeZoomChanged(String)
+  OfficeSearchChanged(String)
+  OfficeSystemFontsToggled
   ChangeExtensionToggled(String?)
   ChangeFiltersCleared
   ChangePathFilterChanged(String)
@@ -453,6 +459,9 @@ pub(all) struct State {
   owner : @interop.ConversationKey?
   placement : ReconciledPlacement
   tree_open : Bool
+  office_zoom : Int
+  office_query : String
+  office_prefer_system_fonts : Bool
   explorer_mode : ExplorerMode
   search : @grep_search.State
   github_review : @github_review.State
@@ -529,6 +538,7 @@ pub fn State::with_review_navigation_destination(Self, Ctx, ChangedFile, Bool) -
 pub(all) enum TabState {
   TabLoading
   TabLoaded(content~ : String, sig~ : String)
+  TabOffice(document~ : @viewer.RenderedDocument, sig~ : String)
   TabBinary
   TabOversized
   TabReadFailed(String)

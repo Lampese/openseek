@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { execFileSync, spawnSync } from "node:child_process";
 import { stageResources } from "./resources.mjs";
+import { OfficeFontFiles, resolveOfficeFontSource } from "./office_fonts.mjs";
 
 const Hosts = {
   darwin: {
@@ -177,6 +178,13 @@ class Build {
     }
   }
 
+  officeFontSource() {
+    return resolveOfficeFontSource([
+      join(this.repo, "..", "office-viewer", "public", "fonts"),
+      join(this.desktop, "package/assets/fonts"),
+    ]);
+  }
+
   async webAssets() {
     if (!this.host) throw new Error(`browser assets cannot build on ${process.platform}/${process.arch}`);
     const vendor = join(this.desktop, "target/vendor-web");
@@ -222,6 +230,7 @@ class Build {
       await this.commandRun(esbuildBinary, [entry, "--bundle", "--external:*.ttf",
         "--external:*.woff2", `--outfile=${join(output, name)}`]);
     }
+    await cp(this.officeFontSource(), join(output, "fonts"), { recursive: true });
     await cp(join(this.desktop, "frontend/build/xterm-entry.js"), join(work, "xterm-entry.js"));
     await cp(join(this.desktop, "frontend/build/xterm.css"), join(work, "xterm.css"));
     await this.commandRun(esbuildBinary, [join(work, "xterm-entry.js"), "--bundle",
@@ -284,6 +293,11 @@ class Build {
       await cp(join(generated, name), join(output, name));
     }
     await cp(join(this.repo, "editor/viewer/browser/view/codicon/codicon.ttf"), join(output, "codicon.ttf"));
+    const officeFonts = join(generated, "fonts");
+    if (!OfficeFontFiles.every(name => existsSync(join(officeFonts, name)))) {
+      throw new Error(`generated Office font assets are missing under ${officeFonts}`);
+    }
+    await cp(officeFonts, join(output, "fonts"), { recursive: true });
     await cp(join(generated, "mermaid"), join(output, "mermaid"), { recursive: true });
   }
 

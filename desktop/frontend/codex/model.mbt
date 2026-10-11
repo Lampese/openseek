@@ -1276,6 +1276,21 @@ pub fn State::with_semantic_selection(
 }
 
 ///|
+/// Keep Office selections in Codex's independently owned composer using the
+/// same single-selection rule as the OpenSeek composer.
+pub fn State::with_office_selection(
+  self : State,
+  materialized : String?,
+) -> State {
+  let draft : @composer.Draft = {
+    task: self.draft,
+    mentions: self.mentions,
+    images: self.images,
+  }
+  { ..self, mentions: draft.with_office_selection(materialized).mentions, }
+}
+
+///|
 fn CodexItem::decode(value : Json) -> CodexItem? {
   guard value is Object(fields) &&
     @jsonx.json_text(fields, "id") is Some(id) &&

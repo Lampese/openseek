@@ -62,6 +62,22 @@ async test "existing files win before editor positions" {
   let pdf = "\{dir}/document.pdf"
   @fs.write_file(pdf, "%PDF-1.7\n%%EOF\n", create_mode=CreateOrTruncate)
   @debug.assert_eq(@openpath.Reference(pdf).resolve(), BrowserPath(pdf))
+  let office = "\{dir}/document.docx"
+  @fs.write_file(office, b"PK\x03\x04office", create_mode=CreateOrTruncate)
+  @debug.assert_eq(
+    @openpath.Reference(office).resolve(),
+    EditorPath(path=office, line=None, column=None),
+  )
+  let oversized_office = "\{dir}/large.xlsx"
+  @fs.write_file(
+    oversized_office,
+    "x".repeat(@openpath.MaxOfficeFileBytes + 1),
+    create_mode=CreateOrTruncate,
+  )
+  @debug.assert_eq(
+    @openpath.Reference(oversized_office).resolve(),
+    SystemPath(oversized_office),
+  )
   let oversized = "\{dir}/large.txt"
   let content = "x".repeat(@openpath.MaxEditorFileBytes + 1)
   @fs.write_file(oversized, content, create_mode=CreateOrTruncate)

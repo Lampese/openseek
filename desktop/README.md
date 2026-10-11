@@ -235,6 +235,18 @@ CDN.
 `viewer_theme.css` supplies the desktop-owned theme variables; the editor's
 reference-shell theme remains development-only.
 
+The file panel imports the pinned `moonbit-community/office-viewer` package.
+Existing `.docx` and `.xlsx` paths are read as bounded package bytes and
+rendered by the same `office.mbt` reader/layout pipeline as the standalone
+viewer. Browser and desktop packages copy its metric-compatible fonts and the
+accompanying license notices into the final web resource tree; a checked-in
+copy under `desktop/package/assets/fonts` keeps packaging
+deterministic without a sibling viewer checkout.
+
+The repository workspace vendors the reusable `viewer` package under
+`desktop/vendor/office-viewer` so a clean OpenSeek checkout has the same source
+dependency available to Moon.
+
 What still needs preparing, beyond the MoonBit packages:
 
 - The native host links `libproton`, which in turn needs CEF. The Proton

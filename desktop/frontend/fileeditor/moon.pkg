@@ -1,6 +1,8 @@
 import {
   "openseek_desktop/frontend/mention_context",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/encoding/base64",
+  "moonbitlang/core/string",
   "moonbitlang/x/crypto",
   "moonbitlang/editor/viewer/common/localization",
   "openseek_desktop/frontend/i18n",
@@ -24,6 +26,7 @@ import {
   "moonbitlang/editor/viewer/common/model",
   "moonbitlang/editor/viewer/common/navigation_api",
   "moonbitlang/editor/viewer/common/quick_diff_api",
+  "moonbit-community/office-viewer/viewer" @office_viewer,
   "moonbitlang/editor/syntax/lang_moonbit",
   "moonbitlang/editor/syntax/lang_javascript",
   "moonbitlang/editor/syntax/lang_json",
