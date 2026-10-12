@@ -255,11 +255,14 @@ class Build {
   }
 
   async web(profile, browser = false) {
-    await this.webAssets();
     const release = profile === "release" ? ["--release"] : [];
+    // Build first: this is what resolves the Mooncakes dependencies, and
+    // webAssets() stages the Office viewer's PDF runtime from the resolved
+    // package. A checkout that has not built yet has no `.mooncakes` tree.
     await this.commandRun("moon", ["build", "frontend", "--target", "js", ...release], {
       cwd: this.desktop,
     });
+    await this.webAssets();
     if (browser) {
       // The console bundle openseek-api serves: the same document and
       // frontend.js the packaged app loads, so the e2e suite can drive one
