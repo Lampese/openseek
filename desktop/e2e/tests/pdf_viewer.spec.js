@@ -160,7 +160,6 @@ test('PDF tab switches retain the reading position and discard retired runtime c
   await expectPdf(page);
   await expect(page.locator('.mention-chip')).toHaveCount(0);
   await expect(page.locator('.pdf-container')).toHaveCount(1);
-  await page.screenshot({ path: '/private/tmp/openseek-pdf-preview.png' });
   expect(app.pageErrors).toEqual([]);
 });
 
@@ -168,10 +167,38 @@ test('a malformed PDF reports failure and the next PDF loads normally', async ({
   const app = await setup(page);
   await openFile(app, 'broken.pdf');
   await expect(page.locator('.viewer-notice')).toBeVisible();
-  await expect(page.locator('.viewer-notice')).toContainText(/Invalid PDF/i);
+  await expect(page.locator('.viewer-notice')).toContainText('Could not preview this PDF. Try reopening the file.');
+  await expect(page.locator('.viewer-notice')).not.toContainText(/Invalid PDF|base64|Error:|stack/i);
   await openFile(app, 'report.pdf');
   await expectPdf(page);
   await expect(page.locator('.textLayer').first()).toContainText('OpenSeek PDF preview');
+  expect(app.pageErrors).toEqual([]);
+});
+
+test('PDF controls and failures follow live language changes without parser details', async ({ page }) => {
+  const app = await setup(page);
+  await openFile(app, 'report.pdf');
+  await expectPdf(page);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'languages', { configurable: true, value: ['zh-CN'] });
+    window.dispatchEvent(new Event('languagechange'));
+  });
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans');
+  await expect(page.getByRole('searchbox', { name: '在文档中查找', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '适应页宽', exact: true })).toBeVisible();
+  await expect(page.getByRole('spinbutton', { name: 'PDF 页码', exact: true })).toBeEnabled();
+  await openFile(app, 'broken.pdf');
+  await expect(page.locator('.viewer-notice')).toContainText('无法预览此 PDF。请重新打开文件。');
+  await expect(page.locator('.viewer-notice')).not.toContainText(/Invalid PDF|base64|Error:|stack/i);
+  await openFile(app, 'encrypted.pdf');
+  const dialog = page.getByRole('dialog', { name: '解锁 PDF', exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('PDF 密码', { exact: true }).fill('wrong-password');
+  await dialog.getByRole('button', { name: '解锁', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('密码错误。');
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.viewer-notice')).toContainText('已取消 PDF 预览。重新打开文件即可重试。');
   expect(app.pageErrors).toEqual([]);
 });
 

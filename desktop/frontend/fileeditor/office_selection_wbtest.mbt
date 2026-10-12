@@ -153,6 +153,22 @@ test "Excel preview retains the sheet range and selected cell contents" {
 }
 
 ///|
+test "Office selection failures are localized without exposing schema or file details" {
+  let (state, ctx, _) = office_selection_fixture()
+  let ctx = { ..ctx, locale: @i18n.SimplifiedChinese, }
+  for
+    raw in [
+      "invalid JSON",
+      office_selection_raw("/work/other.docx", "wrong file"),
+    ] {
+    assert_true(
+      state.offer_office_selection(ctx, raw)
+      is Err("无法添加所选内容。请重新选择。"),
+    )
+  }
+}
+
+///|
 test "PDF preview uses the selected text and range and expires with its runtime" {
   let (state, ctx, path, document) = pdf_fixture()
   let ready = state.with_pdf_document(path, {

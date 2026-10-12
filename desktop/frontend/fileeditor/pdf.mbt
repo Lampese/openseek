@@ -28,11 +28,12 @@ pub extend PdfDocument with Eq::{equal, not_equal}
 
 ///|
 fn decode_pdf_document(
+  locale? : @i18n.Locale = English,
   data_base64 : String,
   generation : Int,
 ) -> Result[PdfDocument, String] {
   let bytes = @base64.decode(data_base64) catch {
-    _ => return Err("The PDF file payload was not valid base64.")
+    _ => return Err(ui(locale, PdfPreviewFailed))
   }
   Ok({
     bytes,
@@ -197,6 +198,7 @@ fn pdf_event_int(value : Json, allow_zero? : Bool = false) -> Int? {
 
 ///|
 fn apply_pdf_event(
+  locale? : @i18n.Locale = English,
   state : State,
   path : @common.Uri,
   document : PdfDocument,
@@ -256,14 +258,18 @@ fn apply_pdf_event(
         status: PdfPasswordRequired(incorrect=false),
         password: "",
       }
-    { "status": String("error"), "message": String(message), .. } => {
+    { "status": String("error"), "message": String(_), .. } => {
       command = clear_office_surface()
-      { ..document, status: PdfFailed(message), password: "", }
+      {
+        ..document,
+        status: PdfFailed(ui(locale, PdfPreviewFailed)),
+        password: "",
+      }
     }
-    { "status": String("selection-error"), "message": String(message), .. } =>
+    { "status": String("selection-error"), "message": String(_), .. } =>
       return (
         @cmd.none,
-        { ..state, error: Some("Could not prepare PDF selection: \{message}"), },
+        { ..state, error: Some(ui(locale, OfficeSelectionFailed)), },
       )
     // Progress does not erase a password prompt or a ready document. Unknown
     // statuses and malformed events deliberately leave the tab unchanged.
@@ -284,7 +290,7 @@ fn update_pdf(state : State, ctx : Ctx, msg : Msg) -> (@cmd.Cmd, State) {
       ) else {
         return (@cmd.none, state)
       }
-      apply_pdf_event(state, path, document, event)
+      apply_pdf_event(locale=ctx.locale, state, path, document, event)
     }
     PdfPageChanged(raw) => {
       guard document.status is PdfReady && document.pages is Some(pages) else {
@@ -323,9 +329,7 @@ fn update_pdf(state : State, ctx : Ctx, msg : Msg) -> (@cmd.Cmd, State) {
         clear_document(),
         state.with_pdf_document(path, {
           ..document,
-          status: PdfFailed(
-            "PDF loading cancelled. Reopen the file to try again.",
-          ),
+          status: PdfFailed(ui(ctx.locale, PdfPreviewCancelled)),
           password: "",
         }),
       )

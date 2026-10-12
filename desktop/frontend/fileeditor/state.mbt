@@ -817,9 +817,10 @@ pub fn TreeLayout::wire(self : TreeLayout) -> String {
 /// The active conversation's identity, passed in by the main package on every
 /// `update`/`sync`/`panel_view` call: which conversation the panel serves, its
 /// complete directory placement, whether the app is in dark mode (drives the
-/// embedded viewer's theme attribute), and the Settings choice of where the
+/// embedded viewer's theme attribute), the interface language, and where the
 /// file tree docks.
 pub(all) struct Ctx {
+  locale : @i18n.Locale
   model : String
   thinking : @protocol.OpenSeekThinking?
   owner : @interop.ConversationKey

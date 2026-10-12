@@ -26,11 +26,7 @@ fn offer_office_selection(
   guard owns_office_selection(model, owner) else { return (@cmd.none, model) }
   match model.file_panel.offer_office_selection(file_ctx(model), selection) {
     Ok(file_panel) => (@cmd.none, { ..model, file_panel, })
-    Err(message) =>
-      model.notify_error(
-        dispatch,
-        "Could not prepare Office selection: \{message}",
-      )
+    Err(message) => model.notify_error(dispatch, message)
   }
 }
 

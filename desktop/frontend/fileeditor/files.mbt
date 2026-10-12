@@ -279,12 +279,13 @@ fn is_office_media_type(media_type : String) -> Bool {
 /// pipeline used by the standalone viewer. Parsing errors become a normal
 /// tab read failure so a malformed package cannot leave a stale surface up.
 fn render_office_document(
+  locale? : @i18n.Locale = English,
   name : String,
   path : @common.Uri,
   data_base64 : String,
 ) -> Result[@office_viewer.RenderedDocument, String] {
   let bytes = @base64.decode(data_base64) catch {
-    _ => return Err("The Office file payload was not valid base64.")
+    _ => return Err(ui(locale, OfficePreviewFailed))
   }
   let rendered = @office_viewer.render_document(name, path.path, bytes)
   match rendered {
@@ -293,7 +294,8 @@ fn render_office_document(
         ..document,
         surface_html: scope_excel_styles(document.surface_html),
       })
-    _ => rendered
+    Ok(document) => Ok(document)
+    Err(_) => Err(ui(locale, OfficePreviewFailed))
   }
 }
 

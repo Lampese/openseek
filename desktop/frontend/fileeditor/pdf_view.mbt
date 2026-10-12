@@ -1,5 +1,6 @@
 ///|
 fn pdf_viewer_toolbar(
+  locale? : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
   state : State,
   ctx : Ctx,
@@ -14,8 +15,8 @@ fn pdf_viewer_toolbar(
       type_="button",
       class="office-viewer-control",
       disabled=!ready || document.page <= 1,
-      title="Previous page",
-      attrs=@html.Attrs::build().aria_label("Previous page"),
+      title=ui(locale, PdfPreviousPage),
+      attrs=@html.Attrs::build().aria_label(ui(locale, PdfPreviousPage)),
       on_click=dispatch(PdfPageChanged((document.page - 1).to_string())),
       "‹",
     ),
@@ -25,7 +26,9 @@ fn pdf_viewer_toolbar(
       min=1,
       value=document.page.to_string(),
       on_change=dispatch.map(value => PdfPageChanged(value)),
-      attrs=@html.Attrs::build().aria_label("PDF page number").disabled(!ready),
+      attrs=@html.Attrs::build()
+        .aria_label(ui(locale, PdfPageNumber))
+        .disabled(!ready),
     ),
     @html.span(class="pdf-page-total", "/ \{pages}"),
     @html.button(
@@ -33,8 +36,8 @@ fn pdf_viewer_toolbar(
       class="office-viewer-control",
       disabled=!ready ||
         document.pages.map(pages => document.page >= pages).unwrap_or(true),
-      title="Next page",
-      attrs=@html.Attrs::build().aria_label("Next page"),
+      title=ui(locale, PdfNextPage),
+      attrs=@html.Attrs::build().aria_label(ui(locale, PdfNextPage)),
       on_click=dispatch(PdfPageChanged((document.page + 1).to_string())),
       "›",
     ),
@@ -42,8 +45,8 @@ fn pdf_viewer_toolbar(
       type_="button",
       class="office-viewer-control",
       disabled=!ready,
-      title="Fit page width",
-      attrs=@html.Attrs::build().aria_label("Fit page width"),
+      title=ui(locale, PdfFitWidth),
+      attrs=@html.Attrs::build().aria_label(ui(locale, PdfFitWidth)),
       on_click=dispatch(PdfFitWidth),
       "↔",
     ),
@@ -51,8 +54,8 @@ fn pdf_viewer_toolbar(
       type_="button",
       class="office-viewer-control",
       disabled=!ready,
-      title="Rotate clockwise",
-      attrs=@html.Attrs::build().aria_label("Rotate clockwise"),
+      title=ui(locale, PdfRotate),
+      attrs=@html.Attrs::build().aria_label(ui(locale, PdfRotate)),
       on_click=dispatch(PdfRotated),
       "↻",
     ),
@@ -63,7 +66,7 @@ fn pdf_viewer_toolbar(
         class="pdf-search-count",
         match document.search {
           Some((current, total)) => "\{current} / \{total}"
-          None => "Searching…"
+          None => ui(locale, PdfSearching)
         },
       ),
     )
@@ -74,8 +77,8 @@ fn pdf_viewer_toolbar(
         type_="button",
         class="office-viewer-control",
         disabled=no_matches,
-        title="Previous match",
-        attrs=@html.Attrs::build().aria_label("Previous match"),
+        title=ui(locale, PdfPreviousMatch),
+        attrs=@html.Attrs::build().aria_label(ui(locale, PdfPreviousMatch)),
         on_click=dispatch(PdfFind(true)),
         "‹",
       ),
@@ -85,8 +88,8 @@ fn pdf_viewer_toolbar(
         type_="button",
         class="office-viewer-control",
         disabled=no_matches,
-        title="Next match",
-        attrs=@html.Attrs::build().aria_label("Next match"),
+        title=ui(locale, PdfNextMatch),
+        attrs=@html.Attrs::build().aria_label(ui(locale, PdfNextMatch)),
         on_click=dispatch(PdfFind(false)),
         "›",
       ),
@@ -94,13 +97,14 @@ fn pdf_viewer_toolbar(
   }
   @html.div(
     class="office-viewer-toolbar pdf-viewer-toolbar",
-    attrs=@html.Attrs::build().role("group").aria_label("PDF viewer controls"),
+    attrs=@html.Attrs::build().role("group").aria_label(ui(locale, PdfControls)),
     controls,
   )
 }
 
 ///|
 fn pdf_password_dialog(
+  locale? : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
   state : State,
   ctx : Ctx,
@@ -124,19 +128,19 @@ fn pdf_password_dialog(
         attrs=@html.Attrs::build()
           .role("dialog")
           .aria_modal("true")
-          .aria_label("Unlock PDF")
+          .aria_label(ui(locale, PdfUnlockTitle))
           .on_submit(event => {
             event.prevent_default()
             dispatch(PdfPasswordSubmitted)
           }),
         [
-          @html.h2("Unlock PDF"),
+          @html.h2(ui(locale, PdfUnlockTitle)),
           @html.input(
             input_type=Password,
             value=document.map(document => document.password).unwrap_or(""),
-            placeholder="Password",
+            placeholder=ui(locale, PdfPassword),
             on_input=dispatch.map(value => PdfPasswordChanged(value)),
-            attrs=@html.Attrs::build().aria_label("PDF password"),
+            attrs=@html.Attrs::build().aria_label(ui(locale, PdfPasswordLabel)),
           ),
           @html.div(
             class=if incorrect {
@@ -145,20 +149,20 @@ fn pdf_password_dialog(
               "pdf-password-error hidden"
             },
             attrs=@html.Attrs::build().role("alert"),
-            "Incorrect password.",
+            ui(locale, PdfIncorrectPassword),
           ),
           @html.div(class="pdf-password-actions", [
             @html.button(
               type_="button",
               on_click=dispatch(PdfPasswordCancelled),
-              "Cancel",
+              ui(locale, CancelSelection),
             ),
             @html.button(
               type_="submit",
               disabled=document
                 .map(document => document.password.is_empty())
                 .unwrap_or(true),
-              "Unlock",
+              ui(locale, PdfUnlock),
             ),
           ]),
         ],

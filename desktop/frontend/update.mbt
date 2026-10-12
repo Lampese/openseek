@@ -1487,6 +1487,7 @@ fn file_ctx(model : Model) -> @fileeditor.Ctx {
     // stable owner lets an interrupted changed-file review resume after Repair
     // without ever treating the project root as a fallback checkout.
     owner: active.owner,
+    locale: model.locale,
     model: engine_model.wire(),
     thinking: engine_model.thinking(model.reasoning_for(engine_model)),
     request_epoch: model.file_panel.request_epoch,

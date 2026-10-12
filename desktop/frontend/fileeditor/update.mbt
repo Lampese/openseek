@@ -3798,12 +3798,23 @@ fn update_inner(
           Content(content~, sig~) => TabState::TabLoaded(content~, sig~)
           Office(data_base64~, media_type~, sig~) =>
             if media_type == "application/pdf" {
-              match decode_pdf_document(data_base64, state.pdf_generation + 1) {
+              match
+                decode_pdf_document(
+                  locale=ctx.locale,
+                  data_base64,
+                  state.pdf_generation + 1,
+                ) {
                 Ok(document) => TabPdf(document~, sig~)
                 Err(message) => TabReadFailed(message)
               }
             } else {
-              match render_office_document(name, path, data_base64) {
+              match
+                render_office_document(
+                  locale=ctx.locale,
+                  name,
+                  path,
+                  data_base64,
+                ) {
                 Ok(document) => TabState::TabOffice(document~, sig~)
                 Err(message) => TabState::TabReadFailed(message)
               }
@@ -4530,6 +4541,7 @@ fn test_emit() -> @cmd.Emit[Msg] {
 ///|
 fn test_ctx() -> Ctx {
   {
+    locale: English,
     owner: { channel: @interop.ChannelId::Local, session: "desktop-test", },
     request_epoch: 0,
     watch_namespace: "test-page",

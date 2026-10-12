@@ -95,11 +95,11 @@ pub fn State::offer_office_selection(
   let materialized = match
     @office_viewer.materialize_selection_preview(raw, 4000) {
     Ok(value) => value
-    Err(message) => return Err(message)
+    Err(_) => return Err(ui(ctx.locale, OfficeSelectionFailed))
   }
   guard @mention_context.office_selection_summary(materialized) is Some(summary) &&
     summary.file == path.path else {
-    return Err("The selection does not belong to the active document.")
+    return Err(ui(ctx.locale, OfficeSelectionFailed))
   }
   Ok({
     ..self,

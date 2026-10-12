@@ -227,7 +227,76 @@ test "PDF binary replies retain original bytes and recover from failed loads" {
     loaded, path, document, "{\"status\":\"error\",\"message\":\"Invalid PDF structure.\"}",
   )
   assert_true(
-    pdf_in(failed, path).status is PdfFailed("Invalid PDF structure."),
+    pdf_in(failed, path).status
+    is PdfFailed("Could not preview this PDF. Try reopening the file."),
   )
   assert_true(decode_pdf_document("***invalid base64***", 9) is Err(_))
+}
+
+///|
+test "PDF failures use the current locale without exposing runtime details" {
+  let (state, ctx, path, _) = pdf_fixture()
+  let ctx = { ..ctx, locale: @i18n.SimplifiedChinese, }
+  let event : Json = {
+    "status": "error",
+    "message": "Error: invalid payload at /private/tmp/internal-parser.js:42",
+  }
+  let (_, failed) = update_pdf(
+    state,
+    ctx,
+    PdfStateChanged(
+      owner=ctx.owner,
+      epoch=0,
+      path~,
+      sig="pdf:1",
+      generation=7,
+      event=event.stringify(),
+    ),
+  )
+  assert_true(
+    pdf_in(failed, path).status
+    is PdfFailed("无法预览此 PDF。请重新打开文件。"),
+  )
+  let event : Json = {
+    "status": "selection-error",
+    "message": "Invalid selector: internal document JSON",
+  }
+  let (_, unavailable) = update_pdf(
+    state,
+    ctx,
+    PdfStateChanged(
+      owner=ctx.owner,
+      epoch=0,
+      path~,
+      sig="pdf:1",
+      generation=7,
+      event=event.stringify(),
+    ),
+  )
+  assert_eq(
+    unavailable.error,
+    Some("无法添加所选内容。请重新选择。"),
+  )
+  assert_true(
+    decode_pdf_document(locale=ctx.locale, "***invalid base64***", 9)
+    is Err("无法预览此 PDF。请重新打开文件。"),
+  )
+  assert_true(
+    render_office_document(
+      locale=ctx.locale,
+      "report.docx",
+      test_file("report.docx"),
+      "***invalid base64***",
+    )
+    is Err("无法预览此文档。请重新打开文件。"),
+  )
+  assert_true(
+    render_office_document(
+      locale=ctx.locale,
+      "report.docx",
+      test_file("report.docx"),
+      @base64.encode(b"invalid Office package"),
+    )
+    is Err("无法预览此文档。请重新打开文件。"),
+  )
 }

@@ -444,7 +444,7 @@ pub fn body_view(
     @html.div(class="viewer-stack", [
       viewer_host,
       office_surface,
-      pdf_password_dialog(dispatch, state, ctx),
+      pdf_password_dialog(locale~, dispatch, state, ctx),
       markdown_viewer_host,
       mbti_diagram_host,
       package_diagram_host,
@@ -544,7 +544,7 @@ fn viewer_notice(
             TabUnavailable(message) => message
             TabPdf(document~, ..) =>
               match document.status {
-                PdfLoading => "Loading PDF…"
+                PdfLoading => ui(locale, PdfLoading)
                 PdfFailed(message) => message
                 PdfReady | PdfPasswordRequired(_) => ""
               }
@@ -1983,6 +1983,7 @@ fn crumb_link(
 /// the reducer applies the visual change after Rabbita has rendered the new
 /// input values.
 fn office_viewer_toolbar(
+  locale? : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
   state : State,
   ctx : Ctx,
@@ -2007,34 +2008,34 @@ fn office_viewer_toolbar(
     class="office-viewer-toolbar",
     attrs=@html.Attrs::build()
       .role("group")
-      .aria_label("Office viewer controls"),
+      .aria_label(ui(locale, OfficeControls)),
     [
       @html.input(
         input_type=@html.InputType::Search,
         value=state.office_query,
-        placeholder="Find in document",
+        placeholder=ui(locale, OfficeFind),
         on_input=dispatch.map(value => OfficeSearchChanged(value)),
         attrs=@html.Attrs::build()
-          .aria_label("Find in document")
+          .aria_label(ui(locale, OfficeFind))
           .data_set("focus-owner", ""),
       ),
       @html.button(
         type_="button",
         class="office-viewer-control",
-        title="Zoom out",
+        title=ui(locale, OfficeZoomOut),
         disabled=state.office_zoom <= minimum,
         on_click=zoom_out,
-        attrs=@html.Attrs::build().aria_label("Zoom out"),
+        attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomOut)),
         "−",
       ),
       @html.span(class="office-viewer-zoom-value", "\{state.office_zoom}%"),
       @html.button(
         type_="button",
         class="office-viewer-control",
-        title="Zoom in",
+        title=ui(locale, OfficeZoomIn),
         disabled=state.office_zoom >= maximum,
         on_click=zoom_in,
-        attrs=@html.Attrs::build().aria_label("Zoom in"),
+        attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomIn)),
         "+",
       ),
       if pdf {
@@ -2048,13 +2049,13 @@ fn office_viewer_toolbar(
             "office-viewer-control"
           },
           title=if state.office_prefer_system_fonts {
-            "Use bundled Office fonts"
+            ui(locale, OfficeBundledFonts)
           } else {
-            "Prefer installed Office fonts"
+            ui(locale, OfficeInstalledFonts)
           },
           on_click=dispatch(OfficeSystemFontsToggled),
           attrs=@html.Attrs::build()
-            .aria_label("Office font source")
+            .aria_label(ui(locale, OfficeFontSource))
             .aria_pressed(state.office_prefer_system_fonts.to_string()),
           "Aa",
         )
@@ -2174,7 +2175,7 @@ pub fn breadcrumb_view(
   path_row.push(review_progress(locale~, dispatch, state, ctx))
   let pdf = active_pdf_document(state, ctx) is Some(_)
   if !pdf && active_office_surface(state, ctx) is Some(_) {
-    path_row.push(office_viewer_toolbar(dispatch, state, ctx))
+    path_row.push(office_viewer_toolbar(locale~, dispatch, state, ctx))
   }
   if mbti_view_available(state, ctx) {
     path_row.push(mbti_view_toolbar(locale~, dispatch, state, ctx))
@@ -2210,8 +2211,8 @@ pub fn breadcrumb_view(
     let children : Array[@html.Html] = [
       @html.div(class="viewer-breadcrumb-row", path_row),
       @html.div(class="pdf-command-row", [
-        office_viewer_toolbar(dispatch, state, ctx),
-        pdf_viewer_toolbar(dispatch, state, ctx),
+        office_viewer_toolbar(locale~, dispatch, state, ctx),
+        pdf_viewer_toolbar(locale~, dispatch, state, ctx),
       ]),
     ]
     if state.highlighted is Some(directory) {

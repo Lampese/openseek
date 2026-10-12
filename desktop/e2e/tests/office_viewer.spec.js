@@ -108,7 +108,7 @@ test('file tabs render real DOCX and XLSX packages through the Office surface', 
   await expect(page.locator('.word-page').first()).toHaveCSS('zoom', '1.1');
   await page.getByRole('searchbox', { name: 'Find in document', exact: true }).fill('Walking');
   await expect(page.locator('.word-page svg text.office-search-hit')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Office font source', exact: true }).click();
+  await page.getByRole('button', { name: 'Document fonts', exact: true }).click();
   await expect(page.locator('#openseek-office-surface')).toHaveClass(/prefer-system-fonts/);
 
   await app.openQuickOpen();

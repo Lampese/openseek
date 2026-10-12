@@ -240,6 +240,8 @@ Existing `.docx`, `.xlsx`, and `.pdf` paths open in the file panel and are read
 as bounded binary payloads (up to 20 MiB). DOCX/XLSX use the standalone viewer's
 `office.mbt` reader/layout pipeline. PDFs use its asynchronous PDF.js surface,
 with page navigation, zoom, fit to width, rotation, search, and password prompts.
+The Office/PDF controls and password prompts follow the application's language
+setting. Preview and selection failures show a short message with retry guidance.
 Selecting text in DOCX/PDF or a cell range in XLSX opens a preview showing its
 content and page or sheet/range. **Add to context** keeps the quotation in the
 active conversation; **Cancel** leaves the draft unchanged. Further selections
