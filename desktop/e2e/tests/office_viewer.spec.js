@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
+import { pinchZoom } from './support/office_zoom.js';
 
 async function applicationStyles(page) {
   return page.evaluate(() => {
@@ -56,6 +57,8 @@ test('the sales demonstration workbook opens both sheets and quotes calculated c
   await expect(summary).toBeHidden();
   await expect(detail.locator('td[data-cell="E11"]')).toHaveText('¥195,855.00');
   await expect(detail.locator('td[data-cell="A1"]')).toHaveCSS('font-weight', '700');
+  await pinchZoom(page, detail.locator('td[data-cell="A1"]'));
+  await expect(page.locator('.sheet-document')).toHaveCSS('zoom', '1.11');
   expect(await applicationStyles(page)).toEqual(outsideStyles);
   await expect(page.locator('td[data-formula]')).toHaveCount(20);
   await expect(page.locator('td.formula-pending')).toHaveCount(0);
@@ -106,6 +109,8 @@ test('file tabs render real DOCX and XLSX packages through the Office surface', 
   await expect(page.locator('.office-viewer-zoom-value')).toHaveText('110%');
   await expect(page.locator('#openseek-office-surface')).toHaveCSS('--office-zoom', '1.1');
   await expect(page.locator('.word-page').first()).toHaveCSS('zoom', '1.1');
+  await pinchZoom(page, page.locator('.word-page svg text').first());
+  await expect(page.locator('.word-page').first()).toHaveCSS('zoom', '1.22');
   await page.getByRole('searchbox', { name: 'Find in document', exact: true }).fill('Walking');
   await expect(page.locator('.word-page svg text.office-search-hit')).toHaveCount(1);
   await page.getByRole('button', { name: 'Document fonts', exact: true }).click();
@@ -139,6 +144,7 @@ test('Word selections preview, cancel and accumulate only after confirmation', a
   await page.locator('#quick-open-input').fill('report.docx');
   await page.getByRole('option', { name: /report\.docx/ }).click();
   await expect(page.locator('.word-page svg text').first()).toBeVisible();
+  await pinchZoom(page, page.locator('.word-page svg text').first());
 
   // Exercise the browser's native SVG Range path used by office-viewer. The
   // viewer's document-level selectionchange listener then emits its JSON
@@ -216,6 +222,7 @@ test('Excel ranges preview cell contents and retain separately confirmed context
   await page.getByRole('option', { name: /book1\.xlsx/ }).click();
   const cells = page.locator('.sheet-document td[data-cell]');
   await expect(cells.first()).toBeVisible();
+  await pinchZoom(page, cells.first());
   const first = await cells.first().boundingBox();
   const second = await cells.nth(Math.min(1, await cells.count() - 1)).boundingBox();
   const selectRange = async () => {

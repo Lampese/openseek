@@ -45,6 +45,20 @@ fn office_surface_config(
 }
 
 ///|
+fn office_pinch_command(
+  dispatch : @cmd.Emit[Msg],
+  config : @office_viewer.SurfaceConfig,
+) -> @cmd.Cmd {
+  let pdf = config.kind == Some(Pdf)
+  @office_viewer.pinch_zoom_command(
+    config,
+    zoom => dispatch(OfficeZoomChanged(zoom.to_string())),
+    min_zoom=if pdf { 25 } else { 50 },
+    max_zoom=if pdf { 400 } else { 200 },
+  )
+}
+
+///|
 /// Install native cursor/range selection and the fixed-font visual policy
 /// after Rabbita has inserted the rendered Office surface. The callback keeps
 /// the JSON envelope in the file-editor message stream; the root owns the
@@ -71,6 +85,7 @@ fn show_office_document(
       )
     }),
     @office_viewer.visual_command(config),
+    office_pinch_command(dispatch, config),
   ])
 }
 

@@ -242,6 +242,11 @@ as bounded binary payloads (up to 20 MiB). DOCX/XLSX use the standalone viewer's
 with page navigation, zoom, fit to width, rotation, search, and password prompts.
 The Office/PDF controls and password prompts follow the application's language
 setting. Preview and selection failures show a short message with retry guidance.
+DOCX, XLSX, and PDF previews support trackpad pinch zoom and Ctrl+wheel, with
+the toolbar percentage following the document's zoom. Ordinary two-finger
+scrolling remains available. DOCX/XLSX use the existing 50–200% range and PDFs
+use 25–400%; zooming keeps the document position under the pointer when the
+scroll range permits it. Selecting content continues to work after zooming.
 Selecting text in DOCX/PDF or a cell range in XLSX opens a preview showing its
 content and page or sheet/range. **Add to context** keeps the quotation in the
 active conversation; **Cancel** leaves the draft unchanged. Further selections
@@ -262,7 +267,7 @@ preview it and select the content to quote; attaching a document creates no
 extracted-text or JSON sidecar.
 Browser and desktop packages copy the metric-compatible Office fonts and the
 accompanying copyright, license and modification notices from the published
-`Lampese/office-viewer@0.1.2` package into the final web resource tree. The
+`Lampese/office-viewer@0.1.3` package into the final web resource tree. The
 browser-ready fonts retain the layout engine's glyphs and metrics and use
 distinct internal names for the modified font programs. No separate font
 checkout or duplicated font assets are needed.

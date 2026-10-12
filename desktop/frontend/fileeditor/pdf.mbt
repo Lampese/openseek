@@ -112,8 +112,9 @@ fn show_pdf_document(
   document : PdfDocument,
   sig : String,
 ) -> @cmd.Cmd {
-  @office_viewer.load_pdf_command(
-    pdf_surface_config(state, path),
+  let config = pdf_surface_config(state, path)
+  let load = @office_viewer.load_pdf_command(
+    config,
     document.bytes,
     selection => {
       dispatch(
@@ -140,6 +141,7 @@ fn show_pdf_document(
       )
     },
   )
+  @cmd.batch([load, office_pinch_command(dispatch, config)])
 }
 
 ///|

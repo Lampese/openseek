@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
+import { pinchZoom } from './support/office_zoom.js';
 
 async function openFile(app, name) {
   await app.openQuickOpen();
@@ -55,6 +56,8 @@ test('PDF controls and confirmed text selections retain structured context', asy
   // text is split around a highlight span and has no single text node.
   await expect(page.locator('.textLayer .highlight')).toHaveCount(0);
   const second = page.locator('.page[data-page-number="2"] [data-pdf-item]').filter({ hasText: 'Second page selection' }).first();
+  await expect(second).toBeVisible();
+  await pinchZoom(page, second);
   await expect(second).toBeVisible();
   const selectSecond = async (end = 6) => second.evaluate((element, end) => {
     const range = document.createRange();
