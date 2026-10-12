@@ -51,6 +51,9 @@ test('PDF controls and confirmed text selections retain structured context', asy
   await expect(page.locator('.pdf-search-count')).toHaveText('1 / 1');
   await expect(page.getByRole('spinbutton', { name: 'PDF page number', exact: true })).toHaveValue('2');
   await page.getByRole('searchbox', { name: 'Find in document', exact: true }).fill('');
+  // PDF.js removes match highlights asynchronously; until then the item's
+  // text is split around a highlight span and has no single text node.
+  await expect(page.locator('.textLayer .highlight')).toHaveCount(0);
   const second = page.locator('.page[data-page-number="2"] [data-pdf-item]').filter({ hasText: 'Second page selection' }).first();
   await expect(second).toBeVisible();
   const selectSecond = async (end = 6) => second.evaluate((element, end) => {
@@ -124,10 +127,15 @@ test('PDF fit width follows panel animations while manual zoom stays fixed', asy
     await expectFits();
   }
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
-  const manualScale = await surface.evaluate(host => host.__officeViewerPdf.viewer.currentScale);
+  // The zoom reaches PDF.js after the next render; reading the scale before
+  // then would record the fitted value as the manual one.
+  await expect.poll(() => surface.evaluate(host => host.__officeViewerPdf.viewer.currentScaleValue))
+    .not.toBe('page-width');
+  const scale = () => surface.evaluate(host => host.__officeViewerPdf.viewer.currentScale);
+  const manualScale = await scale();
   await page.getByRole('button', { name: 'Expand panel', exact: true }).click();
   await expect.poll(() => page.locator('.content').evaluate(element => element.getAnimations().length)).toBe(0);
-  expect(await surface.evaluate(host => host.__officeViewerPdf.viewer.currentScale)).toBe(manualScale);
+  expect(await scale()).toBe(manualScale);
   expect(app.pageErrors).toEqual([]);
 });
 

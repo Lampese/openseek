@@ -61,7 +61,8 @@ test('PDF upload waits for confirmation then opens from its existing file mentio
   await preview.getByRole('button', { name: 'Add to context', exact: true }).click();
   await expect(preview).toBeHidden();
   await expect(page.locator('.mention-chip')).toHaveCount(2);
-  await expect(page.locator('.mention-chip').filter({ hasText: 'OpenSeek' })).toBeVisible();
+  // The file mention's `.openseek/attachments` path also contains this word.
+  await expect(page.locator('.mention-chip').filter({ hasText: '“OpenSeek”' })).toBeVisible();
   await page.locator('#send').click();
   await expect.poll(() => app.requests.find(r => r.method === 'agent.start')?.params.task).toContain('<office_selection>');
   const request = app.requests.find(r => r.method === 'agent.start');
