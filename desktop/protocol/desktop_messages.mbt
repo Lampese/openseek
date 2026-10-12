@@ -51,7 +51,7 @@ pub(all) struct StartPayload {
   // Optional keeps older clients compatible; a present value is decoded into
   // the closed protocol type before the command reaches the host operation.
   thinking : OpenSeekThinking?
-  max_steps : Int?
+  max_steps : Int32?
   // Every desktop run belongs to a durable conversation. The engine rejects
   // a blank id before it acquires that conversation's record lease.
   session : String
@@ -124,7 +124,7 @@ pub(all) struct CompactPayload {
   // A resumed conversation may need a new engine process with these settings.
   model : String?
   thinking : OpenSeekThinking?
-  max_steps : Int?
+  max_steps : Int32?
   workspace : String?
 } derive(Debug, Eq)
 
@@ -143,7 +143,7 @@ pub(all) struct GoalPayload {
   // A resumed conversation may need a new engine process with these settings.
   model : String?
   thinking : OpenSeekThinking?
-  max_steps : Int?
+  max_steps : Int32?
   workspace : String?
 } derive(Debug, Eq)
 
@@ -235,22 +235,22 @@ pub impl FromJson for SettingsSetPayload with fn from_json(json, path) {
 pub impl ToJson for SettingsSetPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
   if self.provider is Some(value) {
-    fields["provider"] = value.to_json()
+    fields["provider"] = Json(value)
   }
   if self.custom_api_url is Some(value) {
-    fields["custom_api_url"] = value.to_json()
+    fields["custom_api_url"] = Json(value)
   }
   if self.deepseek_api_key is Some(value) {
-    fields["deepseek_api_key"] = value.to_json()
+    fields["deepseek_api_key"] = Json(value)
   }
   if self.glm_api_key is Some(value) {
-    fields["glm_api_key"] = value.to_json()
+    fields["glm_api_key"] = Json(value)
   }
   if self.followup_behavior is Some(value) {
-    fields["followup_behavior"] = value.to_json()
+    fields["followup_behavior"] = Json(value)
   }
   if self.custom_api_key is Some(value) {
-    fields["custom_api_key"] = value.to_json()
+    fields["custom_api_key"] = Json(value)
   }
   Json(fields)
 }
@@ -402,8 +402,8 @@ pub(all) struct GitHistoryPayload {
   session : String
   workspace : String?
   snapshot : GitHistorySnapshot?
-  skip : Int
-  limit : Int
+  skip : Int32
+  limit : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -443,16 +443,16 @@ pub(all) struct SearchFilesPayload {
   query : String
   // Zero warms the cache without returning rows; interactive queries use the
   // picker limit. The Host applies its own hard upper bound.
-  max_results : Int
+  max_results : Int32
   // Monotonic within the page. It identifies one cancellable query, not a
   // cache generation.
-  generation : Int
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|
 pub(all) struct CancelSearchFilesPayload {
   cache_key : String
-  generation : Int
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -468,8 +468,8 @@ pub(all) struct SearchTextPayload {
   include_glob : String
   exclude_glob : String
   session_key : String
-  generation : Int
-  max_results : Int
+  generation : Int32
+  max_results : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -477,7 +477,7 @@ pub(all) struct SearchTextPayload {
 /// frontier so cancel-before-search message ordering remains safe.
 pub(all) struct CancelSearchTextPayload {
   session_key : String
-  generation : Int
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -492,8 +492,8 @@ pub(all) struct SearchSemanticPayload {
   include_glob : String
   exclude_glob : String
   session_key : String
-  generation : Int
-  max_results : Int
+  generation : Int32
+  max_results : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -501,7 +501,7 @@ pub(all) struct SearchSemanticPayload {
 /// cancelled frontier so cancel-before-search message ordering remains safe.
 pub(all) struct CancelSearchSemanticPayload {
   session_key : String
-  generation : Int
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -515,7 +515,7 @@ pub(all) struct PatternRepairPayload {
   root : String
   pattern : String
   instruction : String
-  generation : Int
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -534,10 +534,10 @@ pub extend PatternRepairPayload with Eq::{equal, not_equal}
 pub(all) struct SemanticSearchProgressPayload {
   root : String
   session_key : String
-  generation : Int
+  generation : Int32
   matches : Array[SemanticSearchHit]
-  match_count : Int
-  file_count : Int
+  match_count : Int32
+  file_count : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -561,10 +561,10 @@ pub(all) struct SemanticSelectionMatch {
   rule_id : String
   description : String?
   file : String
-  start_line : Int
-  start_column : Int
-  end_line : Int
-  end_column : Int
+  start_line : Int32
+  start_column : Int32
+  end_line : Int32
+  end_column : Int32
   matched_source : String
 } derive(Debug, Eq)
 
@@ -653,8 +653,8 @@ pub impl ToJson for CreateDirectoryPayload with fn to_json(self) {
 pub(all) struct TerminalOpenPayload {
   session : String
   workspace : String?
-  cols : Int
-  rows : Int
+  cols : Int32
+  rows : Int32
   // One shell command line to run as the session's only process, in place of
   // the interactive login shell: a `!` command from the composer. The session
   // ends when the command does, and `terminal.exit` carries its exit code.
@@ -676,15 +676,15 @@ pub impl FromJson for TerminalOpenPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for TerminalOpenPayload with fn to_json(self) {
   let fields : Map[String, Json] = {
-    "session": self.session.to_json(),
-    "cols": self.cols.to_json(),
-    "rows": self.rows.to_json(),
+    "session": Json(self.session),
+    "cols": Json(self.cols),
+    "rows": Json(self.rows),
   }
   if self.workspace is Some(workspace) {
-    fields["workspace"] = workspace.to_json()
+    fields["workspace"] = Json(workspace)
   }
   if self.command is Some(command) {
-    fields["command"] = command.to_json()
+    fields["command"] = Json(command)
   }
   Json(fields)
 }
@@ -715,12 +715,12 @@ pub impl FromJson for TerminalInputPayload with fn from_json(json, path) {
 
 ///|
 pub impl ToJson for TerminalInputPayload with fn to_json(self) {
-  let fields : Map[String, Json] = { "id": self.id.to_json() }
+  let fields : Map[String, Json] = { "id": Json(self.id) }
   if self.data is Some(data) {
-    fields["data"] = data.to_json()
+    fields["data"] = Json(data)
   }
   if self.data_base64 is Some(data_base64) {
-    fields["data_base64"] = data_base64.to_json()
+    fields["data_base64"] = Json(data_base64)
   }
   Json::object(fields)
 }
@@ -728,8 +728,8 @@ pub impl ToJson for TerminalInputPayload with fn to_json(self) {
 ///|
 pub(all) struct TerminalResizePayload {
   id : String
-  cols : Int
-  rows : Int
+  cols : Int32
+  rows : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -750,7 +750,7 @@ pub impl ToJson for TerminalResizePayload with fn to_json(self) {
 ///|
 pub(all) struct TerminalAckPayload {
   id : String
-  sequence : Int
+  sequence : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -840,8 +840,8 @@ pub(all) struct LspHoverPayload {
   session : String
   root : String
   path : String
-  line : Int
-  character : Int
+  line : Int32
+  character : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -898,8 +898,8 @@ pub(all) struct MoonIdeNavigationPayload {
   session : String
   root : String
   path : String
-  line : Int
-  column : Int
+  line : Int32
+  column : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -962,7 +962,7 @@ pub(all) struct ExternalLinkPayload {
 
 ///|
 pub(all) struct BrowserOpenPayload {
-  id : Int
+  id : Int32
   url : String
   dark : Bool
 } derive(Debug, Eq)
@@ -986,12 +986,12 @@ pub impl FromJson for BrowserOpenPayload with fn from_json(json, path) {
 
 ///|
 pub(all) struct BrowserIdPayload {
-  id : Int
+  id : Int32
 } derive(Debug, Eq)
 
 ///|
 pub(all) struct BrowserThemePayload {
-  id : Int
+  id : Int32
   dark : Bool
 } derive(Debug, Eq)
 
@@ -1002,16 +1002,16 @@ pub(all) struct AppTitlebarThemePayload {
 
 ///|
 pub(all) struct BrowserBoundsPayload {
-  id : Int
-  x : Int
-  y : Int
-  width : Int
-  height : Int
+  id : Int32
+  x : Int32
+  y : Int32
+  width : Int32
+  height : Int32
 } derive(Debug, Eq)
 
 ///|
 pub(all) struct BrowserVisiblePayload {
-  id : Int
+  id : Int32
   visible : Bool
 } derive(Debug, Eq)
 // Notification payloads.
@@ -1087,7 +1087,7 @@ pub(all) struct StartedPayload {
   submission_id : String?
   engine : String?
   model : String?
-  max_steps : Int?
+  max_steps : Int32?
   session : String
   session_root : String?
 } derive(Debug, Eq)
@@ -1134,7 +1134,7 @@ pub impl ToJson for AgentEventPayload with fn to_json(self) {
 pub(all) struct AgentErrorPayload {
   run_id : String?
   message : String?
-  exit_code : Int?
+  exit_code : Int32?
   diagnostics : String?
 } derive(Debug, Eq)
 
@@ -1163,7 +1163,7 @@ pub(all) struct FinishedPayload {
   run_id : String
   status : String
   answer : String?
-  exit_code : Int?
+  exit_code : Int32?
 } derive(Debug, Eq)
 
 ///|
@@ -1200,7 +1200,7 @@ pub impl FromJson for FinishedPayload with fn from_json(json, path) {
 ///|
 pub(all) struct SessionCommitPayload {
   session : String
-  sequence : Int
+  sequence : Int32
   event : SessionEvent
   // The durable store root this commit was read from, as a frontend resource
   // path. Session ids are not globally unique across stores, so the
@@ -1218,7 +1218,7 @@ pub(all) struct SessionCommitPayload {
 pub(all) struct SubrunProgressPayload {
   id : String
   session : String
-  steps : Int
+  steps : Int32
   activity : String
 } derive(Debug, Eq)
 
@@ -1242,9 +1242,9 @@ pub(all) struct WorkflowEntryPayload {
   /// The contract's snake_case terminal: `captured`, `no_report`,
   /// `max_steps`, `context_yield`, `timed_out`, `skipped`, `failed`.
   status : String
-  steps : Int
-  prompt_tokens : Int
-  completion_tokens : Int
+  steps : Int32
+  prompt_tokens : Int32
+  completion_tokens : Int32
   cost_usd : Double?
   /// Why `steps` and the token counts may fall short of what the child spent
   /// (it left no result, or its launch was cancelled); absent when they are
@@ -1276,11 +1276,11 @@ pub(all) struct WorkspacesChangedPayload {
 
 ///|
 pub impl ToJson for WorkspacesChangedPayload with fn to_json(self) {
-  let fields : Map[String, Json] = { "workspaces": self.workspaces.to_json() }
+  let fields : Map[String, Json] = { "workspaces": Json(self.workspaces) }
   if self.chat_root is Some(root) {
     fields["chat_root"] = root.to_json()
   }
-  fields.to_json()
+  Json(fields)
 }
 
 ///|
@@ -1324,7 +1324,7 @@ pub(all) struct WorkspaceSettingsSetPayload {
   workspace : String
   worktree_mode : Bool?
   checkout_submodules : Bool?
-  submodule_checkout_timeout_seconds : Int?
+  submodule_checkout_timeout_seconds : Int32?
 } derive(Debug, Eq)
 
 ///|
@@ -1337,12 +1337,12 @@ pub(all) struct WorkspaceSettingsPayload {
   workspace : String
   worktree_mode : Bool
   checkout_submodules : Bool
-  submodule_checkout_timeout_seconds : Int
+  submodule_checkout_timeout_seconds : Int32
 } derive(Debug, Eq)
 
 ///|
 pub(all) struct SettingsStatusPayload {
-  revision : Int
+  revision : Int32
   provider : String
   custom_api_url : String?
   has_deepseek_key : Bool
@@ -1368,15 +1368,15 @@ pub impl FromJson for SettingsStatusPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for SettingsStatusPayload with fn to_json(self) {
   let fields : Map[String, Json] = {
-    "revision": self.revision.to_json(),
-    "provider": self.provider.to_json(),
-    "has_deepseek_key": self.has_deepseek_key.to_json(),
-    "has_glm_key": self.has_glm_key.to_json(),
-    "has_custom_key": self.has_custom_key.to_json(),
-    "followup_behavior": self.followup_behavior.to_json(),
+    "revision": Json(self.revision),
+    "provider": Json(self.provider),
+    "has_deepseek_key": Json(self.has_deepseek_key),
+    "has_glm_key": Json(self.has_glm_key),
+    "has_custom_key": Json(self.has_custom_key),
+    "followup_behavior": Json(self.followup_behavior),
   }
   if self.custom_api_url is Some(value) {
-    fields["custom_api_url"] = value.to_json()
+    fields["custom_api_url"] = Json(value)
   }
   Json(fields)
 }
@@ -1405,17 +1405,17 @@ pub impl FromJson for AppInfoReply with fn from_json(json, path) {
 ///|
 /// A release build omits `console_url` rather than sending null.
 pub impl ToJson for AppInfoReply with fn to_json(self) {
-  let object : Map[String, Json] = { "version": self.version.to_json() }
+  let object : Map[String, Json] = { "version": Json(self.version) }
   if self.console_url is Some(url) {
-    object["console_url"] = url.to_json()
+    object["console_url"] = Json(url)
   }
   Json::object(object)
 }
 
 ///|
 pub(all) struct UpdateDownloadProgressPayload {
-  downloaded_bytes : Int
-  total_bytes : Int?
+  downloaded_bytes : Int32
+  total_bytes : Int32?
 } derive(Debug, Eq)
 
 ///|
@@ -1489,7 +1489,7 @@ pub(all) struct FsWatchFailedPayload {
 ///|
 pub(all) struct TerminalOutputPayload {
   id : String
-  sequence : Int
+  sequence : Int32
   data : String
 } derive(Debug, Eq)
 
@@ -1511,7 +1511,7 @@ pub impl ToJson for TerminalOutputPayload with fn to_json(self) {
 ///|
 pub(all) struct TerminalExitPayload {
   id : String
-  code : Int
+  code : Int32
 } derive(Debug, Eq)
 
 ///|
@@ -2654,7 +2654,7 @@ pub impl FromJson for CancelPayload with fn from_json(json, path) {
 pub impl ToJson for CancelPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
   if self.run_id is Some(value) {
-    fields["run_id"] = value.to_json()
+    fields["run_id"] = Json(value)
   }
   Json(fields)
 }
@@ -2682,12 +2682,12 @@ pub impl FromJson for KnownRunPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for KnownRunPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.run_id is Some(value) {
-    fields["run_id"] = value.to_json()
+    fields["run_id"] = Json(value)
   }
   if self.submission_id is Some(value) {
-    fields["submission_id"] = value.to_json()
+    fields["submission_id"] = Json(value)
   }
   Json(fields)
 }
@@ -2707,7 +2707,7 @@ pub impl FromJson for RunsPayload with fn from_json(json, path) {
 pub impl ToJson for RunsPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
   if self.known is Some(value) {
-    fields["known"] = value.to_json()
+    fields["known"] = Json(value)
   }
   Json(fields)
 }
@@ -2731,9 +2731,9 @@ pub impl FromJson for LoadSessionPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for LoadSessionPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.workspace is Some(value) {
-    fields["workspace"] = value.to_json()
+    fields["workspace"] = Json(value)
   }
   Json(fields)
 }
@@ -2756,9 +2756,9 @@ pub impl FromJson for SessionPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for SessionPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.force is Some(value) {
-    fields["force"] = value.to_json()
+    fields["force"] = Json(value)
   }
   Json(fields)
 }
@@ -2781,8 +2781,8 @@ pub impl FromJson for ArchivedSessionPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for ArchivedSessionPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
-  fields["workspace"] = self.workspace.to_json()
+  fields["session"] = Json(self.session)
+  fields["workspace"] = Json(self.workspace)
   Json(fields)
 }
 
@@ -2800,7 +2800,7 @@ pub impl FromJson for WorkspacePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WorkspacePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["path"] = self.path.to_json()
+  fields["path"] = Json(self.path)
   Json(fields)
 }
 
@@ -2818,7 +2818,7 @@ pub impl FromJson for WorktreeListPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WorktreeListPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workspace"] = self.workspace.to_json()
+  fields["workspace"] = Json(self.workspace)
   Json(fields)
 }
 
@@ -2844,10 +2844,10 @@ pub impl FromJson for WorktreeRemovePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WorktreeRemovePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workspace"] = self.workspace.to_json()
-  fields["name"] = self.name.to_json()
+  fields["workspace"] = Json(self.workspace)
+  fields["name"] = Json(self.name)
   if self.force is Some(value) {
-    fields["force"] = value.to_json()
+    fields["force"] = Json(value)
   }
   Json(fields)
 }
@@ -2875,10 +2875,10 @@ pub impl FromJson for InstallSkillPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for InstallSkillPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["module_name"] = self.module_name.to_json()
-  fields["version"] = self.version.to_json()
+  fields["module_name"] = Json(self.module_name)
+  fields["version"] = Json(self.version)
   if self.package_path is Some(value) {
-    fields["package_path"] = value.to_json()
+    fields["package_path"] = Json(value)
   }
   Json(fields)
 }
@@ -2892,7 +2892,7 @@ pub impl FromJson for UninstallSkillPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for UninstallSkillPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
+  fields["id"] = Json(self.id)
   Json(fields)
 }
 
@@ -2918,11 +2918,11 @@ pub impl FromJson for OpenPathPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for OpenPathPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.cwd is Some(value) {
-    fields["cwd"] = value.to_json()
+    fields["cwd"] = Json(value)
   }
-  fields["path"] = self.path.to_json()
+  fields["path"] = Json(self.path)
   Json(fields)
 }
 
@@ -2949,12 +2949,12 @@ pub impl FromJson for GitBranchPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for GitBranchPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.cwd is Some(value) {
-    fields["cwd"] = value.to_json()
+    fields["cwd"] = Json(value)
   }
   if self.base_hint is Some(value) {
-    fields["base_hint"] = value.to_json()
+    fields["base_hint"] = Json(value)
   }
   Json(fields)
 }
@@ -2978,9 +2978,9 @@ pub impl FromJson for GitChangesPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for GitChangesPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.workspace is Some(value) {
-    fields["workspace"] = value.to_json()
+    fields["workspace"] = Json(value)
   }
   Json(fields)
 }
@@ -3012,13 +3012,13 @@ pub impl FromJson for GitOriginalFilePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for GitOriginalFilePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.workspace is Some(value) {
-    fields["workspace"] = value.to_json()
+    fields["workspace"] = Json(value)
   }
-  fields["path"] = self.path.to_json()
+  fields["path"] = Json(self.path)
   if self.revision is Some(value) {
-    fields["revision"] = value.to_json()
+    fields["revision"] = Json(value)
   }
   Json(fields)
 }
@@ -3037,7 +3037,7 @@ pub impl FromJson for ReadDirPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for ReadDirPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["path"] = self.path.to_json()
+  fields["path"] = Json(self.path)
   Json(fields)
 }
 
@@ -3071,11 +3071,11 @@ pub impl FromJson for SearchFilesPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for SearchFilesPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["path"] = self.path.to_json()
-  fields["cache_key"] = self.cache_key.to_json()
-  fields["query"] = self.query.to_json()
-  fields["max_results"] = self.max_results.to_json()
-  fields["generation"] = self.generation.to_json()
+  fields["path"] = Json(self.path)
+  fields["cache_key"] = Json(self.cache_key)
+  fields["query"] = Json(self.query)
+  fields["max_results"] = Json(self.max_results)
+  fields["generation"] = Json(self.generation)
   Json(fields)
 }
 
@@ -3097,8 +3097,8 @@ pub impl FromJson for CancelSearchFilesPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for CancelSearchFilesPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["cache_key"] = self.cache_key.to_json()
-  fields["generation"] = self.generation.to_json()
+  fields["cache_key"] = Json(self.cache_key)
+  fields["generation"] = Json(self.generation)
   Json(fields)
 }
 
@@ -3116,7 +3116,7 @@ pub impl FromJson for ClearFileSearchCachePayload with fn from_json(json, path) 
 ///|
 pub impl ToJson for ClearFileSearchCachePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["cache_key"] = self.cache_key.to_json()
+  fields["cache_key"] = Json(self.cache_key)
   Json(fields)
 }
 
@@ -3138,9 +3138,9 @@ pub impl FromJson for ReadFilePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for ReadFilePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["path"] = self.path.to_json()
+  fields["path"] = Json(self.path)
   if self.root is Some(value) {
-    fields["root"] = value.to_json()
+    fields["root"] = Json(value)
   }
   Json(fields)
 }
@@ -3188,16 +3188,16 @@ pub impl FromJson for SemanticSelectionMatch with fn from_json(json, path) {
 ///|
 pub impl ToJson for SemanticSelectionMatch with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["rule_id"] = self.rule_id.to_json()
+  fields["rule_id"] = Json(self.rule_id)
   if self.description is Some(value) {
-    fields["description"] = value.to_json()
+    fields["description"] = Json(value)
   }
-  fields["file"] = self.file.to_json()
-  fields["start_line"] = self.start_line.to_json()
-  fields["start_column"] = self.start_column.to_json()
-  fields["end_line"] = self.end_line.to_json()
-  fields["end_column"] = self.end_column.to_json()
-  fields["matched_source"] = self.matched_source.to_json()
+  fields["file"] = Json(self.file)
+  fields["start_line"] = Json(self.start_line)
+  fields["start_column"] = Json(self.start_column)
+  fields["end_line"] = Json(self.end_line)
+  fields["end_column"] = Json(self.end_column)
+  fields["matched_source"] = Json(self.matched_source)
   Json(fields)
 }
 
@@ -3240,12 +3240,12 @@ pub impl FromJson for MaterializeSemanticSelectionPayload with fn from_json(
 ///|
 pub impl ToJson for MaterializeSemanticSelectionPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["root"] = self.root.to_json()
-  fields["artifact_id"] = self.artifact_id.to_json()
-  fields["patterns"] = self.patterns.to_json()
-  fields["include_glob"] = self.include_glob.to_json()
-  fields["exclude_glob"] = self.exclude_glob.to_json()
-  fields["matches"] = self.matches.to_json()
+  fields["root"] = Json(self.root)
+  fields["artifact_id"] = Json(self.artifact_id)
+  fields["patterns"] = Json(self.patterns)
+  fields["include_glob"] = Json(self.include_glob)
+  fields["exclude_glob"] = Json(self.exclude_glob)
+  fields["matches"] = Json(self.matches)
   Json(fields)
 }
 
@@ -3263,7 +3263,7 @@ pub impl FromJson for StatFilesPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for StatFilesPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["paths"] = self.paths.to_json()
+  fields["paths"] = Json(self.paths)
   Json(fields)
 }
 
@@ -3298,13 +3298,13 @@ pub impl FromJson for WatchWorkspacePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WatchWorkspacePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["path"] = self.path.to_json()
-  fields["files"] = self.files.to_json()
-  fields["directories"] = self.directories.to_json()
+  fields["path"] = Json(self.path)
+  fields["files"] = Json(self.files)
+  fields["directories"] = Json(self.directories)
   if self.recursive is Some(value) {
-    fields["recursive"] = value.to_json()
+    fields["recursive"] = Json(value)
   }
-  fields["generation"] = self.generation.to_json()
+  fields["generation"] = Json(self.generation)
   Json(fields)
 }
 
@@ -3323,7 +3323,7 @@ pub impl FromJson for BrowseDirectoryPayload with fn from_json(json, path) {
 pub impl ToJson for BrowseDirectoryPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
   if self.path is Some(value) {
-    fields["path"] = value.to_json()
+    fields["path"] = Json(value)
   }
   Json(fields)
 }
@@ -3339,7 +3339,7 @@ pub impl FromJson for ExternalLinkPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for ExternalLinkPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["url"] = self.url.to_json()
+  fields["url"] = Json(self.url)
   Json(fields)
 }
 
@@ -3352,7 +3352,7 @@ pub impl FromJson for BrowserIdPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for BrowserIdPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
+  fields["id"] = Json(self.id)
   Json(fields)
 }
 
@@ -3371,8 +3371,8 @@ pub impl FromJson for BrowserThemePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for BrowserThemePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
-  fields["dark"] = self.dark.to_json()
+  fields["id"] = Json(self.id)
+  fields["dark"] = Json(self.dark)
   Json(fields)
 }
 
@@ -3390,7 +3390,7 @@ pub impl FromJson for AppTitlebarThemePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for AppTitlebarThemePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["dark"] = self.dark.to_json()
+  fields["dark"] = Json(self.dark)
   Json(fields)
 }
 
@@ -3415,11 +3415,11 @@ pub impl FromJson for BrowserBoundsPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for BrowserBoundsPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
-  fields["x"] = self.x.to_json()
-  fields["y"] = self.y.to_json()
-  fields["width"] = self.width.to_json()
-  fields["height"] = self.height.to_json()
+  fields["id"] = Json(self.id)
+  fields["x"] = Json(self.x)
+  fields["y"] = Json(self.y)
+  fields["width"] = Json(self.width)
+  fields["height"] = Json(self.height)
   Json(fields)
 }
 
@@ -3438,8 +3438,8 @@ pub impl FromJson for BrowserVisiblePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for BrowserVisiblePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
-  fields["visible"] = self.visible.to_json()
+  fields["id"] = Json(self.id)
+  fields["visible"] = Json(self.visible)
   Json(fields)
 }
 
@@ -3484,22 +3484,22 @@ pub impl FromJson for StartedPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for StartedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["run_id"] = self.run_id.to_json()
+  fields["run_id"] = Json(self.run_id)
   if self.submission_id is Some(value) {
-    fields["submission_id"] = value.to_json()
+    fields["submission_id"] = Json(value)
   }
   if self.engine is Some(value) {
-    fields["engine"] = value.to_json()
+    fields["engine"] = Json(value)
   }
   if self.model is Some(value) {
-    fields["model"] = value.to_json()
+    fields["model"] = Json(value)
   }
   if self.max_steps is Some(value) {
-    fields["max_steps"] = value.to_json()
+    fields["max_steps"] = Json(value)
   }
-  fields["session"] = self.session.to_json()
+  fields["session"] = Json(self.session)
   if self.session_root is Some(value) {
-    fields["session_root"] = value.to_json()
+    fields["session_root"] = Json(value)
   }
   Json(fields)
 }
@@ -3508,16 +3508,16 @@ pub impl ToJson for StartedPayload with fn to_json(self) {
 pub impl ToJson for AgentErrorPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
   if self.run_id is Some(value) {
-    fields["run_id"] = value.to_json()
+    fields["run_id"] = Json(value)
   }
   if self.message is Some(value) {
-    fields["message"] = value.to_json()
+    fields["message"] = Json(value)
   }
   if self.exit_code is Some(value) {
-    fields["exit_code"] = value.to_json()
+    fields["exit_code"] = Json(value)
   }
   if self.diagnostics is Some(value) {
-    fields["diagnostics"] = value.to_json()
+    fields["diagnostics"] = Json(value)
   }
   Json(fields)
 }
@@ -3548,10 +3548,10 @@ pub impl FromJson for SessionCommitPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for SessionCommitPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["session"] = self.session.to_json()
-  fields["sequence"] = self.sequence.to_json()
+  fields["session"] = Json(self.session)
+  fields["sequence"] = Json(self.sequence)
   fields["event"] = self.event.to_json()
-  fields["session_root"] = self.session_root.to_json()
+  fields["session_root"] = Json(self.session_root)
   Json(fields)
 }
 
@@ -3578,10 +3578,10 @@ pub impl FromJson for SubrunProgressPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for SubrunProgressPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
-  fields["session"] = self.session.to_json()
-  fields["steps"] = self.steps.to_json()
-  fields["activity"] = self.activity.to_json()
+  fields["id"] = Json(self.id)
+  fields["session"] = Json(self.session)
+  fields["steps"] = Json(self.steps)
+  fields["activity"] = Json(self.activity)
   Json(fields)
 }
 
@@ -3654,29 +3654,29 @@ pub impl FromJson for WorkflowEntryPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WorkflowEntryPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workflow"] = self.workflow.to_json()
-  fields["session"] = self.session.to_json()
-  fields["child"] = self.child.to_json()
-  fields["kind"] = self.kind.to_json()
-  fields["label"] = self.label.to_json()
+  fields["workflow"] = Json(self.workflow)
+  fields["session"] = Json(self.session)
+  fields["child"] = Json(self.child)
+  fields["kind"] = Json(self.kind)
+  fields["label"] = Json(self.label)
   if self.phase is Some(value) {
-    fields["phase"] = value.to_json()
+    fields["phase"] = Json(value)
   }
-  fields["status"] = self.status.to_json()
-  fields["steps"] = self.steps.to_json()
-  fields["prompt_tokens"] = self.prompt_tokens.to_json()
-  fields["completion_tokens"] = self.completion_tokens.to_json()
+  fields["status"] = Json(self.status)
+  fields["steps"] = Json(self.steps)
+  fields["prompt_tokens"] = Json(self.prompt_tokens)
+  fields["completion_tokens"] = Json(self.completion_tokens)
   if self.cost_usd is Some(value) {
-    fields["cost_usd"] = value.to_json()
+    fields["cost_usd"] = Json(value)
   }
   if self.unaccounted is Some(value) {
-    fields["unaccounted"] = value.to_json()
+    fields["unaccounted"] = Json(value)
   }
   if self.started_at is Some(value) {
-    fields["started_at"] = value.to_json()
+    fields["started_at"] = Json(value)
   }
   if self.finished_at is Some(value) {
-    fields["finished_at"] = value.to_json()
+    fields["finished_at"] = Json(value)
   }
   Json(fields)
 }
@@ -3703,9 +3703,9 @@ pub impl FromJson for SessionChangedPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for SessionChangedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["change"] = self.change.to_json()
-  fields["session"] = self.session.to_json()
-  fields["workspace"] = self.workspace.to_json()
+  fields["change"] = Json(self.change)
+  fields["session"] = Json(self.session)
+  fields["workspace"] = Json(self.workspace)
   Json(fields)
 }
 
@@ -3727,8 +3727,8 @@ pub impl FromJson for WorktreeChangedPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WorktreeChangedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workspace"] = self.workspace.to_json()
-  fields["worktrees"] = self.worktrees.to_json()
+  fields["workspace"] = Json(self.workspace)
+  fields["worktrees"] = Json(self.worktrees)
   Json(fields)
 }
 
@@ -3746,7 +3746,7 @@ pub impl FromJson for WorkspaceSettingsGetPayload with fn from_json(json, path) 
 ///|
 pub impl ToJson for WorkspaceSettingsGetPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workspace"] = self.workspace.to_json()
+  fields["workspace"] = Json(self.workspace)
   Json(fields)
 }
 
@@ -3785,15 +3785,15 @@ pub impl FromJson for WorkspaceSettingsSetPayload with fn from_json(json, path) 
 ///|
 pub impl ToJson for WorkspaceSettingsSetPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workspace"] = self.workspace.to_json()
+  fields["workspace"] = Json(self.workspace)
   if self.worktree_mode is Some(value) {
-    fields["worktree_mode"] = value.to_json()
+    fields["worktree_mode"] = Json(value)
   }
   if self.checkout_submodules is Some(value) {
-    fields["checkout_submodules"] = value.to_json()
+    fields["checkout_submodules"] = Json(value)
   }
   if self.submodule_checkout_timeout_seconds is Some(value) {
-    fields["submodule_checkout_timeout_seconds"] = value.to_json()
+    fields["submodule_checkout_timeout_seconds"] = Json(value)
   }
   Json(fields)
 }
@@ -3824,10 +3824,12 @@ pub impl FromJson for WorkspaceSettingsPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for WorkspaceSettingsPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["workspace"] = self.workspace.to_json()
-  fields["worktree_mode"] = self.worktree_mode.to_json()
-  fields["checkout_submodules"] = self.checkout_submodules.to_json()
-  fields["submodule_checkout_timeout_seconds"] = self.submodule_checkout_timeout_seconds.to_json()
+  fields["workspace"] = Json(self.workspace)
+  fields["worktree_mode"] = Json(self.worktree_mode)
+  fields["checkout_submodules"] = Json(self.checkout_submodules)
+  fields["submodule_checkout_timeout_seconds"] = Json(
+    self.submodule_checkout_timeout_seconds,
+  )
   Json(fields)
 }
 
@@ -3853,9 +3855,9 @@ pub impl FromJson for UpdateDownloadProgressPayload with fn from_json(
 ///|
 pub impl ToJson for UpdateDownloadProgressPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["downloaded_bytes"] = self.downloaded_bytes.to_json()
+  fields["downloaded_bytes"] = Json(self.downloaded_bytes)
   if self.total_bytes is Some(value) {
-    fields["total_bytes"] = value.to_json()
+    fields["total_bytes"] = Json(value)
   }
   Json(fields)
 }
@@ -3874,7 +3876,7 @@ pub impl FromJson for UpdateDownloadedPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for UpdateDownloadedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["version"] = self.version.to_json()
+  fields["version"] = Json(self.version)
   Json(fields)
 }
 
@@ -3892,7 +3894,7 @@ pub impl FromJson for UpdateDownloadFailedPayload with fn from_json(json, path) 
 ///|
 pub impl ToJson for UpdateDownloadFailedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["message"] = self.message.to_json()
+  fields["message"] = Json(self.message)
   Json(fields)
 }
 
@@ -3914,8 +3916,8 @@ pub impl FromJson for AuthUserPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for AuthUserPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["login"] = self.login.to_json()
-  fields["avatar_url"] = self.avatar_url.to_json()
+  fields["login"] = Json(self.login)
+  fields["avatar_url"] = Json(self.avatar_url)
   Json(fields)
 }
 
@@ -3935,9 +3937,9 @@ pub impl FromJson for AuthDevicePayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for AuthDevicePayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["id"] = self.id.to_json()
-  fields["name"] = self.name.to_json()
-  fields["url"] = self.url.to_json()
+  fields["id"] = Json(self.id)
+  fields["name"] = Json(self.name)
+  fields["url"] = Json(self.url)
   Json(fields)
 }
 
@@ -3973,12 +3975,12 @@ pub impl FromJson for AuthStatusPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for AuthStatusPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["connected"] = self.connected.to_json()
+  fields["connected"] = Json(self.connected)
   if self.server_url is Some(value) {
-    fields["server_url"] = value.to_json()
+    fields["server_url"] = Json(value)
   }
   if self.managed_by_env is Some(value) {
-    fields["managed_by_env"] = value.to_json()
+    fields["managed_by_env"] = Json(value)
   }
   if self.user is Some(value) {
     fields["user"] = value.to_json()
@@ -4011,9 +4013,9 @@ pub impl FromJson for DiagnosticsPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for DiagnosticsPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["root"] = self.root.to_json()
-  fields["path"] = self.path.to_json()
-  fields["diagnostics"] = self.diagnostics.to_json()
+  fields["root"] = Json(self.root)
+  fields["path"] = Json(self.path)
+  fields["diagnostics"] = Json(self.diagnostics)
   Json(fields)
 }
 
@@ -4043,10 +4045,10 @@ pub impl FromJson for FsChangedPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for FsChangedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["root"] = self.root.to_json()
-  fields["baseline"] = self.baseline.to_json()
-  fields["events"] = self.events.to_json()
-  fields["generation"] = self.generation.to_json()
+  fields["root"] = Json(self.root)
+  fields["baseline"] = Json(self.baseline)
+  fields["events"] = Json(self.events)
+  fields["generation"] = Json(self.generation)
   Json(fields)
 }
 
@@ -4072,8 +4074,8 @@ pub impl FromJson for FsWatchFailedPayload with fn from_json(json, path) {
 ///|
 pub impl ToJson for FsWatchFailedPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
-  fields["root"] = self.root.to_json()
-  fields["message"] = self.message.to_json()
-  fields["generation"] = self.generation.to_json()
+  fields["root"] = Json(self.root)
+  fields["message"] = Json(self.message)
+  fields["generation"] = Json(self.generation)
   Json(fields)
 }

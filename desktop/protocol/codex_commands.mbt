@@ -53,7 +53,7 @@ pub(all) struct CodexAccountLoginCancelPayload {
 
 ///|
 pub(all) struct CodexModelListPayload {
-  limit : Int
+  limit : Int32
   include_hidden : Bool
 } derive(Debug, Eq)
 
@@ -94,7 +94,7 @@ pub(all) struct CodexThreadReadPayload {
 
 ///|
 pub(all) struct CodexThreadListPayload {
-  limit : Int
+  limit : Int32
   archived : Bool
   cursor : String?
 } derive(Debug, Eq)
@@ -167,7 +167,7 @@ pub(all) struct CodexDataReply {
 /// resolution notifications delivered on the same app-server connection.
 pub(all) struct CodexServerRequestsReply {
   data : Array[Json]
-  generation : Int
+  generation : Int32
 } derive(Debug, Eq)
 
 ///|

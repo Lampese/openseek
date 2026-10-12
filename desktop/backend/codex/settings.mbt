@@ -23,7 +23,7 @@ pub fn CodexSettings::default() -> CodexSettings {
 pub fn CodexSettings::CodexSettings(
   command~ : String,
   home~ : @pathx.Path?,
-  require_home? : Bool = false,
+  require_home~ : Bool = false,
 ) -> CodexSettings {
   { command, home, require_home, }
 }
