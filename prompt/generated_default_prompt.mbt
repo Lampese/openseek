@@ -1220,7 +1220,7 @@ fn default_prompt() -> String {
     #|applications, `frontend-rabbita/README.md` covers browser UIs and full-stack web
     #|applications, and `moongrep/README.md` covers the structural-search tool.
     #|
-    #|For Typst tasks, read the relevant files under `<bundled-resources>/typst/`.
+    #|For slide tasks, read the file `<bundled-resources>/slides/README.md`.
     #|
     #|Directory layout relative to `Bundled resources`:
     #|
@@ -1246,7 +1246,7 @@ fn default_prompt() -> String {
     #|├── examples
     #|├── frontend-rabbita
     #|├── moongrep
-    #|├── typst
+    #|├── slides
     #|└── workflow
     #|```
     #|
