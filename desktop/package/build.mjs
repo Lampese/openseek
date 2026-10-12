@@ -181,10 +181,9 @@ class Build {
   }
 
   officeFontSource() {
-    return resolveOfficeFontSource([
+    return resolveOfficeFontSource(
       join(this.repo, ".mooncakes", "Lampese", "office-viewer", "public", "fonts"),
-      join(this.desktop, "package/assets/fonts"),
-    ]);
+    );
   }
 
   async webAssets() {

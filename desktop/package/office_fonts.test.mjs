@@ -2,19 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { OfficeFontFiles, resolveOfficeFontSource } from "./office_fonts.mjs";
 
-test("Office fonts prefer the published viewer and fall back to checked-in assets", () => {
-  const complete = new Set(OfficeFontFiles.map(name => `/fallback/${name}`));
-  const exists = path => complete.has(path) || path.startsWith("/registry/");
+test("Office fonts require the published package and all copyright notices", () => {
+  const complete = new Set(OfficeFontFiles.map(name => `/registry/${name}`));
+  const exists = path => complete.has(path);
   assert.equal(
-    resolveOfficeFontSource(["/registry", "/fallback"], exists),
+    resolveOfficeFontSource("/registry", exists),
     "/registry",
   );
-  assert.equal(
-    resolveOfficeFontSource(["/missing", "/fallback"], exists),
-    "/fallback",
-  );
+  for (const name of OfficeFontFiles.filter(name => name.startsWith("LICENSES/"))) {
+    complete.delete(`/registry/${name}`);
+    assert.throws(
+      () => resolveOfficeFontSource("/registry", exists),
+      error => error.message.includes(name),
+    );
+    complete.add(`/registry/${name}`);
+  }
   assert.throws(
-    () => resolveOfficeFontSource(["/missing"], () => false),
-    /Office viewer fonts are missing/,
+    () => resolveOfficeFontSource("/missing", exists),
+    /Office viewer fonts are missing from the Mooncakes package/,
   );
 });

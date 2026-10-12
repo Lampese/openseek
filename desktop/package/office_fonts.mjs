@@ -22,15 +22,15 @@ export const OfficeFontFiles = [
   "LICENSES/Carlito-OFL.txt",
   "LICENSES/Liberation-LICENSE.txt",
   "LICENSES/NotoSansSC-OFL.txt",
+  "LICENSES/MODIFICATIONS.md",
 ];
 
-export function resolveOfficeFontSource(candidates, exists = existsSync) {
-  const source = candidates.find(candidate =>
-    OfficeFontFiles.every(name => exists(join(candidate, name))));
-  if (!source) {
+export function resolveOfficeFontSource(source, exists = existsSync) {
+  const missing = OfficeFontFiles.filter(name => !exists(join(source, name)));
+  if (missing.length) {
     throw new Error(
-      "Office viewer fonts are missing; resolve the Mooncakes dependency " +
-      "or desktop/package/assets/fonts.",
+      "Office viewer fonts are missing from the Mooncakes package: " +
+      missing.join(", "),
     );
   }
   return source;

@@ -259,9 +259,11 @@ carried into a new task worktree when necessary. Click a file reference to
 preview it and select the content to quote; attaching a document creates no
 extracted-text or JSON sidecar.
 Browser and desktop packages copy the metric-compatible Office fonts and the
-accompanying license notices into the final web resource tree; a checked-in
-copy under `desktop/package/assets/fonts` keeps packaging
-deterministic without a sibling viewer checkout.
+accompanying copyright, license and modification notices from the published
+`Lampese/office-viewer@0.1.2` package into the final web resource tree. The
+browser-ready fonts retain the layout engine's glyphs and metrics and use
+distinct internal names for the modified font programs. No separate font
+checkout or duplicated font assets are needed.
 
 Moon resolves the viewer from the published module declared in `moon.mod`;
 packaging reads its PDF runtime and font assets from the resolved package.
