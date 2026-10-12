@@ -225,7 +225,7 @@ test('encrypted PDFs retry incorrect passwords and release a cancelled session',
   await page.locator('#openseek-office-surface').evaluate(host => { window.cancelledPdf = host.__officeViewerPdf; });
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.locator('.viewer-notice')).toContainText('PDF loading cancelled.');
+  await expect(page.locator('.viewer-notice')).toHaveText('PDF preview cancelled. Reopen the file to try again.');
   expect(await page.evaluate(() => window.cancelledPdf.alive)).toBe(false);
   await openFile(app, 'report.pdf');
   await expectPdf(page);
