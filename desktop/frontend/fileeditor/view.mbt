@@ -280,7 +280,8 @@ pub fn resize_handle_view() -> @html.Html {
 /// always rooted at the workspace root) as a toggleable pane on
 /// the viewer's right. Always rendered so the viewer's host element
 /// (`viewer-host`, `markdown-viewer-host`, `mbti-diagram-host`,
-/// `package-diagram-host`, `diff-editor-host`, and `semantic-review-host`) stay put
+/// `package-diagram-host`, `diff-editor-host`, `semantic-review-host`, and the
+/// Office surface) stay put
 /// across renders and screen
 /// switches; CSS hides the inactive surface and the tree pane when toggled off,
 /// and collapses the whole panel to zero width when it is closed. The children's
@@ -314,7 +315,10 @@ pub fn body_view(
       None => false
     }
   }
+  let office_document = active_office_surface(state, ctx)
+  let use_office_surface = !use_diff_surface && office_document is Some(_)
   let use_markdown_surface = !use_diff_surface &&
+    !use_office_surface &&
     (match ctx.active_file {
       Some(path) =>
         uses_markdown_presentation(
@@ -324,10 +328,12 @@ pub fn body_view(
     })
   let use_mbti_surface = !use_diff_surface &&
     !use_markdown_surface &&
+    !use_office_surface &&
     uses_mbti_diagram_surface(state, ctx)
   let use_package_surface = !use_diff_surface &&
     !use_markdown_surface &&
     !use_mbti_surface &&
+    !use_office_surface &&
     uses_package_diagram_surface(state, ctx)
   let use_semantic_surface = use_diff_surface &&
     state.review_diff_mode != ReviewDiffLine &&
@@ -343,6 +349,7 @@ pub fn body_view(
       .id(ViewerHostId)
       .class(
         if use_diff_surface ||
+          use_office_surface ||
           use_markdown_surface ||
           use_mbti_surface ||
           use_package_surface {
@@ -353,6 +360,12 @@ pub fn body_view(
       )
       .data_set("theme", if ctx.dark_mode { "dark" } else { "light" }),
     ([] : Array[@html.Html]),
+  )
+  let office_surface = @office_viewer.render_surface(
+    match office_document {
+      Some(config) => config
+      None => empty_office_surface_config(state)
+    },
   )
   let markdown_viewer_host = @html.div(
     attrs=@html.Attrs::build()
@@ -430,6 +443,8 @@ pub fn body_view(
   @html.div(class="editor-body", [
     @html.div(class="viewer-stack", [
       viewer_host,
+      office_surface,
+      pdf_password_dialog(locale~, dispatch, state, ctx),
       markdown_viewer_host,
       mbti_diagram_host,
       package_diagram_host,
@@ -437,9 +452,30 @@ pub fn body_view(
       semantic_review_host,
       viewer_notice(locale~, state, ctx),
       github_review_line_layer(locale~, dispatch, state, ctx),
+      office_selection_preview_view(locale, dispatch, state, ctx),
     ]),
     tree_pane(locale~, dispatch, state, ctx),
   ])
+}
+
+///|
+/// An Office tab owns the same stable surface as the standalone viewer. Keep
+/// history, diffs, Markdown, and code tabs on their existing surfaces; an
+/// Office document is selected after its package renders into `TabOffice`;
+/// `TabPdf` owns the asynchronous PDF surface and its loading/error notice.
+fn active_office_surface(
+  state : State,
+  ctx : Ctx,
+) -> @office_viewer.SurfaceConfig? {
+  guard ctx.active_history_diff is None && ctx.active_file is Some(path) else {
+    return None
+  }
+  match state.docs.get(path) {
+    Some({ state: TabOffice(document~, ..), .. }) =>
+      Some(office_surface_config(state, document))
+    Some({ state: TabPdf(..), .. }) => Some(pdf_surface_config(state, path))
+    _ => None
+  }
 }
 
 ///|
@@ -506,7 +542,13 @@ fn viewer_notice(
                 )
               }
             TabUnavailable(message) => message
-            TabLoading | TabLoaded(..) => ""
+            TabPdf(document~, ..) =>
+              match document.status {
+                PdfLoading => ui(locale, PdfLoading)
+                PdfFailed(message) => message
+                PdfReady | PdfPasswordRequired(_) => ""
+              }
+            TabLoading | TabLoaded(..) | TabOffice(..) => ""
           }
         None => ""
       }
@@ -1936,6 +1978,93 @@ fn crumb_link(
 }
 
 ///|
+/// Embedded Office controls stay beside the document breadcrumb so they do
+/// not cover the page or sheet. They operate on the shared surface config;
+/// the reducer applies the visual change after Rabbita has rendered the new
+/// input values.
+fn office_viewer_toolbar(
+  locale? : @i18n.Locale = English,
+  dispatch : @cmd.Emit[Msg],
+  state : State,
+  ctx : Ctx,
+) -> @html.Html {
+  guard active_office_surface(state, ctx) is Some(_) else {
+    return @html.nothing
+  }
+  let pdf = active_pdf_document(state, ctx) is Some(_)
+  let minimum = if pdf { 25 } else { 50 }
+  let maximum = if pdf { 400 } else { 200 }
+  let zoom_out = if state.office_zoom <= minimum {
+    @cmd.none
+  } else {
+    dispatch(OfficeZoomChanged((state.office_zoom - 10).to_string()))
+  }
+  let zoom_in = if state.office_zoom >= maximum {
+    @cmd.none
+  } else {
+    dispatch(OfficeZoomChanged((state.office_zoom + 10).to_string()))
+  }
+  @html.div(
+    class="office-viewer-toolbar",
+    attrs=@html.Attrs::build()
+      .role("group")
+      .aria_label(ui(locale, OfficeControls)),
+    [
+      @html.input(
+        input_type=@html.InputType::Search,
+        value=state.office_query,
+        placeholder=ui(locale, OfficeFind),
+        on_input=dispatch.map(value => OfficeSearchChanged(value)),
+        attrs=@html.Attrs::build()
+          .aria_label(ui(locale, OfficeFind))
+          .data_set("focus-owner", ""),
+      ),
+      @html.button(
+        type_="button",
+        class="office-viewer-control",
+        title=ui(locale, OfficeZoomOut),
+        disabled=state.office_zoom <= minimum,
+        on_click=zoom_out,
+        attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomOut)),
+        "−",
+      ),
+      @html.span(class="office-viewer-zoom-value", "\{state.office_zoom}%"),
+      @html.button(
+        type_="button",
+        class="office-viewer-control",
+        title=ui(locale, OfficeZoomIn),
+        disabled=state.office_zoom >= maximum,
+        on_click=zoom_in,
+        attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomIn)),
+        "+",
+      ),
+      if pdf {
+        @html.nothing
+      } else {
+        @html.button(
+          type_="button",
+          class=if state.office_prefer_system_fonts {
+            "office-viewer-control active"
+          } else {
+            "office-viewer-control"
+          },
+          title=if state.office_prefer_system_fonts {
+            ui(locale, OfficeBundledFonts)
+          } else {
+            ui(locale, OfficeInstalledFonts)
+          },
+          on_click=dispatch(OfficeSystemFontsToggled),
+          attrs=@html.Attrs::build()
+            .aria_label(ui(locale, OfficeFontSource))
+            .aria_pressed(state.office_prefer_system_fonts.to_string()),
+          "Aa",
+        )
+      },
+    ],
+  )
+}
+
+///|
 /// The breadcrumb under the tab bar: the active file's path as
 /// `dir › dir › file` (the file segment emphasized) behind a leading
 /// ui(locale, WorkspaceLabel) crumb. Every crumb but the last opens a VS Code-style picker
@@ -2044,6 +2173,10 @@ pub fn breadcrumb_view(
     path_row.push(review_badge(locale~, dispatch, state, ctx))
   }
   path_row.push(review_progress(locale~, dispatch, state, ctx))
+  let pdf = active_pdf_document(state, ctx) is Some(_)
+  if !pdf && active_office_surface(state, ctx) is Some(_) {
+    path_row.push(office_viewer_toolbar(locale~, dispatch, state, ctx))
+  }
   if mbti_view_available(state, ctx) {
     path_row.push(mbti_view_toolbar(locale~, dispatch, state, ctx))
   }
@@ -2074,6 +2207,19 @@ pub fn breadcrumb_view(
       icon(icon_folder),
     ),
   )
+  if pdf && !review {
+    let children : Array[@html.Html] = [
+      @html.div(class="viewer-breadcrumb-row", path_row),
+      @html.div(class="pdf-command-row", [
+        office_viewer_toolbar(locale~, dispatch, state, ctx),
+        pdf_viewer_toolbar(locale~, dispatch, state, ctx),
+      ]),
+    ]
+    if state.highlighted is Some(directory) {
+      children.push(breadcrumb_picker(locale~, dispatch, state, ctx, directory))
+    }
+    return @html.div(class="viewer-breadcrumb review-toolbar", children)
+  }
   if review {
     let children : Array[@html.Html] = [
       @html.div(class="viewer-breadcrumb-row", path_row),
@@ -3296,6 +3442,7 @@ fn tree_row(
         @html.nothing
       },
     ),
+    tree_entry_icon(entry, expanded),
     @html.span(class="tree-name", entry.name),
     // Decorative guides never intercept clicks or change the label's slot.
     @html.span(
@@ -3366,6 +3513,33 @@ fn tree_row(
       },
     ]),
     children,
+  )
+}
+
+///|
+/// Keep the workspace tree's entry slot aligned with the compact file cards:
+/// folders use the existing sidebar folder glyph, while files use the shared
+/// type-specific 16px path without a surrounding badge.
+fn tree_entry_icon(entry : FileEntry, expanded : Bool) -> @html.Html {
+  let icon = if entry.is_dir {
+    @icons.icon(
+      if expanded {
+        @icons.icon_folder_opened
+      } else {
+        @icons.icon_folder
+      },
+    )
+  } else {
+    @icons.codicon(
+      @workspace_file_ref.file_icon_path(
+        @workspace_file_ref.file_kind(entry.name),
+      ),
+    )
+  }
+  @html.span(
+    class="tree-entry-icon",
+    attrs=@html.Attrs::build().aria_hidden("true"),
+    [icon],
   )
 }
 

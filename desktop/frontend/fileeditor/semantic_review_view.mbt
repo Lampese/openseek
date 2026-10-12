@@ -76,7 +76,9 @@ fn semantic_review_input(state : State, ctx : Ctx) -> SemanticReviewInput? {
       }
       let live_modified = match doc.state {
         TabLoaded(..) => Some({ resource: file, path, })
-        TabDeleted
+        TabOffice(..)
+        | TabPdf(..)
+        | TabDeleted
         | TabLoading
         | TabBinary
         | TabOversized

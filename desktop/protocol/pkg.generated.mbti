@@ -155,6 +155,18 @@ pub fn ArchivedSessionPayload::not_equal(Self, Self) -> Bool
 pub fn ArchivedSessionPayload::to_json(Self) -> Json
 pub fn ArchivedSessionPayload::to_repr(Self) -> @debug.Repr
 
+pub(all) enum AttachmentSource {
+  AttachmentPath(String)
+  AttachmentBytes(name~ : String, data_base64~ : String)
+} derive(Eq, @debug.Debug)
+pub fn AttachmentSource::equal(Self, Self) -> Bool
+pub fn AttachmentSource::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn AttachmentSource::not_equal(Self, Self) -> Bool
+pub fn AttachmentSource::to_json(Self) -> Json
+pub fn AttachmentSource::to_repr(Self) -> @debug.Repr
+pub impl ToJson for AttachmentSource
+pub impl @json.FromJson for AttachmentSource
+
 pub(all) struct AuthDevicePayload {
   id : String
   name : String
@@ -1663,6 +1675,17 @@ pub fn GoalReply::not_equal(Self, Self) -> Bool
 pub fn GoalReply::to_json(Self) -> Json
 pub fn GoalReply::to_repr(Self) -> @debug.Repr
 
+pub(all) struct ImportAttachmentReply {
+  path : String
+} derive(Eq, @debug.Debug)
+pub fn ImportAttachmentReply::equal(Self, Self) -> Bool
+pub fn ImportAttachmentReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn ImportAttachmentReply::not_equal(Self, Self) -> Bool
+pub fn ImportAttachmentReply::to_json(Self) -> Json
+pub fn ImportAttachmentReply::to_repr(Self) -> @debug.Repr
+pub impl ToJson for ImportAttachmentReply
+pub impl @json.FromJson for ImportAttachmentReply
+
 pub(all) struct InstallSkillPayload {
   module_name : String
   version : String
@@ -2308,6 +2331,17 @@ pub fn PendingApprovalPayload::to_repr(Self) -> @debug.Repr
 pub impl ToJson for PendingApprovalPayload
 pub impl @json.FromJson for PendingApprovalPayload
 
+pub(all) struct PickAttachmentReply {
+  path : String?
+} derive(Eq, @debug.Debug)
+pub fn PickAttachmentReply::equal(Self, Self) -> Bool
+pub fn PickAttachmentReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PickAttachmentReply::not_equal(Self, Self) -> Bool
+pub fn PickAttachmentReply::to_json(Self) -> Json
+pub fn PickAttachmentReply::to_repr(Self) -> @debug.Repr
+pub impl ToJson for PickAttachmentReply
+pub impl @json.FromJson for PickAttachmentReply
+
 pub(all) struct PredictionReadyPayload {
   session : String
   prediction : @openseek_protocol.PredictionRecord
@@ -2319,6 +2353,32 @@ pub fn PredictionReadyPayload::to_json(Self) -> Json
 pub fn PredictionReadyPayload::to_repr(Self) -> @debug.Repr
 pub impl ToJson for PredictionReadyPayload
 pub impl @json.FromJson for PredictionReadyPayload
+
+pub(all) struct PrepareAttachmentPayload {
+  session : String
+  workspace : String
+  source : AttachmentSource
+} derive(Eq, @debug.Debug)
+pub fn PrepareAttachmentPayload::equal(Self, Self) -> Bool
+pub fn PrepareAttachmentPayload::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PrepareAttachmentPayload::not_equal(Self, Self) -> Bool
+pub fn PrepareAttachmentPayload::to_json(Self) -> Json
+pub fn PrepareAttachmentPayload::to_repr(Self) -> @debug.Repr
+pub impl ToJson for PrepareAttachmentPayload
+pub impl @json.FromJson for PrepareAttachmentPayload
+
+pub(all) enum PrepareAttachmentReply {
+  WorkspaceAttachment(path~ : String)
+  AttachmentUploadRequired(name~ : String)
+  AttachmentImage(name~ : String, url~ : String)
+} derive(Eq, @debug.Debug)
+pub fn PrepareAttachmentReply::equal(Self, Self) -> Bool
+pub fn PrepareAttachmentReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn PrepareAttachmentReply::not_equal(Self, Self) -> Bool
+pub fn PrepareAttachmentReply::to_json(Self) -> Json
+pub fn PrepareAttachmentReply::to_repr(Self) -> @debug.Repr
+pub impl ToJson for PrepareAttachmentReply
+pub impl @json.FromJson for PrepareAttachmentReply
 
 pub(all) enum QueueAction {
   QueueAdd(id~ : String, text~ : String, images~ : Array[String])
@@ -2384,7 +2444,7 @@ pub fn ReadFilePayload::to_repr(Self) -> @debug.Repr
 pub(all) enum ReadFileReply {
   Binary
   Oversized
-  BinaryContent(data_base64~ : String, media_type~ : String)
+  BinaryContent(data_base64~ : String, media_type~ : String, sig~ : String)
   Content(content~ : String, absolute~ : String, sig~ : String)
 } derive(Eq, @debug.Debug)
 pub fn ReadFileReply::equal(Self, Self) -> Bool
@@ -3039,6 +3099,20 @@ pub fn SkillsCatalogReply::to_json(Self) -> Json
 pub fn SkillsCatalogReply::to_repr(Self) -> @debug.Repr
 pub impl ToJson for SkillsCatalogReply
 pub impl @json.FromJson for SkillsCatalogReply
+
+pub(all) struct StageAttachmentsPayload {
+  session : String
+  workspace : String
+  source_root : String
+  paths : Array[String]
+} derive(Eq, @debug.Debug)
+pub fn StageAttachmentsPayload::equal(Self, Self) -> Bool
+pub fn StageAttachmentsPayload::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn StageAttachmentsPayload::not_equal(Self, Self) -> Bool
+pub fn StageAttachmentsPayload::to_json(Self) -> Json
+pub fn StageAttachmentsPayload::to_repr(Self) -> @debug.Repr
+pub impl ToJson for StageAttachmentsPayload
+pub impl @json.FromJson for StageAttachmentsPayload
 
 pub(all) struct StartPayload {
   images : Array[String]

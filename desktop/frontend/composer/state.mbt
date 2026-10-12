@@ -349,6 +349,31 @@ pub fn Draft::with_semantic_selection(
 }
 
 ///|
+/// Keep each explicitly accepted Office quotation. Accepting the same payload
+/// again is idempotent; None clears Office quotations without changing others.
+pub fn Draft::with_office_selection(
+  self : Draft,
+  materialized : String?,
+) -> Draft {
+  let mentions = match materialized {
+    None =>
+      self.mentions.filter(mention => {
+        !(mention.ref_ is @mention_context.OfficeSelection(_))
+      })
+    Some(materialized) => {
+      let ref_ = @mention_context.OfficeSelection(materialized~)
+      if self.mentions.any(mention => mention.ref_ == ref_) {
+        return self
+      }
+      let mentions = self.mentions.copy()
+      mentions.push({ ref_, range: None, })
+      mentions
+    }
+  }
+  { ..self, mentions, }
+}
+
+///|
 /// Review selections are root-authored, just like editor feedback. Ordinary
 /// local chips keep their exact selection ranges while these are reconciled.
 pub fn Draft::with_review_changes(

@@ -1453,7 +1453,7 @@ pub(all) struct SearchSemanticReply {
 pub(all) enum ReadFileReply {
   Binary
   Oversized
-  BinaryContent(data_base64~ : String, media_type~ : String)
+  BinaryContent(data_base64~ : String, media_type~ : String, sig~ : String)
   Content(content~ : String, absolute~ : String, sig~ : String)
 } derive(Debug, Eq)
 
@@ -1470,11 +1470,12 @@ pub impl ToJson for ReadFileReply with fn to_json(self) {
   match self {
     Binary => { "kind": "binary" }
     Oversized => { "kind": "oversized" }
-    BinaryContent(data_base64~, media_type~) =>
+    BinaryContent(data_base64~, media_type~, sig~) =>
       {
         "kind": "binary_content",
         "data_base64": data_base64,
         "media_type": media_type,
+        "sig": sig,
       }
     Content(content~, absolute~, sig~) =>
       {
@@ -1534,10 +1535,11 @@ pub impl FromJson for ReadFileReply with fn from_json(json, path) {
     "oversized" => Oversized
     "binary_content" => {
       guard fields.get("data_base64") is Some(String(data_base64)) &&
-        fields.get("media_type") is Some(String(media_type)) else {
+        fields.get("media_type") is Some(String(media_type)) &&
+        fields.get("sig") is Some(String(sig)) else {
         raise JsonDecodeError((path, "malformed binary file content reply"))
       }
-      BinaryContent(data_base64~, media_type~)
+      BinaryContent(data_base64~, media_type~, sig~)
     }
     "content" => {
       guard fields.get("content") is Some(String(content)) &&

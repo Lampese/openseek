@@ -63,6 +63,10 @@ import {
   "openseek_desktop/frontend/composer",
 }
 
+import {
+  "Lampese/office-viewer/viewer" @office_viewer,
+} for "wbtest"
+
 supported_targets = "js"
 
 pkgtype(kind: "executable")

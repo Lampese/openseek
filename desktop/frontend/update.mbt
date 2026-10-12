@@ -1487,6 +1487,7 @@ fn file_ctx(model : Model) -> @fileeditor.Ctx {
     // stable owner lets an interrupted changed-file review resume after Repair
     // without ever treating the project root as a fallback checkout.
     owner: active.owner,
+    locale: model.locale,
     model: engine_model.wire(),
     thinking: engine_model.thinking(model.reasoning_for(engine_model)),
     request_epoch: model.file_panel.request_epoch,
@@ -3187,6 +3188,50 @@ fn update_msg(
           mentions: draft.with_semantic_selection(reference).mentions,
         }),
       )
+    }
+    FileEditor(
+      @fileeditor.OfficeSelectionChanged(
+        owner~,
+        epoch~,
+        path~,
+        sig~,
+        selection~
+      )
+    ) => {
+      guard model.file_panel.accepts_office_callback(
+        file_ctx(model),
+        owner,
+        epoch,
+        path,
+        sig,
+      ) else {
+        return (@cmd.none, model)
+      }
+      offer_office_selection(dispatch, model, owner, selection)
+    }
+    FileEditor(@fileeditor.OfficeSelectionConfirmed(preview)) =>
+      confirm_office_selection(model, preview)
+    FileEditor(
+      @fileeditor.PdfSelectionChanged(
+        owner~,
+        epoch~,
+        path~,
+        sig~,
+        generation~,
+        selection~
+      )
+    ) => {
+      guard model.file_panel.accepts_pdf_callback(
+        file_ctx(model),
+        owner,
+        epoch,
+        path,
+        sig,
+        generation,
+      ) else {
+        return (@cmd.none, model)
+      }
+      offer_office_selection(dispatch, model, owner, selection)
     }
     // The host classifies tree selections before the dock opens their viewer.
     FileEditor(FileSelected(path~, ..)) =>

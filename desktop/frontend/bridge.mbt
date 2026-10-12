@@ -918,6 +918,33 @@ async fn request_agent_start(
   submission_id : String,
 ) -> Unit noraise {
   let dispatch = dispatch.map((msg : DeviceMsg) => FromDevice(channel, msg))
+  try {
+    if payload.workspace is Some(workspace) &&
+      @mention_context.parse(payload.task) is Some(parsed) {
+      @composer.stage_attachments(
+        channel,
+        session,
+        workspace,
+        workspace,
+        parsed.mentions,
+      )
+    }
+  } catch {
+    error => {
+      // Attachment staging happens before agent.start is issued, so even a
+      // lost staging reply leaves the prompt definitely unsubmitted.
+      scheduler.add(
+        dispatch(
+          StartRejected(
+            session~,
+            submission_id~,
+            message=@interop.bridge_error_text(error),
+          ),
+        ),
+      )
+      return
+    }
+  }
   let reply = @interop.bridge_request(channel, @commands.agent_start, payload) catch {
     error => {
       let message = @interop.bridge_error_text(error)
