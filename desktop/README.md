@@ -158,6 +158,36 @@ shown but never touched: installs refuse to overwrite a same-named entry that
 has no provenance marker, and only entries the app itself installed get an
 Uninstall button.
 
+## MCP servers
+
+The agent can use tools from [MCP](https://modelcontextprotocol.io) servers
+listed in `~/.openseek/mcp.json`, the `{"mcpServers": {...}}` shape described
+in the repository README. The file is created and edited by hand. When no
+file exists the host passes nothing, so an `OPENSEEK_MCP_CONFIG` inherited
+from the launching environment still applies.
+
+An engine connects its servers once, when it starts — one set of server
+processes per conversation. The host therefore reads the file before each
+prompt and keeps a digest of its content among the things that pin an engine
+to its configuration, like the model and the endpoint: an edit starts a new
+engine, and with it every server, on that conversation's next prompt, with no
+desktop restart. A prompt already queued behind a running turn runs on the
+engine it was queued for. Scheduled runs are pointed at the same file.
+
+The engine reads the file itself, a moment after the host does. An edit that
+lands in between leaves the engine on newer content than the host recorded,
+which costs one more engine start than was needed on the next prompt; only an
+edit that is also undone in that moment goes unnoticed until the file changes
+again.
+
+A configuration the engine cannot load, and a server that fails to start, to
+list its tools, or to fit under the tool limit, raise an error toast naming
+the cause; the conversation continues without those tools. A broken file is
+reported once, however many conversations start engines on it. MCP tool calls
+are not gated by the approval prompt, which only covers the built-in tools'
+sandbox escalations. Codex conversations do not
+read this file — Codex takes its MCP servers from its own `config.toml`.
+
 ## API endpoint
 
 SeekMoon is bring-your-own-key: there is no hosted chat proxy, so requests

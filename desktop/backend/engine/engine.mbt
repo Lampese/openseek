@@ -713,6 +713,11 @@ priv enum PumpState {
 struct EngineManager {
   engine : String
   runtime_dir : @pathx.Path?
+  // The MCP configuration error already forwarded to pages. Every
+  // conversation's engine reports the same broken file, and a person needs
+  // to hear it once; it is forgotten when a configuration loads, or when
+  // there is no file any more.
+  mut mcp_error : String?
   // Serializes the short placement/slot-claim phase of every operation that
   // can create or move a workspace-backed record with workspace detach.
   // Once a claim is visible, detach refuses it; once a run/compaction is
@@ -1057,6 +1062,7 @@ fn new_engine_manager(
   {
     engine,
     runtime_dir,
+    mcp_error: None,
     workspace_lifecycle_lock: Mutex(),
     archive_cleanup_lock: Mutex(),
     settings_lock: Mutex(),
@@ -1450,6 +1456,11 @@ fn engine_process_args(config : RunConfig) -> Array[String] {
   if config.session_root is Some(root) {
     args.push("--session-root=\{root.to_string()}")
   }
+  // The engine reads this file itself and connects its servers once, when
+  // it starts.
+  if config.mcp_config is Some(mcp) {
+    args.push("--mcp-config=\{mcp.path.to_string()}")
+  }
   args.append(["--dir", ".", "--approval", "ask"])
   args
 }
@@ -1503,6 +1514,11 @@ async fn[G] start_serve_engine(
   let (stderr_reader, child_stderr) = @process.read_from_process()
   let env = engine_process_env(config, manager.runtime_dir)
   let program = config.engine
+  // An engine with no MCP configuration to load has nothing wrong with it
+  // any more, so the error remembered from one that had is forgotten.
+  if !mcp_configured(config, env) {
+    manager.mcp_error = None
+  }
   // `--approval ask` is the host declaring that it CAN answer a permission
   // question: the engine's own default is never, because an engine cannot tell
   // a controller with a person behind it from a script reading its stdout.
@@ -1752,6 +1768,15 @@ async fn ServeEngine::consume(
         manager.kick_follower(engine.session_key)
         let wire_event = @wire.parse(json)
         match wire_event {
+          // One report per error, not one per conversation.
+          Some(McpConfigUnreadable(error~, ..) | McpConfigInvalid(error~, ..)) => {
+            if manager.mcp_error == Some(error) {
+              continue
+            }
+            manager.mcp_error = Some(error)
+          }
+          // A configuration that loaded ends whatever was wrong before it.
+          Some(McpToolsRegistered(..)) => manager.mcp_error = None
           Some(PredictionResult(source_sequence~, outcome~)) => {
             if outcome is Completed(..) {
               emit(
@@ -2934,6 +2959,7 @@ async test "native engine env has one authoritative bundled moon path" {
     cwd: None,
     session: "s-env",
     session_root: None,
+    mcp_config: None,
   }
   let env = engine_process_env(config, Some(runtime))
   assert_eq(env["OPENSEEK_THINKING"], "high")
@@ -2964,6 +2990,25 @@ async test "native engine env has one authoritative bundled moon path" {
       "ask",
     ],
   )
+  // A configured engine is pointed at the user's file, readable or not.
+  let mcp_path = root.join("mcp.json").resolve()
+  for revision in [McpConfigRevision::of_text("{}"), ReadFailed("denied")] {
+    @debug.assert_eq(
+      engine_process_args({
+        ..config,
+        mcp_config: Some({ path: mcp_path, revision, }),
+      }),
+      [
+        "serve",
+        "--session=s-env",
+        "--mcp-config=\{mcp_path.to_string()}",
+        "--dir",
+        ".",
+        "--approval",
+        "ask",
+      ],
+    )
+  }
   let moon_bin = moon_home.join("bin").to_string()
   let expected_path = if ambient_path is Some(path) && !path.is_empty() {
     "\{moon_bin}\{@env.path_sep}\{path}"
@@ -3053,6 +3098,7 @@ async test "engine startup rolls back follower on pre-spawn failure" {
     cwd: None,
     session: "s-startup-failure",
     session_root: Some(@pathx.Path(dir + "/root").resolve()),
+    mcp_config: None,
   }
   @async.with_task_group(group => {
     let failed = try {
@@ -3168,6 +3214,7 @@ fn pump_test_config(session : String) -> RunConfig {
     cwd: None,
     session,
     session_root: Some(@pathx.Path("/tmp/openseek-pump-test").resolve()),
+    mcp_config: None,
   }
 }
 

@@ -133,6 +133,10 @@ async fn[G] Schedules::run_cli(
   if config.session_root is Some(root) {
     args.push("--session-root=\{root.to_string()}")
   }
+  // A scheduled run uses the same MCP servers a conversation does.
+  if resolved_mcp_config() is Some(mcp) {
+    args.push("--mcp-config=\{mcp.path.to_string()}")
+  }
   args.append(["--", spec.task])
   if self.stopped.contains(run.id) {
     return 0
