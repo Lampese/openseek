@@ -128,7 +128,11 @@ async fn[G] Schedules::run_cli(
   guard config.cwd is Some(cwd) && @fs.kind(cwd.to_string()) is Directory else {
     raise EngineError("The scheduled project's directory is unavailable")
   }
-  let env = engine_process_env(config, self.manager.runtime_dir)
+  let env = engine_process_env(
+    config,
+    self.manager.runtime_dir,
+    host_mcp?=self.manager.host_mcp,
+  )
   let args = ["run", "--session=\{run.session}", "--dir=.", "--approval=never"]
   if config.session_root is Some(root) {
     args.push("--session-root=\{root.to_string()}")

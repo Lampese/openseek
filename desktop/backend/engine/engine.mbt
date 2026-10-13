@@ -713,6 +713,10 @@ priv enum PumpState {
 struct EngineManager {
   engine : String
   runtime_dir : @pathx.Path?
+  // The host's own tool server, when this host offers tools to the agents it
+  // runs. Every engine started while it is set is granted access to it
+  // through its environment (see `engine_process_env`).
+  host_mcp : @mcp.Server?
   // The MCP configuration error already forwarded to pages. Every
   // conversation's engine reports the same broken file, and a person needs
   // to hear it once; it is forgotten when a configuration loads, or when
@@ -1058,10 +1062,12 @@ async fn EngineManager::close_engines_for_sessions(
 fn new_engine_manager(
   engine : String,
   runtime_dir? : @pathx.Path,
+  host_mcp? : @mcp.Server,
 ) -> EngineManager {
   {
     engine,
     runtime_dir,
+    host_mcp,
     mcp_error: None,
     workspace_lifecycle_lock: Mutex(),
     archive_cleanup_lock: Mutex(),
@@ -1078,8 +1084,9 @@ fn new_engine_manager(
 pub fn new_engine_actor(
   engine : String,
   runtime_dir? : @pathx.Path,
+  host_mcp? : @mcp.Server,
 ) -> EngineActor {
-  { manager: new_engine_manager(engine, runtime_dir?), }
+  { manager: new_engine_manager(engine, runtime_dir?, host_mcp?), }
 }
 
 ///|
@@ -1415,6 +1422,7 @@ async fn add_moonbit_path_for_native_engine(
 async fn engine_process_env(
   config : RunConfig,
   runtime_dir : @pathx.Path?,
+  host_mcp? : @mcp.Server,
 ) -> Map[String, String] {
   // Build a complete environment and pass it with `inherit_env=false`.
   // `moonbitlang/async/process` prepends `extra_env` before inherited env on
@@ -1442,6 +1450,22 @@ async fn engine_process_env(
     env["OPENSEEK_API_URL"] = url
   } else {
     env.remove("OPENSEEK_API_URL")
+  }
+  // The host's tools reach an agent as the `seekmoon` command, which finds
+  // the host and proves which conversation it speaks for from the grant in
+  // its environment. Everything the engine runs inherits it, so a sub-run or
+  // a background job acts for the conversation that started it. A host
+  // without tools grants nothing, and must not pass on a grant this process
+  // itself inherited from another host's agent.
+  match host_mcp {
+    Some(server) =>
+      for name, value in server.grant(config.session) {
+        env[name] = value
+      }
+    None => {
+      env.remove(@mcp.UrlEnv)
+      env.remove(@mcp.TokenEnv)
+    }
   }
   add_moonbit_path_for_native_engine(env, config, runtime_dir)
   env
@@ -1512,7 +1536,11 @@ async fn[G] start_serve_engine(
   let (child_stdin, writer) = @process.write_to_process()
   let (reader, child_stdout) = @process.read_from_process()
   let (stderr_reader, child_stderr) = @process.read_from_process()
-  let env = engine_process_env(config, manager.runtime_dir)
+  let env = engine_process_env(
+    config,
+    manager.runtime_dir,
+    host_mcp?=manager.host_mcp,
+  )
   let program = config.engine
   // An engine with no MCP configuration to load has nothing wrong with it
   // any more, so the error remembered from one that had is forgotten.
@@ -2971,6 +2999,28 @@ async test "native engine env has one authoritative bundled moon path" {
     Some(runtime),
   )
   assert_eq(glm_env["GLM"], "k")
+  // A host with tools grants each conversation's engine its own way in; a
+  // host without them grants nothing, and does not pass on a grant this
+  // process inherited from the agent of another host.
+  let server = @mcp.Server([], version="test")
+  let granted = engine_process_env(config, Some(runtime), host_mcp=server)
+  assert_eq(granted.get(@mcp.UrlEnv), Some(server.url()))
+  let other = engine_process_env(
+    { ..config, session: "s-other", },
+    Some(runtime),
+    host_mcp=server,
+  )
+  assert_true(granted.get(@mcp.TokenEnv) is Some(_))
+  assert_true(granted.get(@mcp.TokenEnv) != other.get(@mcp.TokenEnv))
+  ambient_env_test_lock.acquire()
+  defer ambient_env_test_lock.release()
+  @sys.set_env_var(@mcp.UrlEnv, "http://127.0.0.1:1/mcp")
+  @sys.set_env_var(@mcp.TokenEnv, "inherited")
+  defer @sys.unset_env_var(@mcp.TokenEnv)
+  defer @sys.unset_env_var(@mcp.UrlEnv)
+  let ungranted = engine_process_env(config, Some(runtime))
+  assert_true(ungranted.get(@mcp.UrlEnv) is None)
+  assert_true(ungranted.get(@mcp.TokenEnv) is None)
   @debug.assert_eq(engine_process_args(config), [
     "serve", "--session=s-env", "--dir", ".", "--approval", "ask",
   ])
