@@ -421,6 +421,34 @@ fn request_archived_refresh(
 }
 
 ///|
+/// Finish an add without rotating the draft that requested it.
+fn focus_added_project(
+  dispatch : @cmd.Emit[Msg],
+  channel : @interop.ChannelId,
+  project : @common.Uri,
+  codex_draft : String?,
+  model : Model,
+) -> (@cmd.Cmd, Model) {
+  if codex_draft is Some(id) {
+    // The add belongs to the captured draft, not to whichever conversation
+    // the user selects later. A superseded owner must not create a new chat.
+    guard channel == model.focused &&
+      model.codex_work_selected() &&
+      model.codex.active_id() == Some(id) &&
+      model.codex.composing_draft() &&
+      @resource.path_for(project, channel) is Some(cwd) else {
+      return (@cmd.none, model)
+    }
+    return update(
+      dispatch,
+      Codex(channel~, @codex.Msg::change_draft_project(cwd)),
+      model.with_active_project(Some(project)),
+    )
+  }
+  update(dispatch, NewChatIn(channel, Some(project)), model)
+}
+
+///|
 /// Adopt one canonical workspace registry snapshot. Conversations from a
 /// detached workspace leave this page with its sidebar section: their durable
 /// records stay on disk and return when the directory is attached again. If
@@ -452,7 +480,10 @@ fn adopt_projects(
     Some(pending) if pending.channel == channel &&
       pending.resolved is Some(target) &&
       paths.contains(target) =>
-      (Some(target), { ..model, pending_project_adoption: None, })
+      (
+        Some((target, pending.codex_draft)),
+        { ..model, pending_project_adoption: None, },
+      )
     _ => (None, model)
   }
   let selected_detached = channel == model.focused &&
@@ -529,30 +560,28 @@ fn adopt_projects(
   })
   commands.push(refresh_cmd)
   if selected_detached {
-    if focus_target is Some(project) {
-      // This snapshot both removed the active conversation's project and
-      // carries the row the user just added: the explicit add-and-focus
-      // wins over fallback selection. NewChatIn rotates the fresh chat; the
-      // dead session identity clears now so no render can address it while
-      // the rotation is in flight (same rule as the fallback below).
-      let (focus_cmd, focused) = update(
-        dispatch,
-        NewChatIn(channel, Some(project)),
-        next,
+    // The detached OpenSeek selection may be hidden behind a Codex draft.
+    // Clear that stale selection without changing the visible engine.
+    let next = {
+      ..next,
+      active_session: "",
+      selected_conversation: None,
+      conversation_load_failure: None,
+      loading_conversation: None,
+    }
+    if focus_target is Some((project, codex_draft)) {
+      let (focus_cmd, focused) = focus_added_project(
+        dispatch, channel, project, codex_draft, next,
       )
       commands.push(focus_cmd)
       commands.push(reveal_active_project())
-      return (
-        @cmd.batch(commands),
-        {
-          ..focused,
-          active_session: "",
-          selected_conversation: None,
-          conversation_load_failure: None,
-          loading_conversation: None,
-          screen: Chat,
-        },
-      )
+      return (@cmd.batch(commands), focused)
+    }
+    if (next.screen is Codex && next.codex.has_active()) ||
+      next.codex_project_adoption_pending() {
+      // A broadcast can precede the add reply. Keep its captured draft
+      // alive until the reply identifies the project to adopt.
+      return (@cmd.batch(commands), next)
     }
     if sessions.get(0) is Some(fallback) {
       // The retained list is newest-first. Activate its first entry before
@@ -608,14 +637,11 @@ fn adopt_projects(
       },
     )
   }
-  if focus_target is Some(project) {
-    // The confirmed add just committed: focus its project the way the
-    // row's own ＋ does — activate it and start a fresh chat inside — and
-    // scroll the newly active row into a long sidebar's view.
-    let (focus_cmd, focused) = update(
-      dispatch,
-      NewChatIn(channel, Some(project)),
-      next,
+  if focus_target is Some((project, codex_draft)) {
+    // The confirmed add just committed: retarget its Codex draft or start a
+    // fresh chat, then reveal the active project in a long sidebar.
+    let (focus_cmd, focused) = focus_added_project(
+      dispatch, channel, project, codex_draft, next,
     )
     commands.push(focus_cmd)
     commands.push(reveal_active_project())
@@ -624,8 +650,12 @@ fn adopt_projects(
   // Nothing is on screen and this device now has somewhere to put a chat:
   // the app's own startup rotation lands here, because it is issued before
   // the registry has answered and has no project to place until it does.
+  // A selected Codex task already occupies the screen even though it has no
+  // OpenSeek conversation; a registry broadcast must not rotate it away.
   if channel == next.focused &&
     next.active_conversation() is None &&
+    !(next.screen is Codex && next.codex.has_active()) &&
+    !next.codex_project_adoption_pending() &&
     !paths.is_empty() {
     commands.push(rotate_session(dispatch, channel))
   }
@@ -2286,6 +2316,10 @@ fn update_msg(
     // apply it once the last write settles.
     CodexComposerAction(action) =>
       match action {
+        @composer.DraftSubmitted(..) if model.codex_project_adoption_pending() =>
+          // The new project owns this draft as soon as Add is confirmed.
+          // Do not start a thread in its old cwd while the registry settles.
+          (@cmd.none, model)
         @composer.ModelMenuToggled(identity~) => {
           guard model.screen is Codex &&
             model.codex.accepts_composer_identity(identity, model.focused) else {
@@ -3399,8 +3433,7 @@ fn update_msg(
       (@cmd.none, { ..model, select_menu: None, project_menu_query: "", })
     ProjectMenuQueryChanged(query) =>
       if model.select_menu is Some(ProjectMenu) &&
-        model.screen is Chat &&
-        model.composing_new_chat() {
+        model.can_choose_new_chat_project() {
         (@cmd.none, { ..model, project_menu_query: query, })
       } else {
         (@cmd.none, model)
@@ -3413,18 +3446,37 @@ fn update_msg(
         @resource.belongs_to(workspace, model.focused) &&
         model.focused_device() is Some(dev) &&
         dev.projects.contains(workspace) &&
-        model.active_conversation() is Some(active) else {
+        model.new_chat_project() is Ok(Some(current)) else {
         return (@cmd.none, closed)
       }
       // The selected row is still actionable so keyboard and pointer behavior
       // are uniform, but choosing it must not rotate a second empty session.
-      if active.project() == workspace {
+      if current == workspace &&
+        (
+          model.screen != Codex ||
+          model.codex.active_placement(model.focused) is Some(_)
+        ) {
         (@cmd.none, closed)
+      } else if model.screen is Codex {
+        guard !model.codex.is_busy() &&
+          @resource.path_for(workspace, model.focused) is Some(cwd) else {
+          return (@cmd.none, closed)
+        }
+        update_msg(
+          dispatch,
+          Codex(channel=model.focused, @codex.Msg::change_draft_project(cwd)),
+          closed.with_active_project(Some(workspace)),
+        )
       } else {
         update_msg(dispatch, NewChatIn(model.focused, Some(workspace)), closed)
       }
     }
     ModelPicked(value, draft~) => {
+      // Project adoption still owns this draft. Transferring it to another
+      // engine would leave the pending add pointing at an abandoned owner.
+      guard !(model.screen is Codex && model.codex_project_adoption_pending()) else {
+        return (@cmd.none, model)
+      }
       guard ModelChoice::parse(value) is Some(choice) else {
         return (@cmd.none, model)
       }
@@ -4071,6 +4123,9 @@ fn update_msg(
       // A reply, approval request, or status event belongs to the host that
       // produced it. Device focus is the root authority boundary.
       if channel != model.focused {
+        return (@cmd.none, model)
+      }
+      if model.codex_project_adoption_pending() && msg.is_account_action() {
         return (@cmd.none, model)
       }
       let (cmd, codex) = @codex.update(
@@ -4763,7 +4818,8 @@ fn update_msg(
     PickProject(channel) => {
       // Focus moves for the surrounding UI, while the picker itself keeps
       // `channel` as its owner through every later navigation and confirm.
-      guard model.device_state(channel) is Some(_) else {
+      guard model.device_state(channel) is Some(_) &&
+        model.can_pick_project(channel) else {
         return (@cmd.none, model)
       }
       let (focus_cmd, model) = focus_channel(dispatch, model, channel)
@@ -7194,9 +7250,11 @@ fn update_device_msg(
         // The commit broadcast beat this reply and the row already exists:
         // focus it now, the way the row's own ＋ does.
         let cleared = { ..model, pending_project_adoption: None, }
-        let (focus_cmd, focused) = update(
+        let (focus_cmd, focused) = focus_added_project(
           dispatch,
-          NewChatIn(channel, Some(target)),
+          channel,
+          target,
+          pending.codex_draft,
           cleared,
         )
         (@cmd.batch([focus_cmd, reveal_active_project()]), focused)
