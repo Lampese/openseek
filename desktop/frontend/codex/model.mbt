@@ -223,6 +223,9 @@ priv struct CodexDraftTask {
   id : String
   cwd : String
   project_root : String?
+  // A lost thread/start reply may still leave a host-cached thread for this
+  // identity and cwd. Retrying must keep that pair even after an error.
+  thread_start_attempted : Bool
 } derive(Eq)
 
 ///|
@@ -398,7 +401,12 @@ enum Msg {
   ToggleGitDetails
   CloseGitDetails
   ToggleWorktreeMode
-  StartDraft(id~ : String, cwd~ : String)
+  StartDraft(
+    id~ : String,
+    cwd~ : String,
+    draft~ : @composer.Draft,
+    worktree~ : Bool
+  )
   AbandonDraft
   OpenThread(String)
   ArchiveThread(String)
@@ -444,8 +452,13 @@ pub fn Msg::composer_action(action : @composer.Action) -> Msg {
 ///|
 /// Shell entrypoint for opening a local draft in an exact project directory.
 /// No app-server thread exists until the draft sends its first prompt.
-pub fn Msg::start_draft(id : String, cwd : String) -> Msg {
-  StartDraft(id~, cwd~)
+pub fn Msg::start_draft(
+  id : String,
+  cwd : String,
+  draft~ : @composer.Draft = { task: "", mentions: [], images: [], },
+  worktree~ : Bool = false,
+) -> Msg {
+  StartDraft(id~, cwd~, draft~, worktree~)
 }
 
 ///|
@@ -608,6 +621,8 @@ struct State {
   draft : String
   mentions : Array[@composer.Mention]
   images : Array[@composer.Image]
+  // Leaving a draft retires its component cache and delayed editor actions.
+  composer_retirements : Array[@interop.ConversationKey]
   // The first submitted input remains visible while thread/worktree startup
   // has not produced its real app-server User item yet. This is display-only:
   // request construction continues to read `draft`, `mentions`, and `images`, and no
@@ -663,6 +678,7 @@ pub fn State::State(loading~ : Bool = false) -> State {
     draft: "",
     mentions: [],
     images: [],
+    composer_retirements: [],
     submitted_first_prompt: None,
     pending_steers: [],
     next_steer_submission_id: 1,
@@ -676,6 +692,13 @@ pub fn State::State(loading~ : Bool = false) -> State {
     foreground: None,
     notice: "",
   }
+}
+
+///|
+/// Reset host mirrors without resetting the singleton composer's retirement
+/// cursor. This log spans channels because composer owners include the channel.
+pub fn State::reset_for_channel(self : State) -> State {
+  { ..State(loading=true), composer_retirements: self.composer_retirements, }
 }
 
 ///|
@@ -726,7 +749,13 @@ pub fn State::can_start_thread(self : State) -> Bool {
 /// app-server thread yet — the only Codex surface where the unified model
 /// chip may still switch the conversation to another agent.
 pub fn State::composing_draft(self : State) -> Bool {
-  self.selection is CodexDraftTask(_)
+  self.selection is CodexDraftTask({ thread_start_attempted: false, .. })
+}
+
+///|
+/// Preserve the unsent conversation's launch choice across agent switches.
+pub fn State::draft_worktree_mode(self : State) -> Bool {
+  self.placement.wants_fresh()
 }
 
 ///|
@@ -1204,7 +1233,12 @@ fn State::select_draft(self : State, id : String, cwd : String) -> State {
   let cwd = cwd.trim().to_owned()
   {
     ..self,
-    selection: CodexDraftTask({ id, cwd, project_root: None, }),
+    selection: CodexDraftTask({
+      id,
+      cwd,
+      project_root: None,
+      thread_start_attempted: false,
+    }),
     requested_thread: None,
     git_status: None,
     git_details_open: false,
