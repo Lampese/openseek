@@ -2,9 +2,23 @@
 /// Fork a committed turn through the engine's prompt-building path. The
 /// placement lock and reader lease keep the store attached and unarchived
 /// until the copy is durable; an active source may continue appending.
+///
+/// The fork works where its original works: in the workspace root, or bound
+/// to the same worktree, whose checkout the two then share. The engine writes
+/// the fork's prompt in that directory, so a worktree whose checkout is gone
+/// is refused the way a turn there would be. `on_worktree_changed` reports
+/// the worktree's new member.
+///
+/// The engine writes the session file last, so that file is what says the
+/// fork exists, whichever way this request then ends. A fork that exists
+/// keeps its worktree binding, gets its title, and is reported through
+/// `on_created` — also when the engine failed after writing it, and when the
+/// request was cancelled and has no reply to carry the news.
 pub async fn fork_session(
   manager : EngineManager,
   payload : @protocol.SessionForkPayload,
+  on_created~ : (String) -> Unit,
+  on_worktree_changed~ : (String, Array[WorktreeInfo]) -> Unit,
 ) -> @protocol.SessionForkReply {
   guard @session_store.safe_session_id(payload.session) && payload.through > 0 else {
     raise EngineError("invalid session fork boundary")
@@ -23,41 +37,18 @@ pub async fn fork_session(
     @workspaces.registered_dir(requested) is Some(workspace) else {
     raise EngineError("workspace is not a registered workspace")
   }
-  guard @worktree.run_dir(workspace, payload.session) == workspace else {
-    raise EngineError("forking a worktree conversation is not supported yet")
-  }
   let root = @workspaces.store_root(workspace)
   let session = "desktop-" + @uuid.mint()
-  let args = [
-    "sessions",
-    "fork",
-    payload.session,
-    "--as",
-    session,
-    "--through",
-    payload.through.to_string(),
-    "--session-root",
-    root.to_string(),
-    "--dir",
-    workspace.to_string(),
-    "--model",
-    payload.model,
-  ]
-  if resolved_global_skills_dir() is Some(dir) {
-    args.append(["--global-skills-dir", dir.to_string()])
-  }
-  let output = engine_stdout(manager, args)
-  guard output.trim() == session else {
-    raise EngineError("engine returned an unexpected fork identity")
-  }
   let store = @store.SessionStore(root.to_string())
   let id : @agent_session.SessionId = SessionId(session)
+  let workspace_token = workspace.resource_path()
   // The renderer uses the same label as the sidebar, including titles derived
   // from the first prompt before any explicit rename has been saved.
   let title = payload.source_title
-  // The CLI has already committed the new session. A best-effort title write
-  // must not turn that success into a retry that creates another fork.
-  @async.protect_from_cancel(() => {
+  // What a fork that exists is owed. The title is best effort: failing to
+  // save it must not turn a fork that was made into a retry that makes
+  // another.
+  async fn announce() -> Unit {
     store.set_title(id, title) catch {
       error =>
         @xlog.warn() <?
@@ -67,13 +58,73 @@ pub async fn fork_session(
             "error": error.to_string(),
           }
     }
-  })
+    on_created(session)
+  }
+
+  {
+    errdefer @async.protect_from_cancel(() => {
+      if @fs.exists(store.session_file(id)) {
+        announce()
+      }
+    })
+    @worktree.add_session_to_worktree(
+      workspace,
+      session~,
+      worktree_of=payload.session,
+      dir => {
+        let args = [
+          "sessions",
+          "fork",
+          payload.session,
+          "--as",
+          session,
+          "--through",
+          payload.through.to_string(),
+          "--session-root",
+          root.to_string(),
+          "--dir",
+          dir.to_string(),
+          "--model",
+          payload.model,
+        ]
+        if resolved_global_skills_dir() is Some(skills) {
+          args.append(["--global-skills-dir", skills.to_string()])
+        }
+        let failure : Error? = try {
+          ignore(engine_stdout(manager, args))
+          None
+        } catch {
+          error => Some(error)
+        }
+        // The record says whether the fork was made — not how the engine
+        // exited, nor what it printed. Reporting a failure for a fork that
+        // exists would invite a retry that makes a second one.
+        if !@fs.exists(store.session_file(id)) {
+          if failure is Some(error) {
+            raise error
+          }
+          raise EngineError("engine reported a fork it did not write")
+        }
+        if failure is Some(error) {
+          @xlog.warn() <?
+            {
+              "event": "desktop_fork_engine_failed_after_commit",
+              "session": session,
+              "error": error.to_string(),
+            }
+        }
+      },
+      record_exists=() => @fs.exists(store.session_file(id)),
+      worktrees => on_worktree_changed(workspace_token, worktrees),
+    )
+  }
+  @async.protect_from_cancel(() => announce())
   { session, title, }
 }
 
 ///|
 #cfg(not(platform="windows"))
-async test "fork validates placement before spawning and releases its reader lease" {
+async test "fork validates its request before spawning and releases its reader lease" {
   ambient_env_test_lock.acquire()
   defer ambient_env_test_lock.release()
   let previous = @sys.get_env_var("HOME")
@@ -99,17 +150,24 @@ async test "fork validates placement before spawning and releases its reader lea
     source_title: "Source conversation",
   }
   let ordinary = try {
-    ignore(fork_session(manager, payload))
+    ignore(
+      fork_session(manager, payload, on_created=_ => (), on_worktree_changed=(
+        _,
+        _,
+      ) => ()),
+    )
     None
   } catch {
     EngineError(detail) => Some(detail)
     error => raise error
   }
-  assert_eq(ordinary, Some("engine returned an unexpected fork identity"))
+  assert_eq(ordinary, Some("engine reported a fork it did not write"))
   assert_true(manager.record_guards.get("source") is None)
-  @fs.mkdir(workspace + "/.worktrees/example", recursive=true)
+  // A worktree conversation forks in its checkout, so one whose checkout is
+  // gone is refused before anything is spawned or bound.
+  let registry = workspace + "/.openseek/worktrees.json"
   @fs.write_file(
-    workspace + "/.openseek/worktrees.json",
+    registry,
     (
       {
         "worktrees": [
@@ -122,18 +180,35 @@ async test "fork validates placement before spawning and releases its reader lea
         ],
       } : Json).stringify(),
   )
-  let bound = try {
-    ignore(fork_session(manager, payload))
+  let unbound = @fs.read_file(registry).text()
+  let missing = try {
+    ignore(
+      fork_session(manager, payload, on_created=_ => (), on_worktree_changed=(
+        _,
+        _,
+      ) => ()),
+    )
     None
   } catch {
-    EngineError(detail) => Some(detail)
+    @worktree.WorktreeError(detail) => Some(detail)
     error => raise error
   }
-  assert_eq(bound, Some("forking a worktree conversation is not supported yet"))
+  assert_eq(
+    missing,
+    Some(
+      "worktree example for this conversation is gone; rebuild it or archive the conversation",
+    ),
+  )
+  assert_eq(@fs.read_file(registry).text(), unbound)
   assert_true(manager.record_guards.get("source") is None)
   for session in ["source-sr-1", "source-sr-1-sr-2"] {
     let child = try {
-      ignore(fork_session(manager, { ..payload, session, }))
+      ignore(
+        fork_session(manager, { ..payload, session, }, on_created=_ => (), on_worktree_changed=(
+          _,
+          _,
+        ) => ()),
+      )
       None
     } catch {
       EngineError(detail) => Some(detail)
@@ -143,7 +218,12 @@ async test "fork validates placement before spawning and releases its reader lea
     assert_true(manager.record_guards.get(session) is None)
   }
   let invalid = try {
-    ignore(fork_session(manager, { ..payload, through: 0, }))
+    ignore(
+      fork_session(manager, { ..payload, through: 0, }, on_created=_ => (), on_worktree_changed=(
+        _,
+        _,
+      ) => ()),
+    )
     None
   } catch {
     EngineError(detail) => Some(detail)

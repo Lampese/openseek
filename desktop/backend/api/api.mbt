@@ -502,14 +502,16 @@ pub fn endpoints(
       )
     }),
     Endpoint(@commands.session_fork, payload => {
-      let reply = @engine.fork_session(state.manager, payload)
-      publish_session_changed(
-        state,
-        "created",
-        reply.session,
-        payload.workspace,
+      @engine.fork_session(
+        state.manager,
+        payload,
+        on_created=created => {
+          publish_session_changed(state, "created", created, payload.workspace)
+        },
+        on_worktree_changed=(workspace, worktrees) => {
+          publish_worktree_changed(state, workspace, worktrees)
+        },
       )
-      reply
     }),
     Endpoint(@commands.session_rename, payload => {
       @engine.rename_session(state.manager, payload)
@@ -1151,6 +1153,7 @@ async fn ApiState::codex_request(
   // the small interval, retain the checkout and report the partial result.
   if archive is Some(request) {
     let refusal = @worktree.WorktreeOwner::codex(request.thread_id).archive_checkout(
+      self.manager.worktree_host(),
       request.force,
       on_committed=(workspace, worktrees) => {
         publish_worktree_changed(self, workspace, worktrees)
