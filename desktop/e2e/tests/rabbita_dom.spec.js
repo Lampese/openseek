@@ -1989,6 +1989,84 @@ test('archiving a selected chat restores the existing project draft', async ({ p
   expect(app.pageErrors).toEqual([]);
 });
 
+test('deleting a live chat asks the host what goes with it and confirms once', async ({ page }) => {
+  const app = new DesktopBrowserHarness(page);
+  await app.install();
+  await app.goto();
+
+  const sent = method => app.requests
+    .filter(request => request.method === method)
+    .map(request => request.params);
+  const stored = page.locator('.conversation-row[title="session-1"]');
+  await stored.click();
+  await expect(page.getByText('Browser result', { exact: true })).toBeVisible();
+  const askToDelete = async () => {
+    await stored.hover();
+    await stored.getByRole('button', { name: 'Conversation actions' }).click();
+    await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  };
+  const body = page.locator('.modal-body');
+
+  // A chat without a worktree: the dialog is the plain one, and Cancel
+  // deletes nothing.
+  await askToDelete();
+  await expect(page.locator('.modal-title')).toHaveText('Permanently delete this chat?');
+  await expect(body).toContainText('“Rabbita browser fixture” and all of its subagent history');
+  await expect(body).toContainText('Project files and Git branches will remain.');
+  await expect(body).not.toContainText('worktree');
+  expect(sent('session.delete_check')).toEqual([
+    { session: 'session-1', workspace: '/workspace' },
+  ]);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+  expect(sent('session.delete')).toEqual([]);
+  await expect(stored).toBeVisible();
+
+  // The host is asked again on every click, and the delete removes only
+  // what its dialog showed. Here another window repairs the chat's worktree
+  // while the plain dialog is open: the confirm names no checkout, so the
+  // host stops and the same dialog comes back naming it.
+  await askToDelete();
+  await expect(body).not.toContainText('worktree');
+  expect(sent('session.delete_check')).toHaveLength(2);
+  app.sessionCheckout = { worktree: 'wt-1', dirty_paths: [], dirty_path_count: 0 };
+  await page.getByRole('button', { name: 'Delete permanently' }).click();
+  await expect(body).toContainText('its worktree checkout wt-1 is removed along with any ignored files in it');
+  await expect(body).not.toContainText('uncommitted changes');
+  await expect(stored).toBeVisible();
+
+  // Then the checkout turns dirty before the next confirm. That request
+  // agreed to remove a clean checkout, so the dialog comes back once more,
+  // now with the changed paths, instead of quietly closing.
+  app.sessionCheckout = {
+    worktree: 'wt-1',
+    dirty_paths: ['notes.txt'],
+    dirty_path_count: 1,
+  };
+  await page.getByRole('button', { name: 'Delete permanently' }).click();
+  await expect(body).toContainText('That checkout has uncommitted changes. Changed paths: notes.txt.');
+  await expect(stored).toBeVisible();
+
+  // Confirming now agrees to discard what the dialog listed, and there is
+  // no further question.
+  await page.getByRole('button', { name: 'Delete permanently' }).click();
+  await expect.poll(() => sent('session.delete')).toEqual([
+    { session: 'session-1', workspace: '/workspace' },
+    { session: 'session-1', workspace: '/workspace', worktree: 'wt-1' },
+    { session: 'session-1', workspace: '/workspace', worktree: 'wt-1', force: true },
+  ]);
+  await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+
+  // The row is gone without a stop in the archive, and the open transcript
+  // gave way to a fresh chat in the same project.
+  await expect(stored).toHaveCount(0);
+  await expect(page.getByText('Browser result', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.empty-title')).toHaveText('What should we build in workspace?');
+  await expect(page.locator('.section-heading', { hasText: 'Archived chats (' })).toHaveCount(0);
+  expect(sent('session.archive')).toEqual([]);
+  expect(app.pageErrors).toEqual([]);
+});
+
 test('shared WebView action menu supports context position, keyboard, and rename', async ({ page }) => {
   const app = new DesktopBrowserHarness(page);
   app.workspaces.push('/other');
@@ -2064,7 +2142,7 @@ test('shared WebView action menu supports context position, keyboard, and rename
   await actionsButton.click();
   await expect(actionsButton).toHaveAttribute('aria-expanded', 'true');
   await expect(menu).toBeFocused();
-  await expect(menu.getByRole('menuitem')).toHaveText(['Rename…', 'Archive']);
+  await expect(menu.getByRole('menuitem')).toHaveText(['Rename…', 'Archive', 'Delete…']);
   await expect(archive).toHaveAttribute('title', /Archive —/);
   await actionsButton.click();
   await expect(menu).toHaveCount(0);

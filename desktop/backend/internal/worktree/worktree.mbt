@@ -33,10 +33,14 @@ impl Show for WorktreeError with fn output(self, logger) {
 /// conversation already has a slot in the running pump (binding is only for
 /// conversations that are new everywhere), and `drain_sessions` closes the
 /// engines of conversations whose checkout is about to be deleted — an idle
-/// serve process still has its cwd inside that directory.
+/// serve process still has its cwd inside that directory. `session_is_moving`
+/// answers whether an archive, restore or delete has claimed a conversation's
+/// record: such an operation removes the checkout and then settles the
+/// placement, and a checkout created or repaired in between would outlive it.
 pub(all) struct WorktreeHost {
   lifecycle_lock : @async.Mutex
   session_is_live : (String) -> Bool
+  session_is_moving : (String) -> Bool
   drain_sessions : async (Array[String]) -> Unit
 }
 
@@ -186,6 +190,9 @@ type WorktreeCreateReply = @protocol.WorktreeCreateReply
 /// Archiving a conversation whose checkout still holds uncommitted work asks
 /// the user to confirm before the checkout goes away.
 type ArchiveNeedsForceReply = @protocol.ArchiveNeedsForceReply
+
+///|
+type CheckoutRemoval = @protocol.CheckoutRemoval
 
 ///|
 /// One Codex thread's Desktop-owned placement. The API uses this snapshot to
@@ -449,14 +456,16 @@ fn missing_checkout_refusal(name : String) -> String {
 /// only Desktop registries, never app-server or Git path conventions.
 async fn WorktreeOwner::binding_unlocked(
   self : WorktreeOwner,
+  workspace? : @pathx.Absolute,
 ) -> (@pathx.Absolute, WorktreeEntry)? {
-  let workspaces = match self {
-    OpenSeekSession(session) =>
+  let workspaces = match (workspace, self) {
+    (Some(workspace), _) => [workspace]
+    (None, OpenSeekSession(session)) =>
       match @session_store.workspace_of(session) {
         Some(workspace) => [workspace]
         None => []
       }
-    CodexThread(_) => @workspaces.registered()
+    (None, CodexThread(_)) => @workspaces.registered()
   }
   for workspace in workspaces {
     for entry in read_worktrees_unlocked(workspace) {
@@ -475,22 +484,48 @@ async fn WorktreeOwner::binding_unlocked(
 /// between confirmation and deletion.
 pub async fn WorktreeOwner::archive_check(
   self : WorktreeOwner,
+  host : WorktreeHost,
 ) -> ArchiveNeedsForceReply? {
+  match self.checkout_removal(host) {
+    Some({ worktree, dirty_paths, dirty_path_count, }) if dirty_path_count > 0 =>
+      Some({ worktree, dirty_paths, dirty_path_count, })
+    _ => None
+  }
+}
+
+///|
+/// The checkout this owner would remove, when one is on disk and no other
+/// conversation still holds it, with a preview of
+/// what removing it would discard: its uncommitted and untracked paths, none
+/// for a clean checkout. Read-only, like `archive_check`. `workspace` is the
+/// one project to look in, as for `archive_checkout`.
+pub async fn WorktreeOwner::checkout_removal(
+  self : WorktreeOwner,
+  host : WorktreeHost,
+  workspace? : @pathx.Absolute,
+) -> CheckoutRemoval? {
   worktree_registry_lock.acquire()
   defer worktree_registry_lock.release()
-  guard self.binding_unlocked() is Some((workspace, entry)) else { return None }
+  guard self.binding_unlocked(workspace?) is Some((workspace, _)) else {
+    return None
+  }
+  let shared = lock_worktrees_file(workspace)
+  defer shared.release()
+  guard read_worktrees_unlocked(workspace)
+    .iter()
+    .find_first(entry => entry.belongs_to(self))
+    is Some(entry) else {
+    return None
+  }
+  guard !entry.held_by_another(host, workspace, self) else { return None }
   let target = worktree_dir(workspace, entry.name)
   let present = @fsx.is_dir(target.to_path()) catch { _ => false }
   guard present else { return None }
   let status = @gitx.output(target, [
     "status", "--porcelain=v1", "-z", "--untracked-files=all",
   ])
-  if status.is_empty() {
-    None
-  } else {
-    let (dirty_paths, dirty_path_count) = archive_dirty_path_preview(status)
-    Some({ worktree: entry.name, dirty_paths, dirty_path_count, })
-  }
+  let (dirty_paths, dirty_path_count) = archive_dirty_path_preview(status)
+  Some({ worktree: entry.name, dirty_paths, dirty_path_count, })
 }
 
 ///|
@@ -543,15 +578,23 @@ async fn WorktreeEntry::held_by_another(
 /// goes only with the last conversation that holds it.
 /// The caller must first fence its own backend writer (OpenSeek's slot claim or a
 /// successful Codex `thread/archive`). An owner without a worktree is a no-op.
+///
+/// `workspace` names the one project whose registry may hold the placement.
+/// A caller that already selected a store passes it: session ids can repeat
+/// across projects, and the owner alone resolves to the first project that
+/// holds a record with that id.
 pub async fn WorktreeOwner::archive_checkout(
   self : WorktreeOwner,
   host : WorktreeHost,
   force : Bool,
+  workspace? : @pathx.Absolute,
   on_committed? : (String, Array[WorktreeInfo]) -> Unit,
 ) -> ArchiveNeedsForceReply? {
   worktree_registry_lock.acquire()
   defer worktree_registry_lock.release()
-  guard self.binding_unlocked() is Some((workspace, _)) else { return None }
+  guard self.binding_unlocked(workspace?) is Some((workspace, _)) else {
+    return None
+  }
   // Another host adding a fork to this worktree holds this lock from the
   // member's binding until its record exists. Deciding in between would see
   // a member that holds nothing yet and delete the checkout its fork is
@@ -932,6 +975,11 @@ pub async fn create(
   ignore(worktree_listing(dir))
   if owner is OpenSeekSession(session) {
     @session_store.ensure_not_archived(session)
+    // The claim is taken under this same lifecycle lock, so the operation
+    // that holds it either has not started or is not finished.
+    guard !(host.session_is_moving)(session) else {
+      raise WorktreeError("this conversation is being archived or deleted")
+    }
   }
   // Snapshot this workspace's setting once for the lifecycle operation. A
   // concurrent page edit applies to the next create or repair instead of
@@ -1321,6 +1369,7 @@ fn test_host(
   {
     lifecycle_lock: Mutex(),
     session_is_live: session => live.contains(session),
+    session_is_moving: _ => false,
     drain_sessions: sessions => drained.append(sessions),
   }
 }

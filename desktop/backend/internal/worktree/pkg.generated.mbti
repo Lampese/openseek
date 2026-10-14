@@ -48,12 +48,14 @@ pub fn CodexWorktreeBinding::to_repr(Self) -> @debug.Repr
 pub(all) struct WorktreeHost {
   lifecycle_lock : @async.Mutex
   session_is_live : (String) -> Bool
+  session_is_moving : (String) -> Bool
   drain_sessions : async (Array[String]) -> Unit
 }
 
 type WorktreeOwner derive(Eq, @debug.Debug)
-pub async fn WorktreeOwner::archive_check(Self) -> @protocol.ArchiveNeedsForceReply?
-pub async fn WorktreeOwner::archive_checkout(Self, WorktreeHost, Bool, on_committed? : (String, Array[@protocol.WorktreeInfo]) -> Unit) -> @protocol.ArchiveNeedsForceReply?
+pub async fn WorktreeOwner::archive_check(Self, WorktreeHost) -> @protocol.ArchiveNeedsForceReply?
+pub async fn WorktreeOwner::archive_checkout(Self, WorktreeHost, Bool, workspace? : @pathx.Absolute, on_committed? : (String, Array[@protocol.WorktreeInfo]) -> Unit) -> @protocol.ArchiveNeedsForceReply?
+pub async fn WorktreeOwner::checkout_removal(Self, WorktreeHost, workspace? : @pathx.Absolute) -> @protocol.CheckoutRemoval?
 pub fn WorktreeOwner::codex(String) -> Self
 pub fn WorktreeOwner::equal(Self, Self) -> Bool
 pub fn WorktreeOwner::not_equal(Self, Self) -> Bool

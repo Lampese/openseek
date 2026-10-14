@@ -505,6 +505,72 @@ test "archive replies keep success compatible and encode dirty confirmation" {
 }
 
 ///|
+test "delete replies and payloads round-trip with optional fields absent" {
+  let checkout : @protocol.CheckoutRemoval = {
+    worktree: "wt-1",
+    dirty_paths: ["notes.txt"],
+    dirty_path_count: 3,
+  }
+  let deleted : @protocol.SessionDeleteReply = Deleted
+  @debug.assert_eq(deleted.to_json(), { "kind": "deleted" })
+  let decoded : @protocol.SessionDeleteReply = @json.from_json(
+    deleted.to_json(),
+  )
+  @debug.assert_eq(decoded, deleted)
+  let refusal : @protocol.SessionDeleteReply = Unconfirmed(checkout)
+  let decoded : @protocol.SessionDeleteReply = @json.from_json(
+    refusal.to_json(),
+  )
+  @debug.assert_eq(decoded, refusal)
+  // A reply without a kind is not a committed delete.
+  try {
+    let _ : @protocol.SessionDeleteReply = @json.from_json({ "groups": [] })
+  } catch {
+    _ => ()
+  } noraise {
+    _ => fail("a delete reply without a kind decoded")
+  }
+  // No checkout is an absent field, not an empty worktree name.
+  let nothing : @protocol.SessionDeleteCheckReply = { checkout: None, }
+  @debug.assert_eq(nothing.to_json(), {})
+  let decoded : @protocol.SessionDeleteCheckReply = @json.from_json({})
+  @debug.assert_eq(decoded, nothing)
+  let found : @protocol.SessionDeleteCheckReply = { checkout: Some(checkout), }
+  let decoded : @protocol.SessionDeleteCheckReply = @json.from_json(
+    found.to_json(),
+  )
+  @debug.assert_eq(decoded, found)
+  let check : @protocol.SessionDeleteCheckPayload = {
+    session: "chat",
+    workspace: "/work/project",
+  }
+  let decoded : @protocol.SessionDeleteCheckPayload = @json.from_json(
+    check.to_json(),
+  )
+  @debug.assert_eq(decoded, check)
+  let plain : @protocol.SessionDeletePayload = @json.from_json({
+    "session": "chat",
+    "workspace": "/work/project",
+  })
+  assert_eq(plain.worktree, None)
+  assert_eq(plain.force, None)
+  @debug.assert_eq(plain.to_json(), {
+    "session": "chat",
+    "workspace": "/work/project",
+  })
+  let forced : @protocol.SessionDeletePayload = {
+    session: "chat",
+    workspace: "/work/project",
+    worktree: Some("wt-1"),
+    force: Some(true),
+  }
+  let decoded : @protocol.SessionDeletePayload = @json.from_json(
+    forced.to_json(),
+  )
+  @debug.assert_eq(decoded, forced)
+}
+
+///|
 test "worktree creation accepts exactly representable owner namespaces" {
   let legacy : @protocol.WorktreeCreatePayload = @json.from_json({
     "workspace": "/work/project",

@@ -6,18 +6,29 @@
 // the same shape as `list_sessions`; archive can instead return a structured
 // dirty-checkout confirmation state. Since the actions move records between
 // the stores the sidebar lists, both commands refresh the live list too.
+// `delete_session` permanently removes a live record without the stop in the
+// archive; `check_delete_session` asks first what goes with it.
 
 ///|
-/// The exact archived row awaiting permanent-deletion confirmation. The
-/// visible title is captured with the identity so another render cannot make
-/// the dialog appear to authorize a different conversation.
-priv struct ArchivedDeleteConfirm {
+/// The exact live or archived row awaiting permanent-deletion confirmation.
+/// The visible title is captured with the identity so another render cannot
+/// make the dialog appear to authorize a different conversation.
+priv struct DeleteConfirm {
   channel : @interop.ChannelId
   key : ArchiveRecordKey
+  title : String
+  target : DeleteTarget
+} derive(Eq)
+
+///|
+/// Which record a confirmation is about, with what only that kind carries.
+priv enum DeleteTarget {
   // The parent plus every descendant visible in the same archived snapshot.
   // Host notifications still cover a child created after that snapshot.
-  sessions : Array[String]
-  title : String
+  ArchivedChat(sessions~ : Array[String])
+  // The worktree checkout the host reported goes with the chat, if any. An
+  // archived chat has none: its checkout went when it was archived.
+  LiveChat(checkout~ : @protocol.CheckoutRemoval?)
 } derive(Eq)
 
 ///|
@@ -165,9 +176,7 @@ fn delete_archived_session(
       ) catch {
         error => {
           scheduler.add(
-            device_dispatch(
-              DeleteArchivedFailed(@interop.bridge_error_text(error)),
-            ),
+            device_dispatch(DeleteFailed(@interop.bridge_error_text(error))),
           )
           return
         }
@@ -190,39 +199,150 @@ fn delete_archived_session(
 }
 
 ///|
-/// Permanent archived-chat deletion requires a second, explicit click. The
-/// copy names what disappears and what survives so the user does not have to
-/// infer filesystem or Git consequences from the word "delete".
-fn archived_delete_modal(
+/// Ask the host what deleting one live conversation would remove besides its
+/// record. The confirmation is staged from the answer, so it states what the
+/// host will do instead of what this page's lists suggest.
+fn check_delete_session(
+  dispatch : @cmd.Emit[Msg],
+  channel : @interop.ChannelId,
+  key : ArchiveRecordKey,
+) -> @cmd.Cmd {
+  guard key.workspace_payload(channel) is Some(workspace) else {
+    return @cmd.none
+  }
+  let device_dispatch = dispatch.map((msg : DeviceMsg) => {
+    FromDevice(channel, msg)
+  })
+  @cmd.custom_cmd(scheduler => {
+    @js.Promise::from_async(() => {
+      let reply = @interop.bridge_request(
+        channel,
+        @commands.session_delete_check,
+        { session: key.session, workspace, },
+      ) catch {
+        error => {
+          scheduler.add(
+            device_dispatch(DeleteFailed(@interop.bridge_error_text(error))),
+          )
+          return
+        }
+      }
+      scheduler.add(
+        device_dispatch(DeleteChecked(key~, checkout=reply.checkout)),
+      )
+    })
+    |> ignore
+  })
+}
+
+///|
+/// Permanently delete one live conversation, agreeing to exactly what the
+/// confirmation showed: `checkout` is the host's account the dialog was
+/// built from. A committed delete folds nothing from its reply: the host
+/// announces every removed identity through `session.changed`, to this
+/// client like any other. If more would go than the dialog said — a checkout
+/// that appeared or turned dirty since — the host reports it instead, and
+/// the same dialog asks again.
+fn delete_session(
+  dispatch : @cmd.Emit[Msg],
+  channel : @interop.ChannelId,
+  key : ArchiveRecordKey,
+  checkout : @protocol.CheckoutRemoval?,
+) -> @cmd.Cmd {
+  guard key.workspace_payload(channel) is Some(workspace) else {
+    return @cmd.none
+  }
+  let payload : @protocol.SessionDeletePayload = match checkout {
+    Some({ worktree, dirty_path_count, .. }) =>
+      {
+        session: key.session,
+        workspace,
+        worktree: Some(worktree),
+        force: if dirty_path_count > 0 {
+          Some(true)
+        } else {
+          None
+        },
+      }
+    None => { session: key.session, workspace, worktree: None, force: None, }
+  }
+  let device_dispatch = dispatch.map((msg : DeviceMsg) => {
+    FromDevice(channel, msg)
+  })
+  @cmd.custom_cmd(scheduler => {
+    @js.Promise::from_async(() => {
+      let reply = @interop.bridge_request(
+        channel, @commands.session_delete, payload,
+      ) catch {
+        error => {
+          scheduler.add(
+            device_dispatch(DeleteFailed(@interop.bridge_error_text(error))),
+          )
+          return
+        }
+      }
+      if reply is Unconfirmed(checkout) {
+        scheduler.add(
+          device_dispatch(DeleteChecked(key~, checkout=Some(checkout))),
+        )
+      }
+    })
+    |> ignore
+  })
+}
+
+///|
+/// The confirmation's body. It names what disappears and what survives so
+/// the user does not have to infer filesystem or Git consequences from the
+/// word "delete": for a live chat that is the host's own account of its
+/// worktree checkout.
+fn DeleteConfirm::message(
+  locale~ : @i18n.Locale = English,
+  self : DeleteConfirm,
+) -> String {
+  let title = self.title
+  dynamic_text(
+    locale,
+    match self.target {
+      LiveChat(checkout=Some({ worktree, dirty_paths, dirty_path_count, })) if dirty_path_count >
+        0 =>
+        DDeleteDirtyWorktreeConversation(
+          title,
+          worktree,
+          @composer.dirty_paths_preview(dirty_paths, dirty_path_count),
+        )
+      LiveChat(checkout=Some({ worktree, .. })) =>
+        DDeleteWorktreeConversation(title, worktree)
+      LiveChat(checkout=None) | ArchivedChat(..) => DDeleteConversation(title)
+    },
+  )
+}
+
+///|
+/// Permanent chat deletion requires a second, explicit click.
+fn delete_modal(
   locale~ : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
-  confirm : ArchivedDeleteConfirm,
+  confirm : DeleteConfirm,
 ) -> @html.Html {
-  @html.div(
-    class="modal-backdrop",
-    on_click=dispatch(CancelDeleteArchivedSession),
-    [
-      @html.div(class="modal", [
-        @html.div(class="modal-title", shell_text(locale, DeleteChatQuestion)),
-        @html.div(
-          class="modal-body",
-          dynamic_text(locale, DDeleteConversation(confirm.title.to_string())),
+  @html.div(class="modal-backdrop", on_click=dispatch(CancelDeleteSession), [
+    @html.div(class="modal", [
+      @html.div(class="modal-title", shell_text(locale, DeleteChatQuestion)),
+      @html.div(class="modal-body", confirm.message(locale~)),
+      @html.div(class="modal-actions", [
+        @html.button(
+          class="button secondary",
+          on_click=dispatch(CancelDeleteSession),
+          shell_text(locale, CancelLabel),
         ),
-        @html.div(class="modal-actions", [
-          @html.button(
-            class="button secondary",
-            on_click=dispatch(CancelDeleteArchivedSession),
-            shell_text(locale, CancelLabel),
-          ),
-          @html.button(
-            class="button danger",
-            on_click=dispatch(ConfirmDeleteArchivedSession),
-            shell_text(locale, DeletePermanently),
-          ),
-        ]),
+        @html.button(
+          class="button danger",
+          on_click=dispatch(ConfirmDeleteSession),
+          shell_text(locale, DeletePermanently),
+        ),
       ]),
-    ],
-  )
+    ]),
+  ])
 }
 
 ///|

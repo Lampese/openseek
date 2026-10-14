@@ -209,6 +209,27 @@ pub(all) struct ArchivedSessionPayload {
 } derive(Debug, Eq)
 
 ///|
+/// `session.delete_check` asks what deleting one live record from one exact
+/// store would remove besides the record. It changes nothing.
+pub(all) struct SessionDeleteCheckPayload {
+  session : String
+  workspace : String
+} derive(Debug, Eq)
+
+///|
+/// `session.delete` permanently removes one live record from one exact
+/// store, addressed like `ArchivedSessionPayload`, and with it only what the
+/// caller's confirmation covered: `worktree` names the checkout that
+/// confirmation said would be removed (absent when it named none), and
+/// `force` agrees to discard that checkout's uncommitted changes.
+pub(all) struct SessionDeletePayload {
+  session : String
+  workspace : String
+  worktree : String?
+  force : Bool?
+} derive(Debug, Eq)
+
+///|
 pub(all) struct SettingsSetPayload {
   provider : String?
   custom_api_url : String?
@@ -2198,6 +2219,30 @@ pub extend SessionCommitPayload with Eq::{equal, not_equal}
 pub extend SessionCommitPayload with ToJson::{to_json}
 
 ///|
+pub extend SessionDeleteCheckPayload with Debug::{to_repr}
+
+///|
+pub extend SessionDeleteCheckPayload with FromJson::{from_json}
+
+///|
+pub extend SessionDeleteCheckPayload with Eq::{equal, not_equal}
+
+///|
+pub extend SessionDeleteCheckPayload with ToJson::{to_json}
+
+///|
+pub extend SessionDeletePayload with Debug::{to_repr}
+
+///|
+pub extend SessionDeletePayload with FromJson::{from_json}
+
+///|
+pub extend SessionDeletePayload with Eq::{equal, not_equal}
+
+///|
+pub extend SessionDeletePayload with ToJson::{to_json}
+
+///|
 pub extend SessionPayload with Debug::{to_repr}
 
 ///|
@@ -2819,6 +2864,63 @@ pub impl ToJson for ArchivedSessionPayload with fn to_json(self) {
   let fields : Map[String, Json] = Map([])
   fields["session"] = Json(self.session)
   fields["workspace"] = Json(self.workspace)
+  Json(fields)
+}
+
+///|
+pub impl FromJson for SessionDeleteCheckPayload with fn from_json(json, path) {
+  let object = JsonObject::decode(json, path, "SessionDeleteCheckPayload")
+  {
+    session: @json.from_json(
+      object.required_json("session"),
+      path=path.add_key("session"),
+    ),
+    workspace: @json.from_json(
+      object.required_json("workspace"),
+      path=path.add_key("workspace"),
+    ),
+  }
+}
+
+///|
+pub impl ToJson for SessionDeleteCheckPayload with fn to_json(self) {
+  let fields : Map[String, Json] = Map([])
+  fields["session"] = Json(self.session)
+  fields["workspace"] = Json(self.workspace)
+  Json(fields)
+}
+
+///|
+pub impl FromJson for SessionDeletePayload with fn from_json(json, path) {
+  let object = JsonObject::decode(json, path, "SessionDeletePayload")
+  {
+    session: @json.from_json(
+      object.required_json("session"),
+      path=path.add_key("session"),
+    ),
+    workspace: @json.from_json(
+      object.required_json("workspace"),
+      path=path.add_key("workspace"),
+    ),
+    worktree: object.optional_string("worktree"),
+    force: match object.optional_json("force") {
+      None => None
+      Some(value) => Some(@json.from_json(value, path=path.add_key("force")))
+    },
+  }
+}
+
+///|
+pub impl ToJson for SessionDeletePayload with fn to_json(self) {
+  let fields : Map[String, Json] = Map([])
+  fields["session"] = Json(self.session)
+  fields["workspace"] = Json(self.workspace)
+  if self.worktree is Some(worktree) {
+    fields["worktree"] = Json(worktree)
+  }
+  if self.force is Some(value) {
+    fields["force"] = Json(value)
+  }
   Json(fields)
 }
 

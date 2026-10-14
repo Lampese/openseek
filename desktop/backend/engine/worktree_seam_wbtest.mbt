@@ -633,7 +633,8 @@ async test "archive keeps worktree placement for explicit repair after unarchive
     b"dirty",
     create_mode=CreateOrTruncate,
   )
-  guard codex_owner.archive_check() is Some(codex_refusal) else {
+  guard codex_owner.archive_check(manager.worktree_host())
+    is Some(codex_refusal) else {
     fail("Codex archive should require confirmation for a dirty checkout")
   }
   assert_eq(codex_refusal.worktree, codex.name)
@@ -836,4 +837,297 @@ async test "permanent archived deletion drops placement but keeps files and bran
       "openseek/chat",
     ),
   )
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "deleting a live conversation skips the archive and drops its placement" {
+  ambient_env_test_lock.acquire()
+  defer ambient_env_test_lock.release()
+  let previous = @sys.get_env_var("HOME")
+  let root = worktree_test_root("openseek-live-delete-worktree-")
+  defer @fs.rmdir(root.to_string(), recursive=true)
+  @sys.set_env_var("HOME", root.join("global").to_string())
+  defer restore_home_env(previous)
+  @fsx.ensure_dir(root.join("global").to_path())
+  let repo = root.join("repo")
+  prepare_git_repo(repo)
+  ignore(@workspaces.add(repo.to_string(), _ => ()))
+  let manager = new_engine_manager("openseek")
+  manager.pump = Serving(sessions=Map([]))
+  ignore(
+    @worktree.create(
+      manager.worktree_host(),
+      repo.to_string(),
+      @worktree.WorktreeOwner::openseek("chat"),
+      _ => (),
+    ),
+  )
+  let store = @workspaces.store_root(repo)
+  let live = store.join("sessions")
+  let family = ["chat", "chat-sr-1", "chat-sr-1-sr-2"]
+  for session_id in family {
+    @fsx.ensure_dir(live.join(session_id).to_path())
+  }
+  @fsx.ensure_dir(live.join("other").to_path())
+  // The check the client runs before its confirmation reports the checkout
+  // even while it is clean — its ignored files go too — and a conversation
+  // without a worktree reports none.
+  @debug.assert_eq(
+    delete_session_check(manager, "chat", repo.resource_path()),
+    {
+      checkout: Some({ worktree: "wt-1", dirty_paths: [], dirty_path_count: 0, }),
+    },
+  )
+  @debug.assert_eq(
+    delete_session_check(manager, "other", repo.resource_path()),
+    { checkout: None, },
+  )
+  let deleted : Array[String] = []
+  // A delete removes only the checkout its confirmation named. A request
+  // that names none — its dialog was built before the checkout was there —
+  // gets the checkout reported back, even a clean one, and changes nothing.
+  guard delete_session(manager, "chat", repo.resource_path(), (session_id, _) => {
+      deleted.push(session_id)
+    })
+    is Unconfirmed(unnamed) else {
+    fail("an unnamed checkout was removed without confirmation")
+  }
+  assert_eq(unnamed.worktree, "wt-1")
+  assert_eq(unnamed.dirty_path_count, 0)
+  assert_true(@fsx.is_dir(repo.join(".worktrees/wt-1").to_path()))
+  @fs.write_file(
+    repo.join(".worktrees/wt-1/junk.txt").to_string(),
+    b"x",
+    create_mode=CreateOrTruncate,
+  )
+  @debug.assert_eq(
+    delete_session_check(manager, "chat", repo.resource_path()),
+    {
+      checkout: Some({
+        worktree: "wt-1",
+        dirty_paths: ["junk.txt"],
+        dirty_path_count: 1,
+      }),
+    },
+  )
+  // The check changed nothing. A delete that did not agree to discard the
+  // dirty checkout stops before anything irreversible, exactly as archive
+  // does: the family stays live and the checkout stays on disk.
+  guard delete_session(
+      manager,
+      "chat",
+      repo.resource_path(),
+      (session_id, _) => deleted.push(session_id),
+      worktree="wt-1",
+    )
+    is Unconfirmed(refusal) else {
+    fail("dirty delete returned no force confirmation")
+  }
+  assert_eq(refusal.worktree, "wt-1")
+  assert_eq(refusal.dirty_paths, ["junk.txt"])
+  assert_true(deleted.is_empty())
+  for session_id in family {
+    assert_true(@fsx.is_dir(live.join(session_id).to_path()))
+  }
+  assert_true(@fsx.is_dir(repo.join(".worktrees/wt-1").to_path()))
+  // A fork still using this dirty checkout keeps it. Its confirmation must
+  // report no checkout removal, and deleting it must preserve the files.
+  join_worktree_row(repo, "wt-1", "fork")
+  @fsx.ensure_dir(live.join("fork").to_path())
+  assert_true(
+    delete_session_check(manager, "fork", repo.resource_path()).checkout is None,
+  )
+  assert_true(
+    delete_session(manager, "fork", repo.resource_path(), (_, _) => ())
+    is Deleted,
+  )
+  assert_true(@fsx.exists(repo.join(".worktrees/wt-1/junk.txt").to_path()))
+  assert_false(@fsx.exists(live.join("fork").to_path()))
+  // The confirmed retry removes the checkout, the whole family (the parent
+  // announced last), and the placement row; nothing lands in the archive.
+  let reply = delete_session(
+    manager,
+    "chat",
+    repo.resource_path(),
+    (session_id, _) => deleted.push(session_id),
+    worktree="wt-1",
+    force=true,
+  )
+  assert_true(reply is Deleted)
+  assert_eq(deleted.length(), family.length())
+  assert_eq(deleted[deleted.length() - 1], "chat")
+  let archived = @session_store.archived_root(store).join("sessions")
+  for session_id in family {
+    assert_false(@fsx.exists(live.join(session_id).to_path()))
+    assert_false(@fsx.exists(archived.join(session_id).to_path()))
+    assert_false(
+      @fsx.exists(
+        @session_store.deleting_root(store).join(session_id).to_path(),
+      ),
+    )
+  }
+  assert_true(@fsx.is_dir(live.join("other").to_path()))
+  assert_false(@fsx.exists(repo.join(".worktrees/wt-1").to_path()))
+  assert_true(@worktree.list(repo.to_string()).worktrees.is_empty())
+  assert_false(
+    @gitx.run(repo, [
+      "for-each-ref", "--format=%(refname)", "refs/openseek/worktrees/",
+    ]).is_empty(),
+  )
+  assert_true(manager.record_guards.is_empty())
+  // Concurrent permanent deletes share the archive's commit ordering:
+  // the last departing conversation must remove their checkout.
+  let shared = @worktree.create(
+    manager.worktree_host(),
+    repo.to_string(),
+    @worktree.WorktreeOwner::openseek("one"),
+    _ => (),
+  )
+  join_worktree_row(repo, shared.name, "two")
+  for session in ["one", "two"] {
+    @fsx.ensure_dir(live.join(session).to_path())
+  }
+  @async.with_task_group(group => {
+    for session in ["one", "two"] {
+      group.spawn_bg(() => {
+        assert_true(
+          delete_session(
+            manager,
+            session,
+            repo.resource_path(),
+            (_, _) => (),
+            worktree=shared.name,
+          )
+          is Deleted,
+        )
+      })
+    }
+  })
+  assert_false(@fsx.exists(repo.join(".worktrees").join(shared.name).to_path()))
+  assert_true(@worktree.list(repo.to_string()).worktrees.is_empty())
+  assert_true(manager.record_guards.is_empty())
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "deleting a live conversation leaves a same-id checkout in another project" {
+  ambient_env_test_lock.acquire()
+  defer ambient_env_test_lock.release()
+  let previous = @sys.get_env_var("HOME")
+  let root = worktree_test_root("openseek-live-delete-same-id-")
+  defer @fs.rmdir(root.to_string(), recursive=true)
+  @sys.set_env_var("HOME", root.join("global").to_string())
+  defer restore_home_env(previous)
+  @fsx.ensure_dir(root.join("global").to_path())
+  let manager = new_engine_manager("openseek")
+  manager.pump = Serving(sessions=Map([]))
+  // Two projects each hold a conversation with the same id. Only the first
+  // one's runs in a worktree, and the first registered project is the one an
+  // id-only lookup finds.
+  let first = root.join("first")
+  let second = root.join("second")
+  for repo in [first, second] {
+    prepare_git_repo(repo)
+    ignore(@workspaces.add(repo.to_string(), _ => ()))
+  }
+  ignore(
+    @worktree.create(
+      manager.worktree_host(),
+      first.to_string(),
+      @worktree.WorktreeOwner::openseek("chat"),
+      _ => (),
+    ),
+  )
+  for repo in [first, second] {
+    @fsx.ensure_dir(
+      @workspaces.store_root(repo).join("sessions").join("chat").to_path(),
+    )
+  }
+  @fs.write_file(
+    first.join(".worktrees/wt-1/local.txt").to_string(),
+    b"x",
+    create_mode=CreateOrTruncate,
+  )
+  // The check answers for the selected project only.
+  @debug.assert_eq(
+    delete_session_check(manager, "chat", second.resource_path()),
+    { checkout: None, },
+  )
+  assert_true(
+    delete_session_check(manager, "chat", first.resource_path()).checkout
+    is Some(_),
+  )
+  // Even forced, deleting the second project's conversation must not reach
+  // the first project's checkout or its uncommitted file.
+  let reply = delete_session(
+    manager,
+    "chat",
+    second.resource_path(),
+    (_, _) => (),
+    force=true,
+  )
+  assert_true(reply is Deleted)
+  assert_false(
+    @fsx.exists(
+      @workspaces.store_root(second).join("sessions").join("chat").to_path(),
+    ),
+  )
+  assert_true(@fsx.exists(first.join(".worktrees/wt-1/local.txt").to_path()))
+  assert_true(
+    @fsx.is_dir(
+      @workspaces.store_root(first).join("sessions").join("chat").to_path(),
+    ),
+  )
+  guard @worktree.list(first.to_string()).worktrees is [kept] else {
+    fail("the other project's placement must survive")
+  }
+  assert_true(kept.present)
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "a worktree is not created or repaired while its conversation is moving" {
+  ambient_env_test_lock.acquire()
+  defer ambient_env_test_lock.release()
+  let previous = @sys.get_env_var("HOME")
+  let root = worktree_test_root("openseek-worktree-moving-")
+  defer @fs.rmdir(root.to_string(), recursive=true)
+  @sys.set_env_var("HOME", root.join("global").to_string())
+  defer restore_home_env(previous)
+  @fsx.ensure_dir(root.join("global").to_path())
+  let repo = root.join("repo")
+  prepare_git_repo(repo)
+  ignore(@workspaces.add(repo.to_string(), _ => ()))
+  let manager = new_engine_manager("openseek")
+  manager.pump = Serving(sessions=Map([]))
+  let owner = @worktree.WorktreeOwner::openseek("chat")
+  ignore(
+    @worktree.create(manager.worktree_host(), repo.to_string(), owner, _ => ()),
+  )
+  @fsx.ensure_dir(
+    @workspaces.store_root(repo).join("sessions").join("chat").to_path(),
+  )
+  // An archive or delete has claimed the record and already removed the
+  // checkout; its placement row is still there, which is what Repair needs.
+  let claim = manager.claim_record_move("chat")
+  ignore(owner.archive_checkout(manager.worktree_host(), false))
+  assert_false(@fsx.exists(repo.join(".worktrees/wt-1").to_path()))
+  let detail = try {
+    ignore(
+      @worktree.create(manager.worktree_host(), repo.to_string(), owner, _ => ()),
+    )
+    "no error"
+  } catch {
+    error => "\{error}"
+  }
+  assert_true(detail.contains("being archived or deleted"))
+  assert_false(@fsx.exists(repo.join(".worktrees/wt-1").to_path()))
+  // Once the operation lets go — an archive that kept the placement, say —
+  // the same request repairs as before.
+  manager.release_record_move("chat", claim)
+  ignore(
+    @worktree.create(manager.worktree_host(), repo.to_string(), owner, _ => ()),
+  )
+  assert_true(@fsx.is_dir(repo.join(".worktrees/wt-1").to_path()))
 }

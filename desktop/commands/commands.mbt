@@ -142,6 +142,18 @@ pub let session_delete_archived : Command[
 ] = Command("session.delete_archived")
 
 ///|
+pub let session_delete_check : Command[
+  @protocol.SessionDeleteCheckPayload,
+  @protocol.SessionDeleteCheckReply,
+] = Command("session.delete_check")
+
+///|
+pub let session_delete : Command[
+  @protocol.SessionDeletePayload,
+  @protocol.SessionDeleteReply,
+] = Command("session.delete")
+
+///|
 pub let settings_get : Command[
   @protocol.EmptyPayload,
   @protocol.SettingsStatusPayload,

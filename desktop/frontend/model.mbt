@@ -1534,9 +1534,14 @@ priv struct Model {
   // archive because the conversation's worktree holds uncommitted changes;
   // confirming retries the archive with force.
   archive_confirm : ArchiveConfirm?
-  // Permanent archived-chat deletion has its own explicit confirmation. It
-  // never shares the worktree-discard dialog because the data at risk differs.
-  archived_delete_confirm : ArchivedDeleteConfirm?
+  // Permanent chat deletion has its own explicit confirmation. It never
+  // shares the worktree-discard dialog because the data at risk differs.
+  delete_confirm : DeleteConfirm?
+  // The live chat whose delete question is out with the host. Only the
+  // answer about this chat may open the confirmation, and only once: an
+  // answer overtaken by a later click must not put another chat's dialog
+  // under the user's pointer.
+  delete_pending : (@interop.ChannelId, ArchiveRecordKey)?
   // Controlled sidebar editor for one live conversation title.
   conversation_rename : ConversationRename?
   conversation_fork : ConversationFork?
@@ -2056,11 +2061,13 @@ priv enum Msg {
   ArchiveSession(@interop.ChannelId, String)
   // Restore an archived conversation into its device's live list.
   UnarchiveSession(@interop.ChannelId, String)
-  // Stage, confirm, or cancel permanent deletion of an archived conversation.
-  // The confirmation's display title comes from the archived record itself.
-  DeleteArchivedSession(@interop.ChannelId, ArchiveRecordKey)
-  ConfirmDeleteArchivedSession
-  CancelDeleteArchivedSession
+  // Ask for, confirm, or cancel permanent deletion of a live or an archived
+  // conversation. An archived row stages its confirmation at once; a live
+  // row first asks the host what goes with it (`DeleteChecked`). The
+  // confirmation's display title comes from the listed record itself.
+  DeleteSession(@interop.ChannelId, ArchiveRecordKey, ConversationRecord)
+  ConfirmDeleteSession
+  CancelDeleteSession
   ConversationRenameRequested(id~ : @conversation.Id, label~ : String)
   ConversationRenameEdited(
     id~ : @conversation.Id,
@@ -2433,6 +2440,11 @@ priv enum DeviceMsg {
     session~ : String,
     refusal~ : @protocol.ArchiveNeedsForceReply
   )
+  // The host's account of what deleting one live conversation removes
+  // besides its record: the answer to the check a Delete click sends, or a
+  // delete that stopped because more would go than its request agreed to.
+  // Either way it stages the confirmation that states exactly that.
+  DeleteChecked(key~ : ArchiveRecordKey, checkout~ : @protocol.CheckoutRemoval?)
   // The archived conversations — the reply to `archived_sessions` and to a
   // successful `archive_session`/`unarchive_session` alike.
   ArchivedLoaded(
@@ -2453,7 +2465,7 @@ priv enum DeviceMsg {
     fresh_session~ : String
   )
   ArchiveFailed(String)
-  DeleteArchivedFailed(String)
+  DeleteFailed(String)
   // A rebuild of a missing worktree failed. The canonical rows still arrive
   // as `worktree.changed`, so this only reports the refusal.
   WorktreeFailed(String)
@@ -2785,7 +2797,8 @@ fn initial_model(desktop~ : Bool) -> Model {
     chat_creation: None,
     chat_creation_sequence: 0,
     archive_confirm: None,
-    archived_delete_confirm: None,
+    delete_confirm: None,
+    delete_pending: None,
     conversation_rename: None,
     conversation_fork: None,
     fork_focus: None,

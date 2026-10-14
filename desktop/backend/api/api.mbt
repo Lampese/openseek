@@ -543,6 +543,28 @@ pub fn endpoints(
         },
       )
     }),
+    Endpoint(@commands.session_delete_check, payload => {
+      @engine.delete_session_check(
+        state.manager,
+        payload.session,
+        payload.workspace,
+      )
+    }),
+    Endpoint(@commands.session_delete, payload => {
+      @engine.delete_session(
+        state.manager,
+        payload.session,
+        payload.workspace,
+        (deleted, workspace) => {
+          publish_session_changed(state, "deleted", deleted, workspace)
+        },
+        worktree?=payload.worktree,
+        force=payload.force is Some(true),
+        on_worktree_changed=(workspace, worktrees) => {
+          publish_worktree_changed(state, workspace, worktrees)
+        },
+      )
+    }),
     Endpoint(@commands.schedules_list, _ => state.schedules.list()),
     Endpoint(@commands.schedules_save, payload => state.schedules.save(payload)),
     Endpoint(@commands.schedules_action, payload => {
@@ -749,6 +771,8 @@ test "remote endpoint catalog has one entry per command name" {
   assert_true(names.contains("agent.goal"))
   assert_true(names.contains("session.load_archived"))
   assert_true(names.contains("session.delete_archived"))
+  assert_true(names.contains("session.delete"))
+  assert_true(names.contains("session.delete_check"))
   assert_true(names.contains("workspace.settings_get"))
   assert_true(names.contains("workspace.settings_set"))
   assert_true(names.contains("app.info"))
@@ -1105,7 +1129,9 @@ async fn ApiState::codex_request(
   // failed bridge command, so the frontend can keep the task selected.
   if archive is Some(request) &&
     !request.force &&
-    @worktree.WorktreeOwner::codex(request.thread_id).archive_check()
+    @worktree.WorktreeOwner::codex(request.thread_id).archive_check(
+      self.manager.worktree_host(),
+    )
     is Some(refusal) {
     return request.needs_force(refusal)
   }
