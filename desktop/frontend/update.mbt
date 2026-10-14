@@ -3353,7 +3353,13 @@ fn update_msg(
             change,
             last,
           )
-        _ => panel
+        _ =>
+          panel.with_review_navigation_destination(
+            file_ctx(model),
+            change,
+            false,
+            cross_file=false,
+          )
       }
       (cmd, { ..model, file_panel: panel, })
     }
