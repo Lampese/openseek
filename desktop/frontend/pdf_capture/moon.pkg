@@ -1,0 +1,9 @@
+import {
+  "openseek_desktop/frontend/pdf_capture/internal/selection",
+  "moonbitlang/core/json",
+  "moonbit-community/rabbita/cmd",
+  "moonbit-community/rabbita/js",
+  "moonbit-community/rabbita/dom",
+}
+
+supported_targets = "js"

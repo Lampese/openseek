@@ -20,6 +20,8 @@ pub fn FeedbackComposerWidget::FeedbackComposerWidget(
   on_submit~ : (String, Bool) -> Unit,
   on_change~ : (String) -> Unit,
   on_cancel~ : () -> Unit,
+  allow_empty_submit~ : Bool = false,
+  on_batch_change~ : (Bool) -> Unit = _ => (),
 ) -> FeedbackComposerWidget {
   let mut slot : FeedbackComposerWidget? = None
   let submit = apply => {
@@ -39,6 +41,8 @@ pub fn FeedbackComposerWidget::FeedbackComposerWidget(
       content_width: () => @base_browser.element_client_width(container),
     },
     on_change~,
+    allow_empty_submit~,
+    on_batch_change~,
   )
   let selection_layer = @rdom.document().create_element("div")
   selection_layer.set_attribute("class", "feedback-source-selection-layer")
@@ -57,9 +61,11 @@ pub fn FeedbackComposerWidget::FeedbackComposerWidget(
   container.append_child(widget.get_dom_node().as_node())
   // Selection opens the composer without moving focus. An outside click
   // must therefore dismiss an empty draft even if no focusout can fire.
-  // Match the editor's auto-hide policy: typed drafts stay pinned.
+  // Typed drafts and sources with an attachment stay pinned.
   let pointer_down : @rdom.Listener = event => {
-    guard input.anchor is Some(_) && !widget.has_text() else { return }
+    guard input.anchor is Some(_) && !allow_empty_submit && !widget.has_text() else {
+      return
+    }
     if event.target().to_element() is Some(target) &&
       @base_browser.element_contains(widget.get_dom_node(), target) {
       return
@@ -161,11 +167,13 @@ pub fn FeedbackComposerWidget::show(
   anchor : () -> @rdom.DOMRect?,
   prefer_below~ : Bool,
   selection_rects~ : () -> Array[@rdom.DOMRect],
+  text~ : String = "",
+  batch? : Bool,
 ) -> Unit {
   self.selection_rects = selection_rects
   self.anchor = Some(anchor)
   self.prefer_below = prefer_below
-  self.widget.clear_input()
+  self.widget.restore_input(text, batch?)
   self.widget.show()
   self.layout()
 }

@@ -14,6 +14,14 @@ priv enum UiMessage {
   PdfPreviousPage
   PdfPageNumber
   PdfNextPage
+  PdfCapture
+  PdfCaptureHint
+  PdfCaptureFailed
+  PdfCaptureTooLarge
+  PdfCaptureUnsupportedAnnotation
+  PdfCaptureUnavailable
+  PdfCaptureSubmissionFailed
+  PdfCapturePendingAnnotation
   PdfFitWidth
   PdfRotate
   PdfSearching
@@ -233,6 +241,81 @@ fn ui(locale : @i18n.Locale, message : UiMessage) -> String {
     (TraditionalChinese, PdfNextPage) => "下一頁"
     (Japanese, PdfNextPage) => "次のページ"
     (Spanish, PdfNextPage) => "Página siguiente"
+    (English, PdfCapture) => "Capture region"
+    (SimplifiedChinese, PdfCapture) => "区域截图"
+    (TraditionalChinese, PdfCapture) => "區域截圖"
+    (Japanese, PdfCapture) => "範囲を撮影"
+    (Spanish, PdfCapture) => "Capturar región"
+    (English, PdfCaptureHint) =>
+      "Click text or drag a region to annotate · Esc to cancel"
+    (English, PdfCapturePendingAnnotation) =>
+      "Submit or cancel the current annotation before capturing a region."
+    (SimplifiedChinese, PdfCapturePendingAnnotation) =>
+      "请先提交或取消当前批注，再进行区域截图。"
+    (TraditionalChinese, PdfCapturePendingAnnotation) =>
+      "請先提交或取消目前的註解，再擷取區域。"
+    (Japanese, PdfCapturePendingAnnotation) =>
+      "範囲を撮影する前に、現在の注釈を送信またはキャンセルしてください。"
+    (Spanish, PdfCapturePendingAnnotation) =>
+      "Envía o cancela la anotación actual antes de capturar una región."
+    (SimplifiedChinese, PdfCaptureHint) =>
+      "点击文字或拖动框选以批注 · Esc 取消"
+    (TraditionalChinese, PdfCaptureHint) =>
+      "點擊文字或拖曳框選以註解 · Esc 取消"
+    (Japanese, PdfCaptureHint) =>
+      "文字をクリック、または範囲をドラッグして注釈 · Esc でキャンセル"
+    (Spanish, PdfCaptureHint) =>
+      "Haz clic en texto o arrastra una región para anotar · Esc para cancelar"
+    (English, PdfCaptureFailed) =>
+      "Could not capture this region. Wait for the PDF to finish rendering and try again."
+    (SimplifiedChinese, PdfCaptureFailed) =>
+      "无法截取该区域，请等待 PDF 渲染完成后重试。"
+    (TraditionalChinese, PdfCaptureFailed) =>
+      "無法擷取此區域，請等待 PDF 完成繪製後重試。"
+    (Japanese, PdfCaptureFailed) =>
+      "範囲を撮影できませんでした。PDF の描画完了後に再試行してください。"
+    (Spanish, PdfCaptureFailed) =>
+      "No se pudo capturar la región. Espera a que termine de renderizarse el PDF e inténtalo de nuevo."
+    (English, PdfCaptureTooLarge) =>
+      "Screenshot is too large. Select a smaller region (maximum 5 MiB)."
+    (English, PdfCaptureUnsupportedAnnotation) =>
+      "This form or annotation cannot be captured. Select another region."
+    (SimplifiedChinese, PdfCaptureUnsupportedAnnotation) =>
+      "无法截取此表单或批注，请选择其他区域。"
+    (TraditionalChinese, PdfCaptureUnsupportedAnnotation) =>
+      "無法擷取此表單或註解，請選擇其他區域。"
+    (Japanese, PdfCaptureUnsupportedAnnotation) =>
+      "このフォームまたは注釈は撮影できません。別の範囲を選択してください。"
+    (Spanish, PdfCaptureUnsupportedAnnotation) =>
+      "No se puede capturar este formulario o anotación. Selecciona otra región."
+    (SimplifiedChinese, PdfCaptureTooLarge) =>
+      "截图过大，请缩小选区（最大 5 MiB）。"
+    (TraditionalChinese, PdfCaptureTooLarge) =>
+      "截圖過大，請縮小選區（最大 5 MiB）。"
+    (Japanese, PdfCaptureTooLarge) =>
+      "画像が大きすぎます。範囲を小さくしてください（最大 5 MiB）。"
+    (Spanish, PdfCaptureTooLarge) =>
+      "La captura es demasiado grande. Selecciona una región más pequeña (máximo 5 MiB)."
+    (English, PdfCaptureUnavailable) =>
+      "To attach a screenshot, open a conversation with an image-capable model."
+    (SimplifiedChinese, PdfCaptureUnavailable) =>
+      "请在支持图片的模型对话中添加截图附件。"
+    (TraditionalChinese, PdfCaptureUnavailable) =>
+      "請在支援圖片的模型對話中加入截圖附件。"
+    (Japanese, PdfCaptureUnavailable) =>
+      "画像対応モデルの会話でスクリーンショットを添付してください。"
+    (Spanish, PdfCaptureUnavailable) =>
+      "Para adjuntar una captura, abre una conversación con un modelo que admita imágenes."
+    (English, PdfCaptureSubmissionFailed) =>
+      "Could not add the screenshot. Use an image-capable model and a regular message prompt, then try again."
+    (SimplifiedChinese, PdfCaptureSubmissionFailed) =>
+      "无法添加截图。请切换到支持图片的模型，在普通消息输入框中重试。"
+    (TraditionalChinese, PdfCaptureSubmissionFailed) =>
+      "無法加入截圖。請切換至支援圖片的模型，在一般訊息輸入框中重試。"
+    (Japanese, PdfCaptureSubmissionFailed) =>
+      "スクリーンショットを追加できませんでした。画像対応モデルに切り替え、通常のメッセージ入力で再試行してください。"
+    (Spanish, PdfCaptureSubmissionFailed) =>
+      "No se pudo añadir la captura. Usa un modelo que admita imágenes y una entrada de mensaje normal, e inténtalo de nuevo."
     (English, PdfFitWidth) => "Fit page width"
     (SimplifiedChinese, PdfFitWidth) => "适应页宽"
     (TraditionalChinese, PdfFitWidth) => "符合頁面寬度"

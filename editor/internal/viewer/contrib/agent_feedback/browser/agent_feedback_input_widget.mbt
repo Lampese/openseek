@@ -53,6 +53,7 @@ struct AgentFeedbackInputWidget {
   batch_text : @rdom.Element
   batch : @rdom.Element
   submit : @rdom.Element
+  allow_empty_submit : Bool
 }
 
 ///|
@@ -60,6 +61,8 @@ pub fn AgentFeedbackInputWidget::AgentFeedbackInputWidget(
   localization~ : @localization.Localization = Localization(),
   host : AgentFeedbackInputWidgetHost,
   on_change~ : (String) -> Unit = _ => (),
+  allow_empty_submit~ : Bool = false,
+  on_batch_change~ : (Bool) -> Unit = _ => (),
 ) -> AgentFeedbackInputWidget {
   let document = @rdom.document()
   let root = document.create_element("div")
@@ -100,11 +103,15 @@ pub fn AgentFeedbackInputWidget::AgentFeedbackInputWidget(
     batch_text,
     batch,
     submit,
+    allow_empty_submit,
   }
   widget.refresh_labels()
   widget.update_actions_enabled()
   widget.hook_events()
   textarea.add_event_listener("input", _ => on_change(widget.value()))
+  batch.add_event_listener("change", _ => {
+    on_batch_change(input_checkbox_checked(batch))
+  })
   widget
 }
 
@@ -179,7 +186,7 @@ fn AgentFeedbackInputWidget::hook_events(
       @base_browser.element_contains(self.root, element) {
       return
     }
-    if !self.has_text() {
+    if !self.allow_empty_submit && !self.has_text() {
       (self.host.on_blur_empty)()
     }
   })
@@ -190,7 +197,7 @@ fn AgentFeedbackInputWidget::submit_feedback(
   self : AgentFeedbackInputWidget,
   force_apply~ : Bool,
 ) -> Unit {
-  guard self.has_text() else { return }
+  guard self.allow_empty_submit || self.has_text() else { return }
   if force_apply || !input_checkbox_checked(self.batch) {
     (self.host.on_add_and_submit)()
   } else {
@@ -360,7 +367,7 @@ pub fn AgentFeedbackInputWidget::measured_width(
 fn AgentFeedbackInputWidget::update_actions_enabled(
   self : AgentFeedbackInputWidget,
 ) -> Unit {
-  if self.has_text() {
+  if self.allow_empty_submit || self.has_text() {
     self.submit.remove_attribute("disabled")
   } else {
     self.submit.set_attribute("disabled", "true")
@@ -430,5 +437,21 @@ extern "js" fn input_checkbox_checked(element : @rdom.Element) -> Bool = "(el) =
 pub fn AgentFeedbackInputWidget::resize(
   self : AgentFeedbackInputWidget,
 ) -> Unit {
+  self.auto_size()
+}
+
+///|
+/// Restore host-owned draft state without emitting user-change callbacks.
+pub fn AgentFeedbackInputWidget::restore_input(
+  self : AgentFeedbackInputWidget,
+  text : String,
+  batch? : Bool,
+) -> Unit {
+  input_set_textarea_value(self.textarea, text)
+  if batch is Some(batch) {
+    @js.Value::cast_from(self.batch).set_with_string("checked", batch)
+  }
+  self.refresh_labels()
+  self.update_actions_enabled()
   self.auto_size()
 }

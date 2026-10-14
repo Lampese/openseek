@@ -3287,6 +3287,89 @@ fn update_msg(
         (command, model)
       }
     }
+    FileEditor(@fileeditor.PdfCaptureRequested) => {
+      // Text drafts and captured images own their source until submitted or
+      // cancelled. Do not discard either while starting a replacement.
+      guard !model.file_panel.has_pinned_office_selection(file_ctx(model)) &&
+        model.file_panel.pending_pdf_capture(file_ctx(model)) is None else {
+        return (@cmd.none, model)
+      }
+      guard model.can_attach_pdf_capture() else {
+        return model.notify_error(
+          dispatch,
+          @fileeditor.capture_unavailable_message(model.locale),
+        )
+      }
+      (
+        @fileeditor.capture_pdf_region(
+          dispatch.map(msg => FileEditor(msg)),
+          model.file_panel,
+          file_ctx(model),
+        ),
+        { ..model, file_panel: { ..model.file_panel, pdf_capture: None, }, },
+      )
+    }
+    FileEditor(
+      @fileeditor.PdfCaptureFinished(
+        owner~,
+        epoch~,
+        path~,
+        sig~,
+        generation~,
+        result~
+      )
+    ) => {
+      let ctx = file_ctx(model)
+      guard ctx.panel_open &&
+        owns_office_selection(model, owner) &&
+        model.file_panel.accepts_pdf_callback(
+          ctx, owner, epoch, path, sig, generation,
+        ) else {
+        return (@cmd.none, model)
+      }
+      guard model.can_attach_pdf_capture() else {
+        return model.notify_error(
+          dispatch,
+          @fileeditor.capture_unavailable_message(model.locale),
+        )
+      }
+      let capture = match result {
+        Ok(capture) => capture
+        Err(message) => return model.notify_error(dispatch, message)
+      }
+      let preview : @fileeditor.PdfCapturePreview = {
+        id: model.file_panel.pdf_capture_id + 1L,
+        owner,
+        epoch,
+        path,
+        sig,
+        generation,
+        capture,
+      }
+      (
+        @cmd.none,
+        {
+          ..model,
+          file_panel: {
+            ..model.file_panel,
+            pdf_capture: Some({ preview, comment: "", }),
+            pdf_capture_id: preview.id,
+          },
+        },
+      )
+    }
+    FileEditor(@fileeditor.PdfCaptureSubmissionDeclined(preview)) => {
+      guard model.file_panel
+        .pending_pdf_capture(file_ctx(model))
+        .map(draft => draft.preview) ==
+        Some(preview) else {
+        return (@cmd.none, model)
+      }
+      model.notify_error(
+        dispatch,
+        @fileeditor.capture_submission_declined_message(model.locale),
+      )
+    }
     FileEditor(@fileeditor.OfficeSelectionConfirmed(preview)) =>
       confirm_office_selection(
         model,

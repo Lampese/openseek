@@ -9,6 +9,8 @@ fn pdf_viewer_toolbar(
     return @html.nothing
   }
   let ready = document.status is PdfReady
+  let annotation_pending = state.has_pinned_office_selection(ctx) ||
+    state.pending_pdf_capture(ctx) is Some(_)
   let pages = document.pages.map(pages => pages.to_string()).unwrap_or("…")
   let controls = [
     @html.button(
@@ -60,6 +62,24 @@ fn pdf_viewer_toolbar(
       "↻",
     ),
   ]
+  controls.push(
+    @html.button(
+      type_="button",
+      class="icon-button pdf-capture-button",
+      disabled=!ready || annotation_pending,
+      title=ui(
+        locale,
+        if annotation_pending {
+          PdfCapturePendingAnnotation
+        } else {
+          PdfCapture
+        },
+      ),
+      attrs=@html.Attrs::build().aria_label(ui(locale, PdfCapture)),
+      on_click=dispatch(PdfCaptureRequested),
+      @icons.icon(@icons.icon_device_camera),
+    ),
+  )
   if !state.office_query.is_empty() {
     controls.push(
       @html.span(
