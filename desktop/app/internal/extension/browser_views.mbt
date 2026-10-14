@@ -6,12 +6,34 @@
 
 ///|
 /// The registry of native browser views. The window handle arrives with
-/// Proton's window lifecycle and every view hangs off it by name, so this
-/// holds no view map of its own — `WindowHandle::find_view` is the truth.
+/// Proton's window lifecycle and every view hangs off it by name, so which
+/// views exist is never mirrored here — `WindowHandle::find_view` is the
+/// truth.
 struct BrowserViews {
   mut window : @proton.WindowHandle?
   debug_port : Int32
   mut pick : BrowserPick?
+  // The conversation each page's tab belongs to, as the page says whenever
+  // it opens or navigates one. The dock's strips are the page's state, and
+  // the views of a conversation that is off screen stay alive, hidden; this
+  // is what lets a tool an agent calls see its own conversation's tabs and
+  // not another's. A page the dock held under no conversation has no entry.
+  owners : Map[Int32, String]
+  // How the page is told something (a `browser.event`), once the bridge
+  // that carries it exists.
+  mut notify : (async (Json) -> Unit)?
+  // One lock per tab a tool is navigating, so that two navigations of the
+  // same tab happen one after the other: each waits for the page to change
+  // from what it was, and two waiting at once would both take the first
+  // change for their own.
+  navigating : Map[Int32, @async.Mutex]
+  // Whether a page has connected to the bridge in this window. Until one
+  // has, the bridge drops what it is told to deliver — a page that connects
+  // reads its state afresh — so nothing sent would ever be answered.
+  mut page_connected : Bool
+  // Tabs the page has been asked to open and has not answered for yet, by
+  // request: where the id it gives the tab is delivered.
+  opening : Map[String, @async.Queue[Int32]]
 }
 
 ///|
@@ -19,7 +41,16 @@ struct BrowserViews {
 /// through window_ready when Proton creates it.
 pub async fn BrowserViews::BrowserViews() -> BrowserViews {
   let debug_port = prepare_debugging()
-  { window: None, debug_port, pick: None, }
+  {
+    window: None,
+    debug_port,
+    pick: None,
+    owners: Map([]),
+    notify: None,
+    navigating: Map([]),
+    page_connected: false,
+    opening: Map([]),
+  }
 }
 
 ///|
@@ -31,9 +62,27 @@ pub fn BrowserViews::window_ready(
 }
 
 ///|
+/// Give the views their way to reach the page: `notify` delivers one
+/// `browser.event`. Set once the bridge exists, which is after the views do.
+pub fn BrowserViews::page_attached(
+  self : BrowserViews,
+  notify : async (Json) -> Unit,
+) -> Unit {
+  self.notify = Some(notify)
+}
+
+///|
 pub fn BrowserViews::window_closed(self : BrowserViews) -> Unit {
   self.cancel_pick()
   self.window = None
+  self.page_connected = false
+}
+
+///|
+/// A page has connected to the bridge, and from here on hears what it is
+/// told.
+fn BrowserViews::page_is_connected(self : BrowserViews) -> Unit {
+  self.page_connected = true
 }
 
 ///|
@@ -41,6 +90,8 @@ pub fn BrowserViews::window_closed(self : BrowserViews) -> Unit {
 /// views of the previous page must not survive its `host.connect`.
 fn BrowserViews::close_all(self : BrowserViews) -> Unit {
   self.cancel_pick()
+  self.owners.clear()
+  self.navigating.clear()
   guard self.window is Some(window) else { return }
   for view in window.views() {
     if browser_view_id(view.id()) is Some(_) {
@@ -120,6 +171,7 @@ pub fn view_event_json(id : Int32, event : @proton.ViewEvent) -> Json? {
 ///|
 priv suberror BrowserViewError {
   WindowNotReady
+  PageNotConnected
   UnknownView(Int32)
   BlockedURL(String)
 } derive(Debug)
@@ -128,6 +180,10 @@ priv suberror BrowserViewError {
 impl Show for BrowserViewError with fn output(self, logger) {
   match self {
     WindowNotReady => logger.write_string("The desktop window is not ready")
+    PageNotConnected =>
+      logger.write_string(
+        "The SeekMoon window is still starting; try again in a moment",
+      )
     UnknownView(id) => logger.write_string("Unknown browser view \{id}")
     BlockedURL(url) =>
       logger.write_string("Blocked unsupported page URL: \{url}")
@@ -244,6 +300,10 @@ fn BrowserViews::open(
   }
   guard allowed_page_url(payload.url) else { raise BlockedURL(payload.url) }
   let window = self.attached_window()
+  match payload.session {
+    Some(session) => self.owners[payload.id] = session
+    None => self.owners.remove(payload.id)
+  }
   let view = match window.view(view_name(payload.id)) {
     Some(view) => {
       view.load_url(payload.url)
@@ -262,6 +322,7 @@ fn BrowserViews::open(
       )
   }
   apply_browser_theme(view, payload.dark)
+  self.answer_open(payload)
   Acknowledged
 }
 
@@ -390,6 +451,8 @@ fn BrowserViews::close(
   if self.pick is Some(pick) && pick.id == payload.id {
     self.cancel_pick()
   }
+  self.owners.remove(payload.id)
+  self.navigating.remove(payload.id)
   // Closing a view that is already gone is not an error: the close raced a
   // page reload's `close_all`.
   guard self.window is Some(window) else { return Acknowledged }
@@ -517,7 +580,15 @@ async test "browser ops refuse to run without a window; close tolerates it" {
 
   let views = BrowserViews::BrowserViews()
   assert_true(
-    raises(() => views.open({ id: 1, url: "http://x/", dark: true, })),
+    raises(() => {
+      views.open({
+        id: 1,
+        url: "http://x/",
+        dark: true,
+        session: None,
+        request: None,
+      })
+    }),
   )
   assert_true(raises(() => views.back({ id: 1, })))
   assert_true(raises(() => views.forward({ id: 1, })))

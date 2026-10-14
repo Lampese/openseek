@@ -5,10 +5,13 @@ import {
   "moonbit-community/proton",
   "openseek_desktop/app/internal/cdp",
   "openseek_desktop/backend/api",
+  "openseek_desktop/backend/mcp",
   "openseek_desktop/protocol",
 }
 
 // Values
+pub fn browser_tools(BrowserViews) -> Array[@mcp.Tool]
+
 pub fn browser_view_id(String) -> Int?
 
 pub fn localized_menu(String) -> @proton.MenuBar
@@ -24,6 +27,7 @@ pub fn view_event_json(Int, @proton.ViewEvent) -> Json?
 // Types and methods
 type BrowserViews
 pub async fn BrowserViews::BrowserViews() -> Self
+pub fn BrowserViews::page_attached(Self, async (Json) -> Unit) -> Unit
 pub fn BrowserViews::window_closed(Self) -> Unit
 pub fn BrowserViews::window_ready(Self, @proton.WindowHandle) -> Unit
 pub async fn[T] BrowserViews::with_cdp(Self, Int, async (@cdp.Connection) -> T) -> T

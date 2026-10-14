@@ -965,11 +965,31 @@ pub(all) struct BrowserOpenPayload {
   id : Int32
   url : String
   dark : Bool
+  // The conversation whose dock strip holds the page. The strips are the
+  // page's state; this is the one thing about them the host is told, so a
+  // tool can tell a conversation's tabs from another's. Absent only while
+  // the dock has no owner yet.
+  session : String?
+  // The host's request this open answers, when the page is opening the tab
+  // because the host asked (`browser.event` kind `open_requested`): echoing
+  // it is how the host learns which page id its request was given.
+  request : String?
 } derive(Debug, Eq)
 
 ///|
 pub impl ToJson for BrowserOpenPayload with fn to_json(self) {
-  { "id": self.id, "url": self.url, "dark": self.dark }
+  let fields : Map[String, Json] = {
+    "id": Json(self.id),
+    "url": Json(self.url),
+    "dark": Json(self.dark),
+  }
+  if self.session is Some(session) {
+    fields["session"] = Json(session)
+  }
+  if self.request is Some(request) {
+    fields["request"] = Json(request)
+  }
+  Json(fields)
 }
 
 ///|
@@ -977,10 +997,25 @@ pub impl FromJson for BrowserOpenPayload with fn from_json(json, path) {
   guard json is { "id": id, "url": url, "dark": dark, .. } else {
     raise JsonDecodeError((path, "expected browser id, URL and theme"))
   }
+  // A missing `session` is the ownerless dock; one that is present names a
+  // conversation, so `null` is as malformed as a number. `request` likewise:
+  // missing is an open nobody asked for.
+  let session : String? = match json {
+    { "session": session, .. } =>
+      Some(@json.from_json(session, path=path.add_key("session")))
+    _ => None
+  }
+  let request : String? = match json {
+    { "request": request, .. } =>
+      Some(@json.from_json(request, path=path.add_key("request")))
+    _ => None
+  }
   {
     id: @json.from_json(id, path=path.add_key("id")),
     url: @json.from_json(url, path=path.add_key("url")),
     dark: @json.from_json(dark, path=path.add_key("dark")),
+    session,
+    request,
   }
 }
 

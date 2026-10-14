@@ -12,6 +12,48 @@
 const BrowserPaneId = "browser-pane"
 
 ///|
+/// Open a new tab for either a user action or a host request. The caller
+/// chooses the conversation; an off-screen conversation keeps its tab parked.
+/// A blank tab has no native view until its first address is submitted.
+fn open_browser_tab(
+  dispatch : @cmd.Emit[Msg],
+  model : Model,
+  owner : @interop.ConversationKey?,
+  url? : String,
+  request? : String,
+) -> (@cmd.Cmd, Model) {
+  let (preview, id) = @preview.open_page(model.preview, url?)
+  let dock = if owner is Some(owner) {
+    @dock.open_browser_for(model.dock, owner, id)
+  } else {
+    @dock.open_browser(model.dock, id)
+  }
+  let on_screen = owner == model.dock.owner
+  let cmd = if url is Some(url) {
+    browser_open(
+      dispatch,
+      id,
+      url,
+      model.theme.is_dark(model.system_dark),
+      owner,
+      request?,
+    )
+  } else {
+    @cmd.none
+  }
+  (
+    cmd,
+    {
+      ..model,
+      preview,
+      dock,
+      right_panel_open: model.right_panel_open || (on_screen && url is Some(_)),
+      right_panel_menu_open: model.right_panel_menu_open && !on_screen,
+    },
+  )
+}
+
+///|
 /// One bridge-local native-window op. Geometry calls (`quiet=true`) fail
 /// silently — they are continuous best-effort placement, and a failure just
 /// means the view is gone or not yet created; the next sync pass reconverges.
@@ -50,14 +92,23 @@ fn[Payload : ToJson] browser_op(
 
 ///|
 /// Create page `id`'s native view loading `url`. The view starts hidden;
-/// the pane sync shows and places it after the next measurement.
+/// the pane sync shows and places it after the next measurement. `owner` is
+/// the dock strip the page is in, which is how the host learns whose tab it
+/// is.
 fn browser_open(
   dispatch : @cmd.Emit[Msg],
   id : Int32,
   url : String,
   dark : Bool,
+  owner : @interop.ConversationKey?,
+  request? : String,
 ) -> @cmd.Cmd {
-  browser_op(dispatch, @commands.browser_open, { id, url, dark, }, quiet=false)
+  browser_op(
+    dispatch,
+    @commands.browser_open,
+    { id, url, dark, session: owner.map(owner => owner.session), request, },
+    quiet=false,
+  )
 }
 
 ///|
@@ -66,11 +117,18 @@ fn browser_navigate(
   id : Int32,
   url : String,
   dark : Bool,
+  owner : @interop.ConversationKey?,
 ) -> @cmd.Cmd {
   browser_op(
     dispatch,
     @commands.browser_navigate,
-    { id, url, dark, },
+    {
+      id,
+      url,
+      dark,
+      session: owner.map(owner => owner.session),
+      request: None,
+    },
     quiet=false,
   )
 }
@@ -261,6 +319,16 @@ fn focus_browser_address() -> @cmd.Cmd {
 /// Decode one `browser.event` notification into the preview subsystem's
 /// message. Unknown kinds and malformed payloads drop.
 fn browser_event_msg(payload : Map[String, Json]) -> Msg? {
+  // The one event about a page that does not exist yet: the host wants a
+  // tab opened, and learns its id from the `browser.open` that follows.
+  if @jsonx.json_text(payload, "kind") == Some("open_requested") {
+    guard @jsonx.json_text(payload, "request") is Some(request) &&
+      @jsonx.json_text(payload, "session") is Some(session) &&
+      @jsonx.json_text(payload, "url") is Some(url) else {
+      return None
+    }
+    return Some(BrowserOpenRequested(request~, session~, url~))
+  }
   guard @jsonx.json_int(payload, "id") is Some(id) &&
     @jsonx.json_text(payload, "kind") is Some(kind) else {
     return None

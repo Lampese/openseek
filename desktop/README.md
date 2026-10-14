@@ -188,6 +188,39 @@ are not gated by the approval prompt, which only covers the built-in tools'
 sandbox escalations. Codex conversations do not
 read this file — Codex takes its MCP servers from its own `config.toml`.
 
+### The app's own tools
+
+The app offers tools of its own to the agents it runs, starting with the
+dock's browser. An agent works with the Browser tabs of its own conversation:
+`browser_tabs` lists them, `browser_open` opens a new one on an address, and
+`browser_navigate` loads an address in one, steps back or forward in its
+history, or reloads it. The engine connects directly to the host over MCP
+Streamable HTTP. Add this to `~/.openseek/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "seekmoon": {
+      "url": "${OPENSEEK_DESKTOP_TOOLS_URL}",
+      "headers": {
+        "Authorization": "Bearer ${OPENSEEK_DESKTOP_TOOLS_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+The tools reach the agent as `mcp__seekmoon__<tool>`. The host supplies the
+address and conversation token in the engine's environment; no relay process
+or credentials on disk are needed. Without the entry no tools are added.
+Outside a desktop-launched engine the variables are absent, so loading this
+configuration fails and no MCP tools are registered. To offer only browser
+tools, add
+`"X-SeekMoon-Tool-Groups": "browser"` to `headers`; multiple groups are comma
+separated. Replace older `"command": "seekmoon", "args": ["mcp"]` entries
+with the HTTP entry above; the relay executable is no longer packaged.
+See `backend/mcp/README.md`.
+
 ## API endpoint
 
 SeekMoon is bring-your-own-key: there is no hosted chat proxy, so requests
