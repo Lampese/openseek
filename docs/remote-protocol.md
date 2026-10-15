@@ -676,6 +676,10 @@ these are ordinary command replies, with no transport-level wrapper.
 | `skills.install` | `{module_name, version, package_path?}` | `{installed}` |
 | `skills.uninstall` | `{id}` | `{removed}` |
 
+Installed entries include an optional `registry: {module_name, package_path}`
+identifying the installed registry skill. Root packages use `package_path: ""`;
+non-registry skills omit `registry`.
+
 Notification:
 
 | method | params |
