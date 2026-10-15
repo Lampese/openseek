@@ -619,3 +619,14 @@ requires GTK3 and
 `libwebkit2gtk-4.1` installed on the host system, which is the standard
 arrangement for webview-based AppImages. If your system lacks FUSE2, run it
 with `APPIMAGE_EXTRACT_AND_RUN=1`.
+
+### Office width fitting preview
+
+The fit-width integration uses `moonbit-community/office-viewer@0.2.1`. Until
+that version is published, add its checkout to the root `moon.work` members
+when building the preview. The renderer code comes from the new
+package. Bundled document fonts and PDF.js runtime remain pinned to the existing
+`Lampese/office-viewer@0.1.3` assets and their modification notices.
+
+DOCX opens in Fit width. Explicit zoom and fit choices are retained per file;
+Excel opens at 100% and keeps horizontal scrolling unless Fit width is chosen.
