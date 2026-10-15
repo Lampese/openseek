@@ -252,6 +252,9 @@ pub fn editor_classes(state : State, ctx : Ctx) -> String {
     ctx.active_file is None &&
     ctx.active_history_diff is None
   let mut classes = "editor"
+  if active_office_surface(state, ctx) is Some(_) {
+    classes += " office-reading"
+  }
   if state.tree_open || picking {
     classes += " tree-open"
   }
