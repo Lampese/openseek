@@ -2042,7 +2042,7 @@ fn office_viewer_toolbar(
           state.has_pinned_office_selection(ctx),
         on_click=dispatch(OfficeRegionRequested),
         attrs=@html.Attrs::build().aria_label(ui(locale, OfficeRegion)),
-        @icons.icon(@icons.icon_comment),
+        @icons.icon(@icons.icon_region_capture),
       ),
       @html.input(
         input_type=@html.InputType::Search,
