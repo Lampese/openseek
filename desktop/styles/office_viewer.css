@@ -740,8 +740,6 @@
 
 /* Region annotation uses a document-owned session; this layer never captures
    pixels, so its outline and hint cannot leak into the exported document. */
-.office-viewer-control.office-region-action { display: inline-flex; align-items: center; width: auto; padding-inline: 6px; gap: 5px; white-space: nowrap; flex-shrink: 0; }
-.office-region-action svg { width: 15px; height: 15px; flex: none; }
 .office-region-selecting, .office-region-selecting * { cursor: crosshair !important; user-select: none !important; }
 .office-region-capture { position: fixed; inset: 0; z-index: 1000; pointer-events: none; }
 .office-region-capture-box { position: fixed; box-sizing: border-box; border: 2px solid #1677ff; background: rgb(22 119 255 / 8%); }
