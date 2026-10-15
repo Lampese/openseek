@@ -459,9 +459,8 @@ pub(all) struct State {
   // is shown. A panel preference, not per-conversation state, so it
   // survives conversation switches.
   tree_open : Bool
-  // Office surface preferences are panel-level settings. They apply to both
-  // DOCX and XLSX tabs and survive switching conversations, just like the
-  // file-tree preference.
+  // Keep the PDF zoom fallback and each Office file's fit/manual zoom choice
+  // across conversation switches. Search and font preferences remain shared.
   office_zoom : Int32
   office_zoom_preferences : Map[@common.Uri, OfficeZoomPreference]
   office_query : String
