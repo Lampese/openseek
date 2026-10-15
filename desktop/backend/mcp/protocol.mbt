@@ -137,14 +137,15 @@ async fn Server::call_tool(
     { "arguments": arguments, .. } => arguments
     _ => Json::empty_object()
   }
-  let outcome : (String, Bool)? = @async.with_timeout_opt(CallTimeoutMs, () => {
+  async fn invoke() -> (String, Bool) {
     try (tool.call)({ session, arguments, }) catch {
       error if @async.is_being_cancelled() => raise error
       error => ("\{error}", true)
     } noraise {
       text => (text, false)
     }
-  })
+  }
+  let outcome = @async.with_timeout_opt(CallTimeoutMs, invoke)
   let (text, is_error) = match outcome {
     Some(outcome) => outcome
     None => ("\{name} timed out after \{CallTimeoutMs / 1000}s", true)

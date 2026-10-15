@@ -103,7 +103,7 @@ pub async fn McpClient::call_tool(
   name~ : String,
   arguments~ : Json,
 ) -> CallToolResult {
-  let params : Json = { "name": name, "arguments": arguments }
+  let params : Json = { "name": Json(name), "arguments": arguments }
   let result = self.rpc.request(method_="tools/call", params~)
   decode_call_result(result)
 }
