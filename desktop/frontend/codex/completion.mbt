@@ -595,7 +595,6 @@ fn State::apply_composer_action(
     | @composer.QueuedInputEditRequested(..)
     | @composer.QueuedInputSteerRequested(..)
     | @composer.QueuedInputDeleteRequested(..)
-    // Never emitted here: this composer reports `shell_available: false`.
     | @composer.WorktreePlacementRetried(..) => (@cmd.none, self)
   }
 }

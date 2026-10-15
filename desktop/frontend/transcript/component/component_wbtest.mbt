@@ -30,6 +30,71 @@ fn pinned_model(input : Input) -> Model {
 }
 
 ///|
+test "transcript editor drafts stay immutable and cancel releases the row" {
+  let input = {
+    ..base_input(),
+    can_fork: true,
+    editable_users: [1],
+    items: [
+      {
+        identity: "s1",
+        item: {
+          kind: User(content=Content([Text("original")])),
+          sequence: Some(1),
+          ts: None,
+        },
+      },
+    ],
+  }
+  let blocks = stream_blocks(input).map(block => (input.locale, block))
+  let block = blocks[0].1
+  let key = block.branch_key()
+  let send : @cmd.Emit[(Int32, @composer.Draft)] = @cmd.Emit(_ => @cmd.none)
+  let empty = MessageEditors(Map([]))
+  let (opened, _) = empty.update(blocks, key, BeginEdit, send, unpin=@cmd.none)
+  let (typed, _) = opened.update(
+    blocks,
+    key,
+    EditText("draft"),
+    send,
+    unpin=@cmd.none,
+  )
+  let (again, _) = opened.update(
+    blocks,
+    key,
+    EditText("draft"),
+    send,
+    unpin=@cmd.none,
+  )
+  assert_true(typed == again)
+  assert_true(empty.for_block(block) is EditorClosed)
+  assert_true(opened.for_block(block) is EditorDraft({ task: "original", .. }))
+  let (sent, _) = typed.update(blocks, key, SendEdit, send, unpin=@cmd.none)
+  assert_true(sent == typed)
+  let busy = stream_blocks({ ..input, edit_busy: true, }).map(block => {
+    (input.locale, block)
+  })
+  let (held, _) = typed.update(
+    busy,
+    key,
+    EditText("lost"),
+    send,
+    unpin=@cmd.none,
+  )
+  assert_true(held == typed)
+  let (cancelled, _) = held.update(busy, key, CancelEdit, send, unpin=@cmd.none)
+  assert_true(cancelled.0.is_empty())
+  let (removed, _) = typed.update(
+    @vector.from_array([]),
+    key,
+    SendEdit,
+    send,
+    unpin=@cmd.none,
+  )
+  assert_true(removed.0.is_empty())
+}
+
+///|
 test "an overview click unpins and highlights inside the component" {
   let key = @transcript_overview.Durable(3)
   let input = base_input()
@@ -74,4 +139,88 @@ test "local pinned transitions are pure" {
   assert_false(received.pinned)
   let (jumped, _) = grown.update(input, JumpToLatest, emit)
   assert_true(jumped.pinned)
+
+  let editing_input = {
+    ..input,
+    can_fork: true,
+    editable_users: [1],
+    items: [
+      {
+        identity: "s1",
+        item: {
+          kind: User(content=Content([Text("original")])),
+          sequence: Some(1),
+          ts: None,
+        },
+      },
+    ],
+  }
+  let blocks = stream_blocks(editing_input)
+  guard blocks.get(0) is Some(block) else { fail("user block") }
+  let send : @cmd.Emit[(Int32, @composer.Draft)] = @cmd.Emit(_ => @cmd.none)
+  let closed = MessageEditor::EditorClosed
+  let (opened, _) = closed.update(block, BeginEdit, send, unpin=@cmd.none)
+  let (repeated, _) = closed.update(block, BeginEdit, send, unpin=@cmd.none)
+  assert_true(opened == repeated)
+  assert_true(opened is EditorDraft({ task: "original", .. }))
+  let (typed, _) = opened.update(
+    block,
+    EditText("revised"),
+    send,
+    unpin=@cmd.none,
+  )
+  let (typed_again, _) = opened.update(
+    block,
+    EditText("revised"),
+    send,
+    unpin=@cmd.none,
+  )
+  assert_true(typed == typed_again)
+  assert_true(opened is EditorDraft({ task: "original", .. }))
+  let (sent, _) = typed.update(block, SendEdit, send, unpin=@cmd.none)
+  assert_true(sent == typed)
+  let (cancelled, _) = typed.update(block, CancelEdit, send, unpin=@cmd.none)
+  assert_true(cancelled is EditorClosed)
+  guard stream_blocks({ ..editing_input, fork_busy: true, }).get(0)
+    is Some(busy) else {
+    fail("busy block")
+  }
+  for msg in [BeginEdit, EditText("lost"), CancelEdit, SendEdit] {
+    let (held, _) = typed.update(busy, msg, send, unpin=@cmd.none)
+    assert_true(held == typed)
+  }
+}
+
+///|
+test "a run starting during inline editing keeps the draft and allows cancellation" {
+  let input = base_input()
+  let input = {
+    ..input,
+    can_fork: true,
+    editable_users: [1],
+    edit_busy: true,
+    items: [
+      {
+        identity: "s1",
+        item: {
+          kind: User(content=Content([Text("original")])),
+          sequence: Some(1),
+          ts: None,
+        },
+      },
+    ],
+  }
+  guard stream_blocks(input).get(0) is Some(block) else { fail("user block") }
+  let send : @cmd.Emit[(Int32, @composer.Draft)] = @cmd.Emit(_ => @cmd.none)
+  let draft = MessageEditor::EditorDraft({
+    task: "draft",
+    images: [],
+    mentions: [],
+  })
+  let (held, _) = draft.update(block, SendEdit, send, unpin=@cmd.none)
+  assert_true(held == draft)
+  let (closed, _) = draft.update(block, CancelEdit, send, unpin=@cmd.none)
+  assert_true(closed is EditorClosed)
+  let (blocked, _) = closed.update(block, BeginEdit, send, unpin=@cmd.none)
+  assert_true(blocked is EditorClosed)
 }

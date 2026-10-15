@@ -77,7 +77,9 @@ struct Input {
   // Disable every conversation while a request is pending; only its source
   // answer receives the spinner's terminal sequence below.
   fork_busy : Bool
+  edit_busy : Bool
   forking : Int32?
+  editable_users : Array[Int32]
   // Where the reader left this conversation last time, read once by `init`.
   scroll : ScrollPosition
   // The registered project that owns this conversation, kept separate from
@@ -119,7 +121,9 @@ pub fn Input::Input(
   active_session~ : String,
   can_fork~ : Bool = false,
   fork_busy~ : Bool = false,
+  edit_busy~ : Bool = false,
   forking? : Int32,
+  editable_users~ : Array[Int32] = [],
   scroll~ : ScrollPosition = Pinned,
   project_label? : String,
   current_project~ : @common.Uri?,
@@ -143,7 +147,9 @@ pub fn Input::Input(
     active_session,
     can_fork,
     fork_busy,
+    edit_busy,
     forking,
+    editable_users,
     scroll,
     project_label,
     current_project,
@@ -171,6 +177,7 @@ pub(all) struct Actions {
   /// the child transcript it names.
   open_session : @cmd.Emit[String]
   fork : @cmd.Emit[Int32]
+  edit_user : @cmd.Emit[(Int32, @composer.Draft)]
   /// Start a fresh draft in another registered project.
   choose_project : @cmd.Emit[@common.Uri]
   /// Open the shell-owned folder picker to register another project.
@@ -335,15 +342,24 @@ pub fn component(
   let blocks = input.map(input => {
     stream_blocks(input).map(block => (input.locale, block))
   })
-  let rendered = blocks.assoc_by(
-    (_, block) => {
+  let (editors, edit_emit) = message_editor_states(
+    blocks,
+    actions,
+    unpin=emit(Pinned(false)),
+  )
+  let rows = blocks.map2(editors, (blocks, editors) => {
+    blocks.map(pair => (pair.0, pair.1, editors.for_block(pair.1)))
+  })
+  let rendered = rows.assoc_by(
+    (key, row) => {
       let renders = Ref(0)
       let (changes, changes_emit) = message_changes_state(
-        block.map(pair => pair.1),
+        row.map(row => row.1),
         actions,
       )
-      changes.map2(block, (changes, pair) => {
-        let (locale, block) = pair
+      let editor_emit = edit_emit.map(msg => (key, msg))
+      changes.map2(row, (changes, row) => {
+        let (locale, block, editor) = row
         renders.val += 1
         let html = @html.memo_by(
           block,
@@ -352,6 +368,8 @@ pub fn component(
               locale~,
               actions,
               changes?=changes.control(block, changes_emit),
+              editor?=editor.view(block, locale~, editor_emit),
+              begin_edit=editor_emit(BeginEdit),
             )
           },
           by=_ => renders.val,

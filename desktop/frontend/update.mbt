@@ -2625,7 +2625,13 @@ fn update_msg(
           }
           let submit = match action {
             @composer.FollowupSubmitted(choice~, ..) => SendFollowup(choice)
-            _ => Send
+            _ =>
+              if original_focus == conv.device &&
+                original_session == conv.session_id {
+                Send
+              } else {
+                SendInBackground
+              }
           }
           let (command, submitted) = update_msg(dispatch, submit, target)
           (
@@ -5316,10 +5322,12 @@ fn update_msg(
         (@cmd.none, model)
       }
     }
+    UserMessageEditRequested(slot~, sequence~, draft~) =>
+      model.edit_user_message(dispatch, slot, sequence, draft)
     ForkRequested(slot~, through~) =>
       model.request_fork(dispatch, slot, through)
-    ForkCompleted(pending, result) =>
-      model.finish_fork(dispatch, pending, result)
+    ForkCompleted(pending, result, fresh_session~) =>
+      model.finish_fork(dispatch, pending, result, fresh_session~)
     // A transcript link naming a session on the device already focused. It
     // delegates rather than duplicating: the sub-run child this opens is an
     // ordinary durable session, and `OpenSession` is how one is opened.
@@ -7949,7 +7957,12 @@ fn update_device_msg(
       if change == "deleted" {
         // A record is deleted out of the archive or straight out of the live
         // store; the selection can hold only one of the two.
-        let changed = if fresh_session is Some(fresh) {
+        let editing_source = model.conversation_fork is Some(pending) &&
+          pending.is_edit() &&
+          pending.source.channel == channel &&
+          pending.source.session == key.session &&
+          pending.source.workspace == key.workspace
+        let changed = if !editing_source && fresh_session is Some(fresh) {
           let changed = replace_removed_selection(
             model,
             channel,
@@ -7972,6 +7985,7 @@ fn update_device_msg(
         let sessions = dev.sessions.filter(item => !key.matches(item))
         let archived = dev.archived.filter(item => !key.matches(item))
         let conversations = changed.conversations.filter(conv => {
+          editing_source ||
           conv.device != channel ||
           conv.session_id != key.session ||
           conv.project() != key.workspace

@@ -501,6 +501,34 @@ pub fn endpoints(
         },
       )
     }),
+    Endpoint(@commands.session_edit, payload => {
+      @engine.edit_session(
+        state.manager,
+        payload,
+        start=start => {
+          if !payload.attachment_paths.is_empty() {
+            ignore(
+              @host.stage_attachments_op({
+                session: start.session,
+                workspace: payload.workspace,
+                source_root: payload.workspace,
+                paths: payload.attachment_paths,
+              }),
+            )
+          }
+          ignore(@engine.start_run(state.sink(), state.manager, start))
+        },
+        on_created=created => {
+          publish_session_changed(state, "created", created, payload.workspace)
+        },
+        on_deleted=(deleted, workspace) => {
+          publish_session_changed(state, "deleted", deleted, workspace)
+        },
+        on_worktree_changed=(workspace, worktrees) => {
+          publish_worktree_changed(state, workspace, worktrees)
+        },
+      )
+    }),
     Endpoint(@commands.session_fork, payload => {
       @engine.fork_session(
         state.manager,

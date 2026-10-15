@@ -215,7 +215,13 @@ fn Model::transcript_input(self : Model) -> @transcript_component.Input {
     can_fork=conversation
       .map(conversation => conversation.can_fork())
       .unwrap_or(false),
+    editable_users=conversation
+      .map(conv => conv.editable_messages().map(edit => edit.sequence))
+      .unwrap_or([]),
     fork_busy=self.conversation_fork is Some(_),
+    edit_busy=conversation
+      .map(conv => self.message_edit_busy(conv))
+      .unwrap_or(false),
     forking?=conversation.bind(conversation => {
       self.conversation_fork.bind(pending => {
         if pending.source.matches_record(
@@ -224,7 +230,11 @@ fn Model::transcript_input(self : Model) -> @transcript_component.Input {
             conversation.project(),
             conversation.record,
           ) {
-          Some(pending.through)
+          if pending.kind is AfterAnswer(through~) {
+            Some(through)
+          } else {
+            None
+          }
         } else {
           None
         }

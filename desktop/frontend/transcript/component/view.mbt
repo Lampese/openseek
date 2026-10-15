@@ -902,7 +902,12 @@ fn user_message_view(
   anchor? : String,
   on_jump? : (@mention_context.Target) -> @cmd.Cmd,
   changes? : @review_changes.Control,
+  edit? : @html.Html,
+  editor? : @html.Html,
 ) -> @html.Html {
+  if editor is Some(editor) {
+    return @html.div(class="msg user", id?=anchor, [editor])
+  }
   let body : Array[@html.Html] = [speaker_label(ui(locale, YouLabel))]
   for part in content.0 {
     match part {
@@ -940,6 +945,9 @@ fn user_message_view(
         label=ui(locale, CopyUserMessage),
       ),
     )
+  }
+  if edit is Some(button) {
+    actions.push(button)
   }
   // The overview rail and scroll watcher share this stable turn anchor.
   @html.div(
@@ -1069,6 +1077,8 @@ fn transcript_item_view(
   step_label? : String,
   subrun? : SubrunLink,
   fork? : @html.Html,
+  edit? : @html.Html,
+  editor? : @html.Html,
 ) -> @html.Html {
   match item.kind {
     User(content~) =>
@@ -1076,6 +1086,8 @@ fn transcript_item_view(
         locale~,
         content,
         sent_at?=item.ts,
+        edit?,
+        editor?,
         anchor?,
         on_jump?,
         changes?,

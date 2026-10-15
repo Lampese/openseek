@@ -497,6 +497,14 @@ async fn unarchive_session_commit(
 ) -> Unit {
   let family = manager.claim_session_family_move(session, archived=true)
   defer family.release()
+  manager.archive_commit_lock.acquire()
+  defer manager.archive_commit_lock.release()
+  let shared = @fsx.FileLock::acquire(
+    @session_store.archived_root(family.root).to_path(),
+  ) catch {
+    error => raise EngineError("could not lock the archived store: \{error}")
+  }
+  defer shared.release()
   move_session_family(family, to_archive=false, on_committed)
 }
 
@@ -545,6 +553,14 @@ async fn delete_archived_session_commit(
     selected~,
   )
   defer family.release()
+  manager.archive_commit_lock.acquire()
+  defer manager.archive_commit_lock.release()
+  let shared = @fsx.FileLock::acquire(
+    @session_store.archived_root(family.root).to_path(),
+  ) catch {
+    error => raise EngineError("could not lock the archived store: \{error}")
+  }
+  defer shared.release()
   family.delete_records(archived=true, on_committed, on_worktree_changed?)
   // Physical erasure happens after the commit: the records are already
   // invisible, so a failed or cancelled attempt here only defers their
@@ -570,6 +586,7 @@ pub async fn delete_session(
   on_committed : (String, String) -> Unit,
   worktree? : String,
   force~ : Bool = false,
+  edit_replacement? : EditReplacement,
   on_worktree_changed? : (String, Array[WorktreeInfo]) -> Unit,
 ) -> SessionDeleteReply {
   let session = session.trim().to_owned()
@@ -591,34 +608,52 @@ pub async fn delete_session(
     error => raise EngineError("could not lock the archived store: \{error}")
   }
   defer shared.release()
-  // Only the selected project's checkout may go: another project can hold a
-  // conversation with the same id. And only the checkout the confirmation
-  // named: one that appeared since — repaired by another client while the
-  // dialog was open — is reported instead. The claim keeps a further repair
-  // out from here on.
-  let owner = @worktree.WorktreeOwner::openseek(session)
-  if owner.checkout_removal(
+
+  async fn commit() -> SessionDeleteReply {
+    // Only the selected project's checkout may go: another project can hold a
+    // conversation with the same id. And only the checkout the confirmation
+    // named: one that appeared since — repaired by another client while the
+    // dialog was open — is reported instead. The claim keeps a further repair
+    // out from here on.
+    let owner = @worktree.WorktreeOwner::openseek(session)
+    if owner.checkout_removal(
+        manager.worktree_host(),
+        workspace=selected.workspace,
+      )
+      is Some(found) &&
+      worktree != Some(found.worktree) {
+      return Unconfirmed(found)
+    }
+    // As in archiving, a dirty refusal lands after the idle engine closed and
+    // before anything irreversible; a removal that succeeds while the record
+    // move below then fails leaves a live conversation blocked on its retained
+    // missing placement.
+    let refusal = owner.archive_checkout(
       manager.worktree_host(),
+      force,
       workspace=selected.workspace,
+      on_committed?=on_worktree_changed,
     )
-    is Some(found) &&
-    worktree != Some(found.worktree) {
-    return Unconfirmed(found)
+    if refusal is Some({ worktree, dirty_paths, dirty_path_count, }) {
+      return Unconfirmed({ worktree, dirty_paths, dirty_path_count, })
+    }
+    family.delete_records(archived=false, on_committed, on_worktree_changed?)
+    Deleted
   }
-  // As in archiving, a dirty refusal lands after the idle engine closed and
-  // before anything irreversible; a removal that succeeds while the record
-  // move below then fails leaves a live conversation blocked on its retained
-  // missing placement.
-  let refusal = owner.archive_checkout(
-    manager.worktree_host(),
-    force,
-    workspace=selected.workspace,
-    on_committed?=on_worktree_changed,
-  )
-  if refusal is Some({ worktree, dirty_paths, dirty_path_count, }) {
-    return Unconfirmed({ worktree, dirty_paths, dirty_path_count, })
+  let result = if edit_replacement is Some(edit) {
+    // The store lock protects the replacement from concurrent deletion. The
+    // source record lock also excludes ordinary writers through the rename.
+    require_edited_receipt(family.root, edit)
+    @session_record.with_document(family.root, session, source => {
+      guard session_max_sequence(source) == edit.source_sequence else {
+        raise EngineError("the original conversation changed; it was kept")
+      }
+      commit()
+    })
+  } else {
+    commit()
   }
-  family.delete_records(archived=false, on_committed, on_worktree_changed?)
+  guard result is Deleted else { return result }
   family.release()
   manager.sweep_archived_deletions_in(family.root)
   Deleted
