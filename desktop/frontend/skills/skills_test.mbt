@@ -186,11 +186,10 @@ test "a result from another device settles without a local outcome" {
     ]),
     input(),
   )
-  let (_, busy, _) = ready.handle(
-    emit(),
-    @skills.Install(market_item()),
-    input(),
-  )
+  let (_, busy, _) = ready.handle(emit(), @skills.Install(market_item()), {
+    channel: other_device(),
+    installed: [],
+  })
   let (_, settled, outcome) = busy.handle(
     emit(),
     @skills.ActionDone(

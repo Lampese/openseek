@@ -118,3 +118,13 @@ pub extend InstalledItem with Eq::{equal, not_equal}
 
 ///|
 pub extend MarketItem with Eq::{equal, not_equal}
+
+///|
+fn MarketItem::identity(self : MarketItem) -> (String, String) {
+  (self.module_name, self.package_path)
+}
+
+///|
+fn InstalledItem::identity(self : InstalledItem) -> (String, String)? {
+  self.registry.map(source => (source.module_name, source.package_path))
+}

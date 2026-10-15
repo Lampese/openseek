@@ -4383,7 +4383,7 @@ fn update_msg(
         model.skills_input(),
       )
       let model = { ..model, skills, }
-      // A settled install or uninstall changed the library the root owns;
+      // A settled skill operation changed the library the root owns;
       // what the page shows must come from disk, not from a client-side
       // guess.
       guard outcome is Some(@skills.LibraryChanged(channel~)) else {
@@ -6663,12 +6663,14 @@ fn update_device_msg(
     return (@cmd.none, model)
   }
   match msg {
-    InstalledSkillsLoaded(items) =>
-      if channel == model.focused {
-        (@cmd.none, { ..model, installed_skills: items, })
-      } else {
-        (@cmd.none, model)
-      }
+    InstalledSkillsLoaded(items) => {
+      guard channel == model.focused else { return (@cmd.none, model) }
+      let (cmd, skills) = model.skills.sync_library(
+        dispatch.map(msg => Skills(msg)),
+        { channel, installed: items, },
+      )
+      (cmd, { ..model, installed_skills: items, skills, })
+    }
     InstalledSkillsFailed(message) =>
       if channel == model.focused {
         (

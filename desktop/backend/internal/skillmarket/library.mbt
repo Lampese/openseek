@@ -293,6 +293,10 @@ pub async fn read_skill_content(
   guard valid_slug(id) else {
     raise SkillMarketError("invalid skill id: \{id}")
   }
+  library_lock.acquire()
+  defer library_lock.release()
+  let library : SkillLibrary = { root: library_dir, }
+  library.recover()
   let directory_file = library_dir.join(id).join("SKILL.md")
   let flat_file = library_dir.join("\{id}.md")
   let path = if @fsx.exists(directory_file) {

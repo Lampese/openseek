@@ -697,11 +697,19 @@ Installed entries include an optional `registry: {module_name, package_path}`
 identifying the installed registry skill. Root packages use `package_path: ""`;
 non-registry skills omit `registry`.
 
+The Installed update action reuses `skills.install` with the catalog's module,
+package, and displayed version. The trusted registry guarantees that published
+versions do not move backwards. After matching module and package, clients compare
+the installed `source` with the catalog entry's source label: equal means no
+update; different means an update is available. No version parsing is needed.
+The existing install operation replaces the complete directory and provenance
+through its recoverable transaction.
+
 Notification:
 
 | method | params |
 |---|---|
-| `skills.changed` | `{}` — broadcast after an install or uninstall commits; every client re-reads `skills.installed`, including clients that did not make the request |
+| `skills.changed` | `{}` — broadcast after an install, update, or uninstall commits; every client re-reads `skills.installed`, including clients that did not make the request |
 
 ### auth.* — remote-access sign-in
 

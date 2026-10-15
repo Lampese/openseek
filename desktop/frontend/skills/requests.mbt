@@ -1,5 +1,5 @@
 // The page's host transport: browsing the mooncakes.io registry and changing
-// the engine's global skills library. All three are plain request/reply calls
+// the engine's global skills library. These are plain request/reply calls
 // on the engine-host bridge, and each settles as one `Msg`.
 
 ///|
@@ -81,6 +81,7 @@ fn fetch_content(
               scheduler.add(
                 emit(
                   PreviewFailed(
+                    channel~,
                     request~,
                     target~,
                     message=@interop.bridge_error_text(error),
@@ -90,7 +91,7 @@ fn fetch_content(
               return
             }
           }
-          scheduler.add(emit(preview_reply(request, target, reply)))
+          scheduler.add(emit(preview_reply(channel, request, target, reply)))
         }
         Installed(item) => {
           let reply = @interop.bridge_request(
@@ -102,6 +103,7 @@ fn fetch_content(
               scheduler.add(
                 emit(
                   PreviewFailed(
+                    channel~,
                     request~,
                     target~,
                     message=@interop.bridge_error_text(error),
@@ -111,7 +113,7 @@ fn fetch_content(
               return
             }
           }
-          scheduler.add(emit(preview_reply(request, target, reply)))
+          scheduler.add(emit(preview_reply(channel, request, target, reply)))
         }
       }
     })
@@ -121,13 +123,16 @@ fn fetch_content(
 
 ///|
 fn preview_reply(
+  channel : @interop.ChannelId,
   request : Int32,
   target : PreviewTarget,
   reply : @protocol.SkillContentReply,
 ) -> Msg {
   match reply {
-    SkillContent(content) => PreviewLoaded(request~, target~, content~)
-    SkillContentError(message) => PreviewFailed(request~, target~, message~)
+    SkillContent(content) =>
+      PreviewLoaded(channel~, request~, target~, content~)
+    SkillContentError(message) =>
+      PreviewFailed(channel~, request~, target~, message~)
   }
 }
 
@@ -142,14 +147,14 @@ fn fetch_installed_content(
 }
 
 ///|
-/// Install one catalog entry into the global skills library. Settles with an
-/// `ActionDone` either way, carrying the operation that started the request.
+/// Install a catalog entry, including replacing an installed registry skill.
+/// The caller supplies the operation label retained until the reply settles.
 fn install(
   emit : @cmd.Emit[Msg],
   channel : @interop.ChannelId,
   item : MarketItem,
+  action : PendingSkillAction,
 ) -> @cmd.Cmd {
-  let action = PendingSkillAction::Installing(source=source_label(item))
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
       let reply = @interop.bridge_request(channel, @commands.skills_install, {
