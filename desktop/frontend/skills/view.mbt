@@ -137,7 +137,7 @@ fn market_row(
       class="skill-summary",
       attrs=@html.Attrs::build().aria_label(item.name),
       [
-        @html.span(class="skill-avatar", icon(icon_extensions)),
+        @html.span(class="skill-avatar", icon(icon_package)),
         @html.span(class="skill-name", item.name),
       ],
     ),
