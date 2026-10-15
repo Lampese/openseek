@@ -51,12 +51,17 @@ fn office_pinch_command(
   config : @office_viewer.SurfaceConfig,
 ) -> @cmd.Cmd {
   let pdf = config.kind == Some(Pdf)
-  @office_viewer.pinch_zoom_command(
+  let pinch = @office_viewer.pinch_zoom_command(
     config,
     zoom => dispatch(OfficeZoomChanged(zoom.to_string())),
     min_zoom=if pdf { 25 } else { 10 },
     max_zoom=if pdf { 400 } else { 200 },
   )
+  if pdf {
+    @cmd.batch([cancel_office_fit(), pinch])
+  } else {
+    pinch
+  }
 }
 
 ///|
@@ -74,6 +79,7 @@ fn show_office_document(
 ) -> @cmd.Cmd {
   let config = office_surface_config(state, path, document)
   @cmd.batch([
+    cancel_office_fit(),
     @office_viewer.interactions_command(config, selection => {
       dispatch(
         OfficeSelectionChanged(
@@ -125,6 +131,7 @@ fn clear_office_surface() -> @cmd.Cmd {
     hide_pdf_capture_feedback(),
     after_render_effect(() => dispose_office_feedback()),
     @office_viewer.dispose_interactions_command(OfficeSurfaceId),
+    cancel_office_fit(),
   ])
 }
 
@@ -156,9 +163,24 @@ fn office_fit_command(
   path : @common.Uri,
   document : @office_viewer.RenderedDocument,
 ) -> @cmd.Cmd {
-  @office_viewer.fit_width_command(
-    office_surface_config(state, path, document),
+  @office_layout.fit_width_command(
+    OfficeSurfaceId,
+    match document.kind {
+      Word => Some(@office_layout.Word)
+      Excel => Some(@office_layout.Excel)
+      Pdf => None
+    },
     zoom => dispatch(OfficeWidthFitted(owner, state.request_epoch, path, zoom)),
     enabled=office_zoom_preference(state, path, document.kind).fit_width,
+  )
+}
+
+///|
+fn cancel_office_fit() -> @cmd.Cmd {
+  @office_layout.fit_width_command(
+    OfficeSurfaceId,
+    None,
+    _ => @cmd.none,
+    enabled=false,
   )
 }

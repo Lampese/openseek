@@ -622,11 +622,11 @@ with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
 ### Office width fitting preview
 
-The fit-width integration uses `moonbit-community/office-viewer@0.2.1`. Until
-that version is published, add its checkout to the root `moon.work` members
-when building the preview. The renderer code comes from the new
-package. Bundled document fonts and PDF.js runtime remain pinned to the existing
-`Lampese/office-viewer@0.1.3` assets and their modification notices.
+The fit-width integration uses `moonbit-community/office-viewer@0.2.1` for
+width measurement and observation. Until that version is published, add its
+checkout to the root `moon.work` members when building the preview. Document
+rendering, selections, fonts, and PDF.js remain on the existing published
+`Lampese/office-viewer@0.1.3`; adopting the new renderer is a separate upgrade.
 
 DOCX opens in Fit width. Explicit zoom and fit choices are retained per file;
 Excel opens at 100% and keeps horizontal scrolling unless Fit width is chosen.

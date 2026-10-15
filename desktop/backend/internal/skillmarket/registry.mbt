@@ -43,7 +43,7 @@ fn archive_limits(package_bytes : Int32) -> @zip.ReadLimits {
   } else {
     ArchiveExpansionFloorBytes
   }
-  @zip.ReadLimits(
+  ReadLimits(
     max_entries=MaxArchiveEntries,
     max_entry_uncompressed_bytes=scaled,
     max_total_uncompressed_bytes=scaled,
