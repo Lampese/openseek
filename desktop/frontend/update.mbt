@@ -3295,11 +3295,79 @@ fn update_msg(
         (command, model)
       }
     }
+    FileEditor(@fileeditor.OfficeRegionRequested) => {
+      let ctx = file_ctx(model)
+      guard model.file_panel.office_region_request is None &&
+        !model.file_panel.has_pinned_office_selection(ctx) &&
+        model.file_panel.pending_region_feedback(ctx) is None else {
+        return (@cmd.none, model)
+      }
+      guard model.can_attach_pdf_capture() else {
+        return model.notify_error(
+          dispatch,
+          @fileeditor.capture_unavailable_message(model.locale),
+        )
+      }
+      let (command, panel) = model.file_panel.start_office_region(
+        ctx,
+        dispatch.map(msg => FileEditor(msg)),
+      )
+      (command, { ..model, file_panel: panel, })
+    }
+    FileEditor(@fileeditor.OfficeRegionFinished(request, result)) => {
+      let ctx = file_ctx(model)
+      guard model.file_panel.office_region_request == Some(request) &&
+        owns_office_selection(model, request.owner) &&
+        model.file_panel.accepts_office_region(ctx, request) else {
+        return (@cmd.none, model)
+      }
+      let model = {
+        ..model,
+        file_panel: { ..model.file_panel, office_region_request: None, },
+      }
+      guard result is Some(result) else { return (@cmd.none, model) }
+      guard model.can_attach_pdf_capture() else {
+        return model.notify_error(
+          dispatch,
+          @fileeditor.capture_unavailable_message(model.locale),
+        )
+      }
+      match result {
+        Err(message) => model.notify_error(dispatch, message)
+        Ok(capture) =>
+          (
+            @cmd.none,
+            {
+              ..model,
+              file_panel: {
+                ..model.file_panel,
+                office_region: Some({
+                  preview: { request, capture, },
+                  comment: "",
+                }),
+              },
+            },
+          )
+      }
+    }
+    FileEditor(@fileeditor.OfficeRegionSubmissionDeclined(preview)) => {
+      guard model.file_panel
+        .pending_office_region(file_ctx(model))
+        .map(draft => draft.preview) ==
+        Some(preview) else {
+        return (@cmd.none, model)
+      }
+      model.notify_error(
+        dispatch,
+        @fileeditor.capture_submission_declined_message(model.locale),
+      )
+    }
     FileEditor(@fileeditor.PdfCaptureRequested) => {
       // Text drafts and captured images own their source until submitted or
       // cancelled. Do not discard either while starting a replacement.
       guard !model.file_panel.has_pinned_office_selection(file_ctx(model)) &&
-        model.file_panel.pending_pdf_capture(file_ctx(model)) is None else {
+        model.file_panel.pending_region_feedback(file_ctx(model)) is None &&
+        model.file_panel.office_region_request is None else {
         return (@cmd.none, model)
       }
       guard model.can_attach_pdf_capture() else {

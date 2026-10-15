@@ -2033,6 +2033,17 @@ fn office_viewer_toolbar(
       .role("group")
       .aria_label(ui(locale, OfficeControls)),
     [
+      @html.button(
+        type_="button",
+        class="office-viewer-control office-region-action",
+        title=ui(locale, OfficeRegion),
+        disabled=state.office_region_request is Some(_) ||
+          state.pending_region_feedback(ctx) is Some(_) ||
+          state.has_pinned_office_selection(ctx),
+        on_click=dispatch(OfficeRegionRequested),
+        attrs=@html.Attrs::build().aria_label(ui(locale, OfficeRegion)),
+        [@icons.icon_comment(), @html.span(ui(locale, OfficeRegion))],
+      ),
       @html.input(
         input_type=@html.InputType::Search,
         value=state.office_query,
