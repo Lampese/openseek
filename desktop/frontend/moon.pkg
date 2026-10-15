@@ -65,7 +65,7 @@ import {
 }
 
 import {
-  "moonbit-community/office-viewer/viewer" @office_viewer,
+  "Lampese/office-viewer/viewer" @office_viewer,
 } for "wbtest"
 
 supported_targets = "js"
