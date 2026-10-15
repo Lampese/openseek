@@ -182,6 +182,7 @@ fn Session::wire(self : Session) -> Unit {
       self.failure,
       self.too_large,
       result => if self.alive { self.finish(Some(result)) },
+      () => self.alive,
     )
   })
   self.listen(self.viewport, "click", stop)

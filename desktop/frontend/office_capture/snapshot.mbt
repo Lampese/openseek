@@ -141,6 +141,7 @@ fn snapshot(
   failure : String,
   too_large : String,
   complete : (Result[Capture, String]) -> Unit,
+  alive : () -> Bool,
 ) -> Unit {
   let padded : Rect = {
     x: selected.x - 24,
@@ -163,55 +164,110 @@ fn snapshot(
     complete(Err(failure))
     return
   }
-  let options = @js.Object::new()
-  let clip = @js.Object::new()
-  clip.set("x", crop.x + (@js.globalThis.get_with_string("scrollX") : Double))
-  clip.set("y", crop.y + (@js.globalThis.get_with_string("scrollY") : Double))
-  clip.set("width", crop.width)
-  clip.set("height", crop.height)
-  options.set("clip", clip.to_value())
-  options.set("dpr", scale)
-  options.set("embedFonts", true)
-  options.set("reconcile", true)
-  options.set("invalidate", true)
-  options.set("backgroundColor", "#ffffff")
-  let fail = (_ : @js.Value) => complete(Err(failure))
-  if !attempt(() => {
-      let renderer : @js.Value = @js.globalThis.get_with_string("snapdom")
-      let promise : @js.Value = renderer.apply_with_string("toCanvas", [
-        host,
-        options.to_value(),
-      ])
-      promise.apply_with_string("then", [
-        @js.Value::cast_from((canvas : @js.Value) => {
-          if !attempt(() => {
-              decorate(canvas, selected, crop, scale, label)
-              let url : String = canvas.apply_with_string("toDataURL", [
-                "image/png",
-              ])
-              if png_within_limit(url) {
-                complete(
-                  Ok({
-                    format,
-                    url,
-                    source,
-                    regions,
-                    rotation: None,
-                    text,
-                    sheet,
-                    range,
-                  }),
-                )
-              } else {
-                complete(Err(too_large))
-              }
-            }) {
-            complete(Err(failure))
-          }
-        }),
-        @js.Value::cast_from(fail),
-      ])
-    }) {
+  let output : @js.Value = document().apply_with_string("createElement", [
+    "canvas",
+  ])
+  output.set_with_string("width", @math.ceil(crop.width * scale))
+  output.set_with_string("height", @math.ceil(crop.height * scale))
+  let context : @js.Value = output.apply_with_string("getContext", ["2d"])
+  context.set_with_string("fillStyle", "white")
+  context.apply_with_string("fillRect", [
+    0.0,
+    0.0,
+    crop.width * scale,
+    crop.height * scale,
+  ])
+  // SnapDOM normalizes the root's CSS zoom. Capture each zoomed page/sheet as
+  // its own root, then export it at the measured screen size. Capturing their
+  // unzoomed parent would lose the descendants' zoom and shift the crop.
+  let roots = elements(
+    host,
+    if format == Word {
+      ".word-page"
+    } else {
+      ".sheet-document"
+    },
+  ).filter_map(node => {
+    bounds(node).intersection(crop).map(piece => (node, piece))
+  })
+  if roots.is_empty() {
     complete(Err(failure))
+    return
   }
+  fn render(index : Int32) -> Unit {
+    guard alive() else { return }
+    guard roots.get(index) is Some((node, piece)) else {
+      if !attempt(() => {
+          decorate(output, selected, crop, scale, label)
+          let url : String = output.apply_with_string("toDataURL", ["image/png"])
+          if png_within_limit(url) {
+            complete(
+              Ok({
+                format,
+                url,
+                source,
+                regions,
+                rotation: None,
+                text,
+                sheet,
+                range,
+              }),
+            )
+          } else {
+            complete(Err(too_large))
+          }
+        }) {
+        complete(Err(failure))
+      }
+      return
+    }
+    let options = @js.Object::new()
+    let clip = @js.Object::new()
+    clip.set(
+      "x",
+      piece.x + (@js.globalThis.get_with_string("scrollX") : Double),
+    )
+    clip.set(
+      "y",
+      piece.y + (@js.globalThis.get_with_string("scrollY") : Double),
+    )
+    clip.set("width", piece.width)
+    clip.set("height", piece.height)
+    options.set("clip", clip.to_value())
+    options.set("width", piece.width)
+    options.set("height", piece.height)
+    options.set("dpr", scale)
+    options.set("embedFonts", true)
+    options.set("reconcile", true)
+    options.set("invalidate", true)
+    options.set("backgroundColor", "#ffffff")
+    if !attempt(() => {
+        let renderer : @js.Value = @js.globalThis.get_with_string("snapdom")
+        let promise : @js.Value = renderer.apply_with_string("toCanvas", [
+          node,
+          options.to_value(),
+        ])
+        promise.apply_with_string("then", [
+          @js.Value::cast_from((canvas : @js.Value) => {
+            if attempt(() => {
+                context.apply_with_string("drawImage", [
+                  canvas,
+                  @js.Value::cast_from((piece.x - crop.x) * scale),
+                  @js.Value::cast_from((piece.y - crop.y) * scale),
+                  @js.Value::cast_from(piece.width * scale),
+                  @js.Value::cast_from(piece.height * scale),
+                ])
+              }) {
+              render(index + 1)
+            } else {
+              complete(Err(failure))
+            }
+          }),
+          @js.Value::cast_from((_ : @js.Value) => complete(Err(failure))),
+        ])
+      }) {
+      complete(Err(failure))
+    }
+  }
+  render(0)
 }
