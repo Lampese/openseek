@@ -456,6 +456,12 @@ html.native-titlebar-overlay .app
 
 /* Opening the terminal carves a resizable second row out of the conversation
    column. The editor keeps the full height in its own column. */
+/* Office pages need more horizontal room than a source-code pane. A saved
+   drag width still wins, and the conversation retains its existing floor. */
+.content:has(> .editor.office-reading) {
+  --editor-restored-width: clamp(360px, var(--editor-width, 64%), calc(100% - 240px));
+}
+
 .content.terminal-open {
   --terminal-open-progress: 1;
 }
