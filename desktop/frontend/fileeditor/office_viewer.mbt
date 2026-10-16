@@ -94,7 +94,7 @@ fn show_office_document(
     @office_viewer.visual_command(config),
     office_pinch_command(dispatch, config),
     office_fit_command(dispatch, owner, state, path, document),
-    office_pages_command(state, config, sig),
+    office_pages_command(state, config),
   ])
 }
 
