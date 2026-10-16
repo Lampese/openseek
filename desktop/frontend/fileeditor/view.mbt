@@ -452,6 +452,7 @@ pub fn body_view(
   )
   @html.div(class="editor-body", [
     @html.div(class="viewer-stack", [
+      office_pages_view(locale~, dispatch, state, ctx),
       viewer_host,
       office_surface,
       pdf_password_dialog(locale~, dispatch, state, ctx),
@@ -2036,6 +2037,28 @@ fn office_viewer_toolbar(
       .role("group")
       .aria_label(ui(locale, OfficeControls)),
     [
+      if config.kind == Some(Word) || pdf {
+        @html.button(
+          type_="button",
+          class=if state.office_pages_open {
+            "office-viewer-control active"
+          } else {
+            "office-viewer-control"
+          },
+          title=ui(locale, OfficePages),
+          disabled=pdf &&
+            active_pdf_document(state, ctx)
+            .map(value => value.1.status != PdfReady)
+            .unwrap_or(true),
+          attrs=@html.Attrs::build()
+            .aria_label(ui(locale, OfficePages))
+            .aria_pressed(state.office_pages_open.to_string()),
+          on_click=dispatch(OfficePagesToggled),
+          @icons.icon(@icons.icon_layout_sidebar_left),
+        )
+      } else {
+        @html.nothing
+      },
       @html.button(
         type_="button",
         class="office-viewer-control",

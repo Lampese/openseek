@@ -463,6 +463,7 @@ pub(all) struct State {
   // across conversation switches. Search and font preferences remain shared.
   office_zoom : Int32
   office_zoom_preferences : Map[@common.Uri, OfficeZoomPreference]
+  office_pages_open : Bool
   office_query : String
   office_prefer_system_fonts : Bool
   // Browser selection is provisional until the user accepts its preview.
@@ -663,6 +664,7 @@ pub fn State::empty() -> State {
     tree_open: false,
     office_zoom: 100,
     office_zoom_preferences: Map([]),
+    office_pages_open: false,
     office_query: "",
     office_prefer_system_fonts: false,
     office_selection: None,
@@ -786,6 +788,7 @@ pub fn State::prepare_owner(
     tree_open: self.tree_open,
     office_zoom: self.office_zoom,
     office_zoom_preferences: self.office_zoom_preferences,
+    office_pages_open: self.office_pages_open,
     office_query: self.office_query,
     office_prefer_system_fonts: self.office_prefer_system_fonts,
     pdf_generation: self.pdf_generation,
@@ -962,6 +965,7 @@ pub(all) enum Msg {
   // behavior remains reusable while embedded hosts own their chrome.
   OfficeZoomChanged(String)
   OfficeFitWidth
+  OfficePagesToggled
   OfficeWidthFitted(@interop.ConversationKey, Int32, @common.Uri, Int32)
   OfficeSearchChanged(String)
   OfficeSystemFontsToggled

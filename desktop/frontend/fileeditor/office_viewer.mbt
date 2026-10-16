@@ -94,6 +94,7 @@ fn show_office_document(
     @office_viewer.visual_command(config),
     office_pinch_command(dispatch, config),
     office_fit_command(dispatch, owner, state, path, document),
+    office_pages_command(state, config, sig),
   ])
 }
 
@@ -116,6 +117,7 @@ fn refresh_office_visual(
           office_surface_config(state, path, document),
         ),
         office_fit_command(dispatch, ctx.owner, state, path, document),
+        refresh_office_pages(state, ctx),
       ])
     Some({ state: TabPdf(..), .. }) =>
       @office_viewer.visual_command(pdf_surface_config(state, path))
@@ -126,6 +128,7 @@ fn refresh_office_visual(
 ///|
 fn clear_office_surface() -> @cmd.Cmd {
   @cmd.batch([
+    dispose_office_pages(),
     @office_capture.cancel(OfficeSurfaceId),
     @pdf_capture.cancel(OfficeSurfaceId),
     hide_pdf_capture_feedback(),
