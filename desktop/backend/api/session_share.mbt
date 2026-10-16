@@ -28,17 +28,10 @@ async fn SessionShare::publish(
       shell,
       bundle,
     )
-    let snapshot = @shares.Snapshot(
-      title=self.payload.title,
-      html=files.html,
-      json=files.json,
-    )
-    self.upload(snapshot, config)
+    self.upload(files, config)
   } catch {
     error if @async.is_being_cancelled() => raise error
-    @shares.EmptyTitle
-    | @shares.EntropyUnavailable
-    | @shares.Oversized as refusal => Failed(message="\{refusal}")
+    @shares.EmptyTitle as refusal => Failed(message="\{refusal}")
     error => {
       // This scope includes capture, upload and rejected-login cleanup. Do not
       // mislabel an unrelated failure as a missing conversation.
@@ -55,10 +48,12 @@ async fn SessionShare::publish(
 /// the captured config first so a late response cannot clear a newer login.
 async fn SessionShare::upload(
   self : SessionShare,
-  snapshot : @shares.Snapshot,
+  files : @engine.ConversationExport,
   config : @auth.ConnectorConfig,
 ) -> @protocol.SessionShareReply {
-  let reply = snapshot.publish(
+  let reply = @shares.publish(
+    title=self.payload.title,
+    files,
     server_url=@auth.origin_from_relay_url(config.relay_url),
     token=config.device_token,
   )

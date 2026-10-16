@@ -1,19 +1,7 @@
 ///|
-/// One immutable upload: a retry must retain both the rendered conversation
-/// and its idempotency key, even while the live conversation changes. The
-/// 64-character hex key doubles as the multipart boundary, which RFC 2046
-/// section 5.1.1 limits to 70 characters.
-struct Snapshot {
-  key : String
-  body : Bytes
-}
-
-///|
 /// Why a conversation cannot become a share request at all; no upload starts.
 pub(all) suberror ShareError {
   EmptyTitle
-  EntropyUnavailable
-  Oversized
 }
 
 ///|
@@ -22,10 +10,6 @@ pub impl Show for ShareError with fn output(self, logger) {
   logger.write_string(
     match self {
       EmptyTitle => "The conversation title must not be empty."
-      EntropyUnavailable =>
-        "Could not create a secure share request. Please try again."
-      Oversized =>
-        "This export exceeds the 20 MiB share limit. Use Download instead."
     },
   )
 }
@@ -34,41 +18,46 @@ pub impl Show for ShareError with fn output(self, logger) {
 pub extend ShareError with Show::{to_string, output}
 
 ///|
-/// All fields are UTF-8 multipart bodies, never interpolated into headers.
-/// The limit includes framing, matching POST /v1/shares on openseek-api.
-pub fn Snapshot::Snapshot(
+/// Stream already-rendered export files to their issuer. Each attempt reads
+/// the same HTML and JSON strings. A lost response or transport
+/// failure is retried once with the same multipart boundary and idempotency key.
+/// Cancellation closes the active connection and does not start a retry.
+pub async fn publish(
   title~ : String,
-  html~ : String,
-  json~ : String,
-) -> Snapshot raise ShareError {
-  // The API limits the title to 1024 UTF-8 bytes, and a generated title may
-  // be the entire first prompt. A UTF-16 code unit encodes to at most three
-  // UTF-8 bytes, so 341 units can never exceed the limit; the slice keeps
-  // surrogate pairs whole. The HTML and JSON retain the complete records.
-  let title = title.trim()[:1024 / 3].to_owned()
-  guard !title.is_empty() else { raise EmptyTitle }
-  guard @entropy.random_hex(32) is Some(key) else { raise EntropyUnavailable }
-  let body = @utf8.encode(
-    "--\{key}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n\{title}\r\n--\{key}\r\nContent-Disposition: form-data; name=\"html\"; filename=\"conversation.html\"\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\{html}\r\n--\{key}\r\nContent-Disposition: form-data; name=\"json\"; filename=\"conversation.json\"\r\nContent-Type: application/json; charset=utf-8\r\n\r\n\{json}\r\n--\{key}--\r\n",
-  )
-  guard body.length() <= 20 * 1024 * 1024 else { raise Oversized }
-  { key, body, }
-}
-
-///|
-/// Credentials are supplied by the native login store, never the renderer.
-/// Do not follow redirects: the device token belongs only to its issuer.
-/// A failed or lost attempt is retried once with the same bytes and key, so
-/// no automatic retry creates a second share or uploads a newer snapshot.
-pub async fn Snapshot::publish(
-  self : Snapshot,
+  files : @engine.ConversationExport,
   server_url~ : String,
   token~ : String,
   timeout_ms~ : Int32 = 240_000,
 ) -> @protocol.SessionShareReply {
-  @async.with_timeout(timeout_ms, () => self.send(server_url~, token~)) catch {
+  // Preserve the API's title limit without truncating the exported records.
+  let title = title.trim()[:1024 / 3].to_owned()
+  guard !title.is_empty() else { raise EmptyTitle }
+  let mut headers : @http.Headers? = None
+  let attempt = async fn() {
+    @async.with_timeout(timeout_ms, () => {
+      let connection = @http.Client(server_url)
+      defer connection.close()
+      let request_headers = match headers {
+        Some(headers) => headers
+        None => {
+          let form = @multipart.FormWriter(connection)
+          let generated : @http.Headers = {
+            "Authorization": "Bearer \{token}",
+            "Idempotency-Key": form.boundary(),
+            "Content-Type": form.content_type(),
+          }
+          headers = Some(generated)
+          generated
+        }
+      }
+      send(connection, title~, files, server_url~, headers=request_headers)
+    })
+  }
+  attempt() catch {
+    @multipart.MultipartError(_) as error => raise error
     _ =>
-      @async.with_timeout(timeout_ms, () => self.send(server_url~, token~)) catch {
+      attempt() catch {
+        @multipart.MultipartError(_) as error => raise error
         @async.TimeoutError =>
           @protocol.Failed(
             message="The share request timed out. Please try again.",
@@ -79,16 +68,38 @@ pub async fn Snapshot::publish(
 }
 
 ///|
-async fn Snapshot::send(
-  self : Snapshot,
+async fn send(
+  connection : @http.Client,
+  title~ : String,
+  files : @engine.ConversationExport,
   server_url~ : String,
-  token~ : String,
+  headers~ : @http.Headers,
 ) -> @protocol.SessionShareReply {
-  let (response, body) = @http.post("\{server_url}/v1/shares", self.body, headers={
-    "Authorization": "Bearer \{token}",
-    "Idempotency-Key": self.key,
-    "Content-Type": "multipart/form-data; boundary=\{self.key}",
-  })
+  connection.request(Post, "/v1/shares", extra_headers=headers)
+  // FormWriter chooses the boundary once; Writer lets retries reuse it on a
+  // fresh connection without retaining the encoded request body.
+  let form = @multipart.Writer(connection, boundary=headers["Idempotency-Key"])
+  form.write_part(
+    headers={ "Content-Disposition": "form-data; name=\"title\"" },
+    target => target.write(title),
+  )
+  form.write_part(
+    headers={
+      "Content-Disposition": "form-data; name=\"html\"; filename=\"conversation.html\"",
+      "Content-Type": "text/html; charset=utf-8",
+    },
+    target => write_text(target, files.html),
+  )
+  form.write_part(
+    headers={
+      "Content-Disposition": "form-data; name=\"json\"; filename=\"conversation.json\"",
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    target => write_text(target, files.json),
+  )
+  form.finish()
+  let response = connection.end_request()
+  let body = connection.read_all()
   if response.code == 401 {
     return @protocol.SignInRequired
   }
@@ -118,5 +129,17 @@ async fn Snapshot::send(
   } noraise {
     { "url": String(url), .. } => @protocol.Shared(url~)
     _ => @protocol.Failed(message=invalid)
+  }
+}
+
+///|
+// Encode bounded slices, keeping surrogate pairs whole. The existing export
+// strings are retained for retries, without buffering another multipart body.
+async fn write_text(target : &@io.Writer, text : String) -> Unit {
+  let mut offset = 0
+  while offset < text.length() {
+    let chunk = text[offset:(offset + 4096).min(text.length())]
+    target.write(chunk)
+    offset += chunk.length()
   }
 }
