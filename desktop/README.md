@@ -335,13 +335,13 @@ carried into a new task worktree when necessary. Click a file reference to
 preview it and select the content to quote; attaching a document creates no
 extracted-text or JSON sidecar.
 Browser and desktop packages copy the metric-compatible Office fonts and the
-accompanying copyright, license and modification notices from the published
+accompanying copyright, license and modification notices from the pinned
 `Lampese/office-viewer@0.2.2` package into the final web resource tree. The
 browser-ready fonts retain the layout engine's glyphs and metrics and use
 distinct internal names for the modified font programs. No separate font
 checkout or duplicated font assets are needed.
 
-Moon resolves the viewer from the published module declared in `moon.mod`;
+Moon resolves the viewer from the module declared in `moon.mod`;
 packaging reads its PDF runtime and font assets from the resolved package.
 The runtime and pinned PDF.js engine, worker, stylesheet, CMaps,
 standard fonts, codecs, ICC profiles, and license are packaged in both hosts;
@@ -588,7 +588,7 @@ with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
 ### Office width fitting
 
-The fit-width integration uses the published `Lampese/office-viewer@0.2.2`
+The fit-width integration requires the `Lampese/office-viewer@0.2.2`
 package for width measurement, observation, document rendering, selections,
 fonts, and PDF.js. A local Office Viewer checkout is not required.
 
