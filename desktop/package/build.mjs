@@ -56,6 +56,12 @@ const DevelopmentProduct = "SeekMoonDev";
 // dependency graph during an application build.
 const WebArchives = {
   pdfjs: OfficePdfArchive,
+  snapdom: {
+    filename: "snapdom-3.3.4.tgz",
+    url: "https://registry.npmjs.org/@zumer/snapdom/-/snapdom-3.3.4.tgz",
+    sha: "40cc15fd05c22ef9bafe37d5951462049e9765eb1f3e5b64b539313410c34d85",
+    path: "snapdom",
+  },
   xterm: {
     filename: "xterm-6.1.0-beta.304.tgz",
     url: "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.1.0-beta.304.tgz",
@@ -232,6 +238,8 @@ class Build {
         "--external:*.woff2", `--outfile=${join(output, name)}`]);
     }
     await cp(this.officeFontSource(), join(output, "fonts"), { recursive: true });
+    await cp(join(work, "snapdom/dist/snapdom.js"), join(output, "snapdom.js"));
+    await cp(join(work, "snapdom/LICENSE"), join(output, "snapdom.LICENSE"));
     await stageOfficePdfAssets(
       join(work, "pdfjs"), output,
       join(this.repo, ".mooncakes", "Lampese", "office-viewer", "public", "pdf-runtime.js"),
@@ -297,7 +305,7 @@ class Build {
 
   async sharedWeb(output) {
     const generated = join(this.desktop, "target/web");
-    for (const name of ["app.css", "viewer.css", "xterm.js", "xterm.css", "relative-time.js", "relative-time.LICENSE"]) {
+    for (const name of ["app.css", "viewer.css", "xterm.js", "xterm.css", "relative-time.js", "relative-time.LICENSE", "snapdom.js", "snapdom.LICENSE"]) {
       await cp(join(generated, name), join(output, name));
     }
     await cp(join(this.repo, "editor/viewer/browser/view/codicon/codicon.ttf"), join(output, "codicon.ttf"));
