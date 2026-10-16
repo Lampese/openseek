@@ -30,6 +30,7 @@ test('PDF thumbnails paint real pages, navigate, follow scrolling, and rotate', 
   const app = await setup(page);
   await openFile(app, 'pages.pdf');
   await expect(page.locator('#openseek-office-surface')).toHaveAttribute('data-pdf-painted', 'true');
+  await expect(rail(page)).toBeHidden();
   await page.getByRole('button', { name: 'Page thumbnails', exact: true }).click();
   await expect(rail(page)).toBeVisible();
   await expect(rail(page).locator('.office-page-count')).toHaveText('Pages · 6');
@@ -59,6 +60,7 @@ test('Word thumbnails preserve SVG content and the live surface while navigating
   await openFile(app, 'pages.docx');
   await expect(page.locator('#openseek-office-surface .word-page')).toHaveCount(6);
   await page.evaluate(() => { window.firstLiveWordPage = document.querySelector('#openseek-office-surface .word-page'); });
+  await expect(rail(page)).toBeHidden();
   await page.getByRole('button', { name: 'Page thumbnails', exact: true }).click();
   await expect(thumbnail(page, 1)).toHaveAttribute('data-painted', 'true');
   await expect(thumbnail(page, 1).locator('svg')).toContainText('Document page 1');

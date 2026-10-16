@@ -238,7 +238,7 @@ class Build {
         "--external:*.woff2", `--outfile=${join(output, name)}`]);
     }
     await cp(this.officeFontSource(), join(output, "fonts"), { recursive: true });
-    await cp(join(this.desktop, "frontend/build/office-pages.mjs"), join(output, "office-pages.mjs"));
+    await cp(join(this.repo, ".mooncakes", "Lampese", "office-viewer", "public", "page-thumbnails.js"), join(output, "page-thumbnails.js"));
     await cp(join(work, "snapdom/dist/snapdom.js"), join(output, "snapdom.js"));
     await cp(join(work, "snapdom/LICENSE"), join(output, "snapdom.LICENSE"));
     await stageOfficePdfAssets(
@@ -306,7 +306,7 @@ class Build {
 
   async sharedWeb(output) {
     const generated = join(this.desktop, "target/web");
-    for (const name of ["app.css", "viewer.css", "office-pages.mjs", "xterm.js", "xterm.css", "relative-time.js", "relative-time.LICENSE", "snapdom.js", "snapdom.LICENSE"]) {
+    for (const name of ["app.css", "viewer.css", "page-thumbnails.js", "xterm.js", "xterm.css", "relative-time.js", "relative-time.LICENSE", "snapdom.js", "snapdom.LICENSE"]) {
       await cp(join(generated, name), join(output, name));
     }
     await cp(join(this.repo, "editor/viewer/browser/view/codicon/codicon.ttf"), join(output, "codicon.ttf"));
