@@ -740,10 +740,25 @@ browser host connections and their drafts before loading replacements.
 | `auth.disconnect` | `{}` | retires this desktop client's account and ordinary remote registration; the environment-managed debug connector is unaffected |
 | `auth.cancel` | `{}` | aborts this window's pending account sign-in; no-op otherwise |
 | `remote.access_set` | `{enabled}` | enables or revokes this host's device permission while keeping its account; ordinary UI is desktop-only, environment override refuses this operation |
-| `session.share` | `{generation,source:{session,workspace,title,archived}}` | publishes through this host's signed-in account, independently of device registration; retains the existing connection-scoped progress notifications |
+| `session.share` | `{generation,source:{session,workspace,title,archived},idempotency_key,authorization}` | native publication of the owning host's capture; window-only `{kind:"local_account",user_id}` or remote `{kind:"upload_grant",upload_token}` authority, with progress returned only to this connection |
+| `session.snapshot` | `{session,workspace,title,archived}` | `{html,json}` captured together by the owning host, with the existing workspace validation and record lock; usable over a device channel |
+| `session.export` | same source fields | existing native-window save-dialog operation for local Work downloads |
+| `session.snapshot_save` | `{session,html}` | window-only save of a client-rendered snapshot, using the same native dialog and `{path?,opened}` result; unavailable over a device channel |
 
-Sharing uses the account Bearer against `/v2/shares`; public share URLs remain
-under `/v1/shares/<id>`. A late rejection cannot retire a newer account.
+Work sharing captures and uploads HTML+JSON in the owning host. The native
+window selects its own account; a remote client first requests
+`POST /v2/shares/upload-grants` with its own account Bearer and
+`{device_id,idempotency_key}`, then passes only the returned `sug_` token and
+key to that host. An invalid upload grant is a share failure, not an expired
+account. The local launch-token debug console is not a registered device and
+reports sharing as unsupported; connection, chat and downloads remain available.
+
+Publication retains public-content confirmation, seven-day expiry, the 20 MiB
+multipart limit, and immutable files/key for its internal HTTP retry. Public
+pages, previews and downloads keep `/v1/shares/<id>…` URLs. Signing in never
+automatically publishes. A disconnected outer operation is not resubmitted;
+an explicit new Share click captures anew with a new key. Channel/generation
+checks and captured credentials fence late results.
 
 The status shape, also the params of every `auth.changed` notification:
 
