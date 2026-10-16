@@ -163,11 +163,11 @@ fn office_fit_command(
   path : @common.Uri,
   document : @office_viewer.RenderedDocument,
 ) -> @cmd.Cmd {
-  @office_layout.fit_width_command(
+  @office_viewer.fit_width_command(
     OfficeSurfaceId,
     match document.kind {
-      Word => Some(@office_layout.Word)
-      Excel => Some(@office_layout.Excel)
+      Word => Some(@office_viewer.Word)
+      Excel => Some(@office_viewer.Excel)
       Pdf => None
     },
     zoom => dispatch(OfficeWidthFitted(owner, state.request_epoch, path, zoom)),
@@ -177,7 +177,7 @@ fn office_fit_command(
 
 ///|
 fn cancel_office_fit() -> @cmd.Cmd {
-  @office_layout.fit_width_command(
+  @office_viewer.fit_width_command(
     OfficeSurfaceId,
     None,
     _ => @cmd.none,
