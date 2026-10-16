@@ -2108,6 +2108,7 @@ pub fn sync(
         tree_open: state.tree_open,
         office_zoom: state.office_zoom,
         office_zoom_preferences: state.office_zoom_preferences,
+        office_pages_open: state.office_pages_open,
         office_query: state.office_query,
         office_prefer_system_fonts: state.office_prefer_system_fonts,
         pdf_generation: state.pdf_generation,
@@ -2665,6 +2666,10 @@ fn update_inner(
       let preferences = state.office_zoom_preferences.copy()
       preferences[path] = { fit_width: true, zoom, }
       (@cmd.none, { ..state, office_zoom_preferences: preferences, })
+    }
+    OfficePagesToggled => {
+      let next = { ..state, office_pages_open: !state.office_pages_open, }
+      (refresh_office_pages(next, ctx), next)
     }
     OfficeFitWidth => {
       guard ctx.active_file is Some(path) &&

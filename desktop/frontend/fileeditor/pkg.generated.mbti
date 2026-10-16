@@ -329,6 +329,7 @@ pub(all) enum Msg {
   ExcelSelectionCleared(OfficeSelectionPreview)
   OfficeZoomChanged(String)
   OfficeFitWidth
+  OfficePagesToggled
   OfficeWidthFitted(@interop.ConversationKey, Int, @common.Uri, Int)
   OfficeSearchChanged(String)
   OfficeSystemFontsToggled
@@ -659,6 +660,7 @@ pub(all) struct State {
   tree_open : Bool
   office_zoom : Int
   office_zoom_preferences : Map[@common.Uri, OfficeZoomPreference]
+  office_pages_open : Bool
   office_query : String
   office_prefer_system_fonts : Bool
   office_selection : OfficeSelectionPreview?

@@ -335,6 +335,10 @@ Existing `.docx`, `.xlsx`, and `.pdf` paths open in the file panel and are read
 as bounded binary payloads (up to 20 MiB). DOCX/XLSX use the standalone viewer's
 `office.mbt` reader/layout pipeline. PDFs use its asynchronous PDF.js surface,
 with page navigation, zoom, fit to width, rotation, search, and password prompts.
+In Word and PDF previews, the **Page thumbnails** toolbar button opens a
+collapsible page navigator. Click a thumbnail to jump to its page; the highlight
+follows document scrolling. The navigator floats over narrow previews, and
+supports arrow keys, Home, and End for page navigation.
 The Office/PDF controls and password prompts follow the application's language
 setting. Preview and selection failures show a short message with retry guidance.
 DOCX, XLSX, and PDF previews support trackpad pinch zoom and Ctrl+wheel, with
