@@ -56,9 +56,31 @@ test('Excel search and feedback retain source addresses beyond the old preview w
   await expect(page.locator('td[data-cell="B1200"]')).toHaveAttribute('data-formula', '21*2');
   await page.locator('td[data-cell="A1200"]').click();
   await expect(page.locator('.office-selection-preview')).toHaveAttribute('title', /Sparse!A1200/);
+  await page.locator('td[data-cell="B1200"]').click();
+  await expect(page.locator('.office-selection-preview')).toHaveAttribute('title', /Sparse!B1200/);
+  await search.click();
   await search.fill('COLUMN_TAIL');
   await expect(page.locator('td.office-search-hit')).toHaveAttribute('data-cell', 'IW1201');
   await page.locator('td[data-cell="IW1201"]').click();
   await expect(page.locator('.office-selection-preview')).toHaveAttribute('title', /Sparse!IW1201/);
+  expect(app.pageErrors).toEqual([]);
+});
+
+test('typed Excel feedback resolves its source again when virtual rows return', async ({ page }) => {
+  const app = await openWorkbook(page);
+  const search = page.locator('.office-viewer-find input');
+  await search.fill('BEYOND_1000');
+  await page.locator('td[data-cell="A1200"]').click();
+  const feedback = page.locator('.office-selection-preview');
+  await expect(feedback).toHaveAttribute('title', /Sparse!A1200/);
+  await feedback.locator('textarea').fill('Inspect this sparse row');
+  await search.click();
+  await search.fill('LAST_CELL');
+  await expect(page.locator('td[data-cell="XFD1048576"]')).toBeInViewport();
+  await search.click();
+  await search.fill('BEYOND_1000');
+  await expect(feedback.locator('textarea')).toBeVisible();
+  await expect(feedback.locator('textarea')).toHaveValue('Inspect this sparse row');
+  await expect(feedback).toHaveAttribute('title', /Sparse!A1200/);
   expect(app.pageErrors).toEqual([]);
 });
