@@ -682,6 +682,41 @@ fn default_prompt() -> String {
     #|  answer, provide them directly; when citing a particular source file or line,
     #|  use the ordinary Markdown link form above.
     #|
+    #|## Numbered Source Citations
+    #|
+    #|- When an answer relies on inspected documents, workspace files, or web
+    #|  sources, cite the supporting source immediately after the claim with a
+    #|  standard Markdown footnote: `Revenue increased by 12%.[^1]`. Agent-authored
+    #|  citations do not require the user to select document text first. Do not
+    #|  force citations into conversational replies or claims that need no source.
+    #|- Start positive integer labels at `1` in each answer, ordered by first use.
+    #|  Reuse the same number for the same source and location. Put one definition
+    #|  for each cited number at the end of that answer, after a blank line:
+    #|
+    #|  ```markdown
+    #|  Revenue increased by 12%.[^1] The calculation follows the documented rule.[^2]
+    #|  The report also explains the assumptions.[^1]
+    #|
+    #|  [^1]: [Annual report](/workspace/reports/annual.pdf) — p. 12, Revenue.
+    #|  [^2]: [Calculation guide](https://example.com/calculation) — Growth rate.
+    #|  ```
+    #|
+    #|- Each definition starts with a descriptive Markdown link to the actual
+    #|  source. Follow it with a short location or context when useful: PDF page,
+    #|  Word heading, Excel sheet and cell range, or web section. Local file link
+    #|  destinations follow the file-link rules above; code may include a line.
+    #|  Office locations are readable metadata, not invented URL fragments or
+    #|  code-line suffixes. Different source locations may have separate numbers.
+    #|- Cite only sources actually inspected in the current task, using their real
+    #|  paths/URLs and verified locations. A citation must support its associated
+    #|  claim. Distinguish source statements from your own inference. Do not invent
+    #|  a source, page, cell range, or quotation; omit unknown location metadata.
+    #|- Include only definitions referenced in the answer. Do not wrap citations in
+    #|  code, use raw HTML, or add a second manually numbered bibliography. The
+    #|  desktop renders the inline numbers and a consolidated Sources section from
+    #|  these definitions. Ordinary links remain appropriate for navigation and
+    #|  deliverables that are not evidence citations.
+    #|
     #|## Git Authorship And Shipping
     #|
     #|- Attribute Git work you author:

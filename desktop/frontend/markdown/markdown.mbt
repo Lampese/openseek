@@ -27,8 +27,17 @@ pub fn markdown_nodes(
 ) -> Array[@html.Html] {
   @js.Error_::wrap(() => {
     let doc = @cmark.Doc::from_string(source, strict=false)
-    let render = MarkdownRender::{ locale, defs: doc.defs, open_file, }
+    let render = MarkdownRender::{
+      locale,
+      defs: doc.defs,
+      open_file,
+      citations: [],
+      in_sources: false,
+    }
     let nodes = render.block_nodes(doc.block)
+    if !render.citations.is_empty() {
+      nodes.push(render.sources_node())
+    }
     @js.Value::cast_from(nodes)
   }) catch {
     _ => [@html.pre(class="markdown-fallback", source)]
@@ -43,6 +52,10 @@ priv struct MarkdownRender {
   defs : Map[String, @cmark.LabelDef]
   // How to make a file path clickable; `None` renders paths inertly.
   open_file : ((String) -> @cmd.Cmd)?
+  // Per-render state: repeated references share one entry, and message-local
+  // source actions never depend on document-global fragment IDs.
+  citations : Array[Citation]
+  in_sources : Bool
 }
 
 ///|
@@ -80,6 +93,11 @@ fn MarkdownRender::push_block(
     ThematicBreak(_) => out.push(@html.hr())
     ExtTable(node) => out.push(self.table(node.v))
     ExtFootnoteDefinition(node) => {
+      // Numbered definitions are collected when their references are rendered,
+      // then shown once at the end, in first-citation order.
+      if citation_number(node.v.label.key) is Some(_) {
+        return
+      }
       let children : Array[@html.Html] = [
         @html.span(class="footnote-label", node.v.label.key),
       ]
@@ -460,6 +478,10 @@ fn MarkdownRender::push_inline(
       }
     }
     Link(node) => {
+      if self.citation(node.v) is Some(citation) {
+        out.push(self.citation_node(citation))
+        return
+      }
       // The label is already inside an anchor. Leaving bare-URL detection on
       // here would turn `[https://label](https://target)` into nested anchors.
       let children = self.inline_nodes(node.v.text, linkify_urls=false)
