@@ -124,6 +124,7 @@ fn MarkdownRender::citation_node(
   let node = if citation.link is Some(link) &&
     self.open_file is Some(open) &&
     self.file_destination(link) is Some(path) {
+    let path = @office_location.citation_destination(path, citation.summary)
     @html.button(
       class="citation-link file-link",
       type_="button",
@@ -157,10 +158,25 @@ fn MarkdownRender::citation_node(
 
 ///|
 fn MarkdownRender::sources_node(self : MarkdownRender) -> @html.Html {
-  let render = { ..self, in_sources: true, }
   let rows : Array[@html.Html] = []
   let previews : Array[@html.Html] = []
   for citation in self.citations {
+    let source_path = citation.link.bind(link => self.file_destination(link))
+    let render = {
+      ..self,
+      in_sources: true,
+      open_file: self.open_file.map(open => {
+        path => {
+          open(
+            if source_path == Some(path) {
+              @office_location.citation_destination(path, citation.summary)
+            } else {
+              path
+            },
+          )
+        }
+      }),
+    }
     if previews.length() < 3 {
       previews.push(self.source_glyph(citation))
     }
@@ -212,7 +228,7 @@ fn MarkdownRender::source_glyph(
 ) -> @html.Html {
   let (kind, icon) = if citation.link is Some(link) &&
     self.file_destination(link) is Some(path) {
-    let kind = @workspace_file_ref.file_kind(path)
+    let kind = @workspace_file_ref.file_kind(FileReference(path).path())
     (
       workspace_file_kind_class(kind),
       @icons.codicon(@workspace_file_ref.file_icon_path(kind)),
@@ -238,7 +254,7 @@ fn MarkdownRender::source_origin(
     if self.file_destination(link) is Some(path) {
       return workspace_file_kind_label(
         self.locale,
-        @workspace_file_ref.file_kind(path),
+        @workspace_file_ref.file_kind(FileReference(path).path()),
       )
     }
     if self.link_destination(link) is Some(destination) {

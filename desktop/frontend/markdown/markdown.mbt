@@ -755,6 +755,16 @@ fn MarkdownRender::file_destination(
   if FileReference(destination).local_file_uri_path() is Some(path) {
     return Some(path)
   }
+  if !@cmark.InlineLink::is_unsafe(destination) &&
+    is_local_path(destination) &&
+    @office_location.parse(destination) is Some(reference) &&
+    destination.rev_split_once("#") is Some((_, fragment)) {
+    // Decode the filesystem path once, preserving encoded fragment components
+    // for the location parser (a sheet name can itself contain '&' or '%').
+    return Some(
+      @uri.decode_component(reference.path) + "#" + fragment.to_owned(),
+    )
+  }
   if !@cmark.InlineLink::is_unsafe(destination) && is_local_path(destination) {
     // Decode URI destinations once here; prose and host paths stay literal.
     Some(@uri.decode_component(destination))
@@ -882,10 +892,16 @@ fn FileReference::local_file_uri_path(self : FileReference) -> String? {
     uri.query.is_empty() else {
     return None
   }
-  let position = if uri.fragment.is_empty() {
+  let fragment = match self.0.rev_split_once("#") {
+    Some((_, fragment)) => fragment.to_owned()
+    None => ""
+  }
+  let position = if fragment.is_empty() {
     ""
-  } else if uri.fragment.view() =~ re"^L[1-9][[:digit:]]*$" {
-    "#" + uri.fragment
+  } else if fragment.view() =~ re"^L[1-9][[:digit:]]*$" {
+    "#" + fragment
+  } else if @office_location.parse(uri.path + "#" + fragment) is Some(_) {
+    "#" + fragment
   } else {
     return None
   }
@@ -931,6 +947,9 @@ fn FileReference::position_path(self : FileReference) -> String? {
 ///|
 /// The suffix-free path, or the whole reference when it has no position.
 fn FileReference::path(self : FileReference) -> String {
+  if @office_location.parse(self.0) is Some(reference) {
+    return reference.path
+  }
   self.position_path().unwrap_or(self.0)
 }
 

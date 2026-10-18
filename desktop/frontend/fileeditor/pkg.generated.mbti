@@ -17,6 +17,7 @@ import {
   "openseek_desktop/frontend/interop",
   "openseek_desktop/frontend/mention_context",
   "openseek_desktop/frontend/office_capture",
+  "openseek_desktop/frontend/office_location",
   "openseek_desktop/frontend/pathx",
   "openseek_desktop/frontend/pdf_capture",
   "openseek_desktop/protocol",
@@ -61,7 +62,7 @@ pub fn open_changed_document(@cmd.Emit[Msg], State, Ctx, ChangedFile, had_active
 
 pub fn open_document(@cmd.Emit[Msg], State, Ctx, @common.Uri, name~ : String, file_link_generation? : Int32, range~ : @common.Range?, annotation? : String, had_active~ : Bool) -> (@cmd.Cmd, State)
 
-pub fn open_file(@cmd.Emit[Msg], State, Ctx, @common.Uri, file_link_generation? : Int32, range~ : @common.Range?, annotation? : String, had_active~ : Bool) -> (@cmd.Cmd, State)
+pub fn open_file(@cmd.Emit[Msg], State, Ctx, @common.Uri, file_link_generation? : Int32, range~ : @common.Range?, annotation? : String, office_target? : @office_location.Target, had_active~ : Bool) -> (@cmd.Cmd, State)
 
 pub fn open_history_diff(@cmd.Emit[Msg], State, Ctx, @dock.GitHistoryDiff) -> (@cmd.Cmd, State)
 
@@ -317,6 +318,7 @@ pub fn MoonModViewMode::equal(Self, Self) -> Bool
 pub fn MoonModViewMode::not_equal(Self, Self) -> Bool
 
 pub(all) enum Msg {
+  OfficeCitationLocated(OfficeCitationNavigation, Bool)
   ReviewContextRevealFinished(source~ : @mention_context.ReviewSource, found~ : Bool)
   ReviewContextChanged(owner~ : @interop.ConversationKey, selection~ : @mention_context.ReviewChanges, adding~ : Bool)
   GithubReview(@github_review.Msg)
@@ -438,6 +440,17 @@ pub(all) enum Msg {
   ApplyAllFeedback
   DiffCommentAdded(file~ : @pathx.Relative, original_line_number~ : Int32?, modified_line_number~ : Int32?, quote~ : String, comment~ : String, resource~ : ModelUri?, feedback_id~ : String?)
 }
+
+pub(all) struct OfficeCitationNavigation {
+  owner : @interop.ConversationIdentity
+  epoch : Int32
+  generation : Int32
+  path : @common.Uri
+  target : @office_location.Target
+} derive(Eq, @debug.Debug)
+pub fn OfficeCitationNavigation::equal(Self, Self) -> Bool
+pub fn OfficeCitationNavigation::not_equal(Self, Self) -> Bool
+pub fn OfficeCitationNavigation::to_repr(Self) -> @debug.Repr
 
 pub(all) struct OfficeRegionDraft {
   preview : OfficeRegionPreview
@@ -677,6 +690,7 @@ pub(all) struct State {
   office_pages_open : Bool
   office_query : String
   office_prefer_system_fonts : Bool
+  office_navigation : OfficeCitationNavigation?
   office_selection : OfficeSelectionPreview?
   office_selection_comment : String?
   excel_copy_generation : Int32

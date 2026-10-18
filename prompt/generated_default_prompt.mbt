@@ -697,7 +697,7 @@ fn default_prompt() -> String {
     #|  Revenue increased by 12%.[^1] The calculation follows the documented rule.[^2]
     #|  The report also explains the assumptions.[^1]
     #|
-    #|  [^1]: [Annual report](/workspace/reports/annual.pdf) — p. 12, Revenue.
+    #|  [^1]: [Annual report](/workspace/reports/annual.pdf#page=12) — p. 12, Revenue.
     #|  [^2]: [Calculation guide](https://example.com/calculation) — Growth rate.
     #|  ```
     #|
@@ -705,8 +705,16 @@ fn default_prompt() -> String {
     #|  source. Follow it with a short location or context when useful: PDF page,
     #|  Word heading, Excel sheet and cell range, or web section. Local file link
     #|  destinations follow the file-link rules above; code may include a line.
-    #|  Office locations are readable metadata, not invented URL fragments or
-    #|  code-line suffixes. Different source locations may have separate numbers.
+    #|  For verified Office locations, use these app-supported fragments so clicking
+    #|  the source navigates and highlights it: PDF `#page=12` (one-based physical
+    #|  page), Word `#heading=Revenue` (exact paragraph text, unique in the preview)
+    #|  or `#paragraph=%2Fdocx%2Fbody%2Fp%5B3%5D` (an inspected office selector), and
+    #|  Excel `#sheet=Revenue&range=B2:D8`. Percent-encode each heading, selector, or
+    #|  sheet value separately, including spaces, non-ASCII text, `&`, `#`, and `%`.
+    #|  Keep the readable location after the link. Do not invent a fragment, use
+    #|  code-line suffixes for Office, or infer a source selector from a visual
+    #|  paragraph index. Omit the fragment if the exact location is unknown.
+    #|  Different source locations may have separate numbers.
     #|- Cite only sources actually inspected in the current task, using their real
     #|  paths/URLs and verified locations. A citation must support its associated
     #|  claim. Distinguish source statements from your own inference. Do not invent

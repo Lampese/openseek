@@ -1143,6 +1143,7 @@ pub fn open_file(
   file_link_generation? : Int32,
   range~ : @common.Range?,
   annotation? : String,
+  office_target? : @office_location.Target,
   had_active~ : Bool,
 ) -> (@cmd.Cmd, State) {
   let (cmd, state) = open_document(
@@ -1156,6 +1157,16 @@ pub fn open_file(
     annotation?,
     had_active~,
   )
+  let state = {
+    ..state,
+    office_navigation: office_target.map(target => {
+      owner: ctx.owner,
+      epoch: state.request_epoch,
+      generation: state.file_link_generation,
+      path,
+      target,
+    }),
+  }
   (@cmd.batch([mount_cmds(dispatch), cmd]), state)
 }
 
@@ -2414,6 +2425,9 @@ pub fn sync(
   let state = state.sync_office_selection(ctx)
   let (capture_cmd, state) = state.sync_pdf_capture(ctx)
   let (region_cmd, state) = state.sync_office_region(ctx)
+  let (office_navigation_cmd, state) = state.sync_office_navigation(
+    dispatch, ctx,
+  )
   let pending_cmd = @cmd.batch([
     capture_cmd,
     region_cmd,
@@ -2428,6 +2442,7 @@ pub fn sync(
     sync_semantic_review_editors(dispatch, state, ctx),
     sync_github_review_widgets(dispatch, state, ctx),
     navigation_cmd,
+    office_navigation_cmd,
   ])
   // The dock has already reconciled its active editor. Reveal from this shared
   // projection rather than duplicating behavior at every file-opening action.
@@ -2660,6 +2675,15 @@ fn update_inner(
         feedback.generation == generation &&
         feedback.preview == preview {
         (@cmd.none, { ..state, excel_copy_feedback: None, })
+      } else {
+        (@cmd.none, state)
+      }
+    OfficeCitationLocated(navigation, found) =>
+      if navigation.is_current(state, ctx) && !found {
+        (
+          @cmd.none,
+          { ..state, error: Some(ui(ctx.locale, OfficeCitationUnavailable)), },
+        )
       } else {
         (@cmd.none, state)
       }

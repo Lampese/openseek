@@ -483,6 +483,7 @@ pub(all) struct State {
   office_pages_open : Bool
   office_query : String
   office_prefer_system_fonts : Bool
+  office_navigation : OfficeCitationNavigation?
   // Browser selection is provisional until the user accepts its preview.
   office_selection : OfficeSelectionPreview?
   // None when no draft exists; Some("") is an open, empty draft.
@@ -689,6 +690,7 @@ pub fn State::empty() -> State {
     office_pages_open: false,
     office_query: "",
     office_prefer_system_fonts: false,
+    office_navigation: None,
     office_selection: None,
     office_selection_comment: None,
     excel_copy_generation: 0,
@@ -948,6 +950,7 @@ fn Ctx::checkout_ready(self : Ctx) -> Bool {
 
 ///|
 pub(all) enum Msg {
+  OfficeCitationLocated(OfficeCitationNavigation, Bool)
   ReviewContextRevealFinished(
     source~ : @mention_context.ReviewSource,
     found~ : Bool
