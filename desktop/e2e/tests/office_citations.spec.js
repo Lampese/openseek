@@ -116,3 +116,43 @@ test('Excel citation cards switch worksheets and highlight only the exact cited 
   await expect(detail.locator('[data-cell="A1"]')).toHaveClass(/office-citation-target/);
   expect(app.pageErrors).toEqual([]);
 });
+
+test('Excel citations prepare a lazy viewer range before querying cells and preserve its scroll position', async ({ page }) => {
+  const sheet = encodeURIComponent('季度汇总');
+  const app = await openAnswer(page, [
+    '初始位置。[^1] 延迟加载的范围。[^2]',
+    `[^1]: [销售演示](/workspace/docs/sales.xlsx#sheet=${sheet}&range=C5:C8)`,
+    `[^2]: [销售演示](/workspace/docs/sales.xlsx#sheet=${sheet}&range=A5000:C9000)`,
+  ].join('\n\n'));
+  await page.locator('.citation[data-citation="1"] button').click();
+  await expect(page.locator('td.office-citation-target')).toHaveCount(4);
+  // Exercise the optional viewer-provider contract independently of the
+  // installed viewer version. The real full-sheet provider has its own tests.
+  await page.evaluate(() => {
+    window.lazyCitationCalls = []; window.lazyCitationScrolls = 0;
+    const host = document.getElementById('openseek-office-surface');
+    host.__officeRevealExcelCell = (sheet, row, column) => {
+      const section = [...host.querySelectorAll('section[data-sheet]')].find(node => node.dataset.sheet === '季度汇总');
+      const table = section.querySelector('table');
+      table.classList.add('office-virtual-table');
+      window.lazyCitationCalls.push({sheet, row, column});
+      if (sheet !== '季度汇总' || row > 9000 || column > 3) return false;
+      const address = String.fromCharCode(64 + column) + row;
+      table.querySelector('tbody').innerHTML = `<tr><td data-cell="${address}" data-row="${row}" data-col="${column}">Lazy source</td></tr>`;
+      table.querySelector('td').scrollIntoView = () => { window.lazyCitationScrolls++; };
+      return true;
+    };
+  });
+  await page.locator('.citation[data-citation="2"] button').click();
+  await expect(page.locator('td[data-cell="A5000"]')).toHaveClass(/office-citation-target/);
+  expect(await page.evaluate(() => window.lazyCitationCalls)).toEqual([
+    {sheet:'季度汇总', row:9000, column:3}, {sheet:'季度汇总', row:5000, column:1},
+  ]);
+  expect(await page.evaluate(() => window.lazyCitationScrolls)).toBe(0);
+  await page.evaluate(() => {
+    document.querySelector('table.office-virtual-table tbody').innerHTML = '<tr><td data-cell="A7000" data-row="7000" data-col="1">Recycled source</td></tr>';
+  });
+  await expect(page.locator('td[data-cell="A7000"]')).toHaveClass(/office-citation-target/);
+  await expect(page.locator('.office-selection-preview')).toBeHidden();
+  expect(app.pageErrors).toEqual([]);
+});

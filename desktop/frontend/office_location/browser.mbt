@@ -1,4 +1,16 @@
 ///|
+let lazy_highlights : Map[String, (@js.Value, () -> Unit)] = Map([])
+
+///|
+extern "js" fn observe_children(
+  node : @js.Value,
+  update : () -> Unit,
+) -> () -> Unit = "(node, update) => { const observer = new MutationObserver(update); observer.observe(node, {childList:true, subtree:true}); return () => observer.disconnect(); }"
+
+///|
+extern "js" fn same_value(a : @js.Value, b : @js.Value) -> Bool = "(a, b) => a === b"
+
+///|
 fn elements(node : @js.Value, selector : String) -> Array[@js.Value] {
   let list : @js.Value = node.apply_with_string("querySelectorAll", [selector])
   let length : Int32 = list.get_with_string("length")
@@ -25,6 +37,10 @@ fn host(id : String) -> @js.Value? {
 
 ///|
 fn clear(id : String) -> Unit {
+  if lazy_highlights.get(id) is Some((_, dispose)) {
+    dispose()
+    lazy_highlights.remove(id)
+  }
   guard host(id) is Some(host) else { return }
   for node in elements(host, ".office-citation-highlight") {
     node.apply_with_string("remove", ([] : FixedArray[@js.Value]))
@@ -140,6 +156,15 @@ fn excel_nodes(
   range : String,
 ) -> Array[@js.Value] {
   guard range_bounds(range) is Some(((r1, c1), (r2, c2))) else { return [] }
+  // The lazy viewer validates full-sheet source coordinates and mounts the
+  // target before DOM lookup. Older/static viewers keep the existing path.
+  let prepare : @js.Nullable[(String, Int32, Int32) -> Bool] = host.get_with_string(
+    "__officeRevealExcelCell",
+  )
+  let lazy_target = match prepare.to_option() {
+    Some(reveal) => reveal(sheet, r2, c2) && reveal(sheet, r1, c1)
+    None => false
+  }
   let sections = elements(host, "section[data-sheet]").filter(node => {
     attribute(node, "data-sheet") == Some(sheet)
   })
@@ -159,7 +184,7 @@ fn excel_nodes(
   let covers = (row, col) => {
     cells.any(c => row >= c.1 && col >= c.2 && row <= c.3 && col <= c.4)
   }
-  guard covers(r1, c1) && covers(r2, c2) else { return [] }
+  guard covers(r1, c1) && (lazy_target || covers(r2, c2)) else { return [] }
   let nodes = cells.filter_map(c => {
     if c.1 <= r2 && c.3 >= r1 && c.2 <= c2 && c.4 >= c1 {
       Some(c.0)
@@ -171,7 +196,9 @@ fn excel_nodes(
     attribute(node, "data-excel-sheet-tab") == Some(sheet)
   })
   guard tabs.length() == 1 else { return [] }
-  tabs[0].apply_with_string("click", ([] : FixedArray[@js.Value]))
+  if !lazy_target {
+    tabs[0].apply_with_string("click", ([] : FixedArray[@js.Value]))
+  }
   nodes
 }
 
@@ -215,9 +242,67 @@ pub fn reveal(id : String, target : Target) -> Bool {
       parent.apply_with_string("insertBefore", [highlight, node])
     }
   }
+  if target is ExcelRange(sheet~, range~) &&
+    !elements(host, "section.is-active table.office-virtual-table").is_empty() {
+    keep_lazy_highlight(id, host, sheet, range)
+  }
   let options = @js.Object::new()
   options.set("block", if target is PdfPage(_) { "start" } else { "center" })
   options.set("inline", "center")
-  nodes[0].apply_with_string("scrollIntoView", [options.to_value()])
+  // Virtual cells already occupy the correct visible window. A native scroll
+  // would reinterpret their compressed canvas position and lose the target.
+  if !(target is ExcelRange(..)) ||
+    elements(host, "section.is-active table.office-virtual-table").is_empty() {
+    nodes[0].apply_with_string("scrollIntoView", [options.to_value()])
+  }
   true
+}
+
+///|
+/// Recycled cells receive the same citation marker. The viewer provider's
+/// identity fences this observer to the installed document snapshot.
+fn keep_lazy_highlight(
+  id : String,
+  host : @js.Value,
+  sheet : String,
+  range : String,
+) -> Unit {
+  guard range_bounds(range) is Some(((r1, c1), (r2, c2))) else { return }
+  let provider : @js.Value = host.get_with_string("__officeRevealExcelCell")
+  let dispose = observe_children(host, () => {
+    let current : @js.Value = host.get_with_string("__officeRevealExcelCell")
+    if !same_value(provider, current) ||
+      elements(host, "table.office-virtual-table").is_empty() {
+      if lazy_highlights.get(id) is Some((owner, dispose)) &&
+        same_value(owner, provider) {
+        dispose()
+        lazy_highlights.remove(id)
+      }
+      return
+    }
+    for section in elements(host, "section[data-sheet]") {
+      if attribute(section, "data-sheet") != Some(sheet) {
+        continue
+      }
+      for node in elements(section, "td[data-cell]") {
+        guard attribute(node, "data-cell").bind(cell) is Some((row, col)) else {
+          continue
+        }
+        let rows = attribute(node, "rowspan")
+          .bind(s => positive(s, maximum=1048576))
+          .unwrap_or(1)
+        let cols = attribute(node, "colspan")
+          .bind(s => positive(s, maximum=16384))
+          .unwrap_or(1)
+        if row <= r2 &&
+          row + rows - 1 >= r1 &&
+          col <= c2 &&
+          col + cols - 1 >= c1 {
+          let classes : @js.Value = node.get_with_string("classList")
+          classes.apply_with_string("add", ["office-citation-target"])
+        }
+      }
+    }
+  })
+  lazy_highlights[id] = (provider, dispose)
 }
