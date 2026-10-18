@@ -23,3 +23,8 @@ and readable sidebar styles when the body source map is only partially available
 `quarter-sales.xlsx` is the actual fictional quarterly sales demonstration
 workbook reported in the XLSX crash. Its two Chinese worksheets contain merged
 headings, number formats, and 20 formulas, including cross-sheet references.
+
+`large-workbook.xlsx` is an original minimal OOXML fixture shared with Office
+Viewer's virtual-grid browser tests. It spans A1:XFD1048576 with only a few stored
+cells, an A1000:B1002 merge, a cached formula, and frozen first row/column. It tests
+scrolling and selection past the old preview limits without a dense data fixture.

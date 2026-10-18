@@ -366,6 +366,13 @@ the toolbar percentage following the document's zoom. Ordinary two-finger
 scrolling remains available. DOCX/XLSX use a 10–200% range and PDFs
 use 25–400%; zooming keeps the document position under the pointer when the
 scroll range permits it. Selecting content continues to work after zooming.
+
+Large Excel workbooks retain their complete used row/column bounds. The shared
+Office Viewer mounts only visible cells in the active worksheet, and scrolling
+and search can reach cells beyond row 1000 and column 256. Formula inspection,
+merged ranges, Notes navigation and feedback selections keep source addresses
+as the grid recycles cells. XLSX parsing still uses the reader's resource limits.
+
 Selecting text in DOCX/PDF or a cell range in XLSX opens a preview showing its
 content and page or sheet/range. **Add to context** keeps the quotation in the
 active conversation; **Cancel** leaves the draft unchanged. Further selections
