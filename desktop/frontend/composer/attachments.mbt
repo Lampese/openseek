@@ -224,9 +224,9 @@ fn Entry::attachment_confirmations(
   self : Entry,
   locale : @i18n.Locale,
   emit : @cmd.Emit[Msg],
-) -> Array[@html.Html] {
+) -> Array[(Int32, @html.Html)] {
   self.attachment_requests.map(request => {
-    match request.phase {
+    let confirmation = match request.phase {
       AttachmentConfirming(name~) =>
         @html.div(
           class="composer-context-row composer-attachment-confirm",
@@ -265,6 +265,7 @@ fn Entry::attachment_confirmations(
           ui(locale, PreparingAttachment),
         )
     }
+    (request.id, confirmation)
   })
 }
 

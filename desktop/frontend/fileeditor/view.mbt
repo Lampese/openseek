@@ -377,6 +377,20 @@ pub fn body_view(
       None => empty_office_surface_config(state)
     },
   )
+  let presentation = office_document is Some({ kind: Some(PowerPoint), .. })
+  let office_surface = @html.div(
+    class=if presentation {
+      "office-surface-layout office-presentation-layout"
+    } else {
+      "office-surface-layout"
+    },
+    [
+      @html.aside(class="office-slide-rail", hidden=!presentation, [
+        @office_viewer.render_page_thumbnails(OfficeSlideListId),
+      ]),
+      office_surface,
+    ],
+  )
   let markdown_viewer_host = @html.div(
     attrs=@html.Attrs::build()
       .id(MarkdownViewerHostId)
@@ -2086,7 +2100,10 @@ fn office_viewer_toolbar(
         attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomIn)),
         "+",
       ),
-      if pdf {
+      if pdf ||
+        active_office_surface(state, ctx)
+        .map(config => config.kind == Some(PowerPoint))
+        .unwrap_or(false) {
         @html.nothing
       } else {
         @html.button(

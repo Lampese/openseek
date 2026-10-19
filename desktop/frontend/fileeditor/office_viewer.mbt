@@ -6,6 +6,9 @@
 const OfficeSurfaceId = "openseek-office-surface"
 
 ///|
+const OfficeSlideListId = "openseek-office-slide-list"
+
+///|
 /// The XLSX renderer emits its own body/table rules and workbook style classes.
 /// Scope its generated style blocks before either the view or interaction
 /// commands mount them; application fonts and widgets stay owned by the host.
@@ -86,6 +89,11 @@ fn show_office_document(
     }),
     @office_viewer.visual_command(config),
     office_pinch_command(dispatch, config),
+    @office_viewer.page_thumbnails_command(
+      config,
+      OfficeSlideListId,
+      enabled=config.kind == Some(PowerPoint),
+    ),
   ])
 }
 
