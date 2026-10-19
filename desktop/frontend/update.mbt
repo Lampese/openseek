@@ -1632,7 +1632,6 @@ fn sync_file_panel(
 fn covering_overlay(model : Model) -> Bool {
   (model.narrow && model.sidebar_open) ||
   model.project_picker is Some(_) ||
-  model.session_search.is_open() ||
   model.export_dialog.is_open() ||
   model.session_import_dialog.is_open() ||
   model.workspace_settings_dialog is Some(_) ||
@@ -1942,8 +1941,17 @@ fn update(
       { ..model, sidebar_mode, sidebar_revealed: revealed, }
     _ => model
   }
-  let sidebar_mode_cmd = if model.sidebar_mode != previous.sidebar_mode {
-    save_sidebar_mode(model.sidebar_mode)
+  let sidebar_mode_changed = model.sidebar_mode != previous.sidebar_mode
+  let model = if sidebar_mode_changed {
+    { ..model, session_search: @session_search.Model(), }
+  } else {
+    model
+  }
+  let sidebar_mode_cmd = if sidebar_mode_changed {
+    @cmd.batch([
+      save_sidebar_mode(model.sidebar_mode),
+      @session_search.clear_input(focus=false),
+    ])
   } else {
     @cmd.none
   }
@@ -6640,69 +6648,16 @@ fn update_msg(
       let (cmd, export_dialog) = model.export_dialog.open(source, channel~)
       (cmd, { ..model, export_dialog, })
     }
-    OpenSessionSearch =>
-      update_msg(dispatch, SessionSearch(Open(model.focused)), model)
     SessionSearch(msg) => {
+      let results = model.sidebar_component_input().search_results()
       let (cmd, session_search, selected) = model.session_search.update(
-        dispatch.map(msg => SessionSearch(msg)),
-        msg,
+        msg, results,
       )
-      let model = { ..model, session_search, }
-      if selected is Some(selected) {
-        let hit = selected.hit
-        guard @resource.of_path(selected.channel, hit.workspace)
-          is Some(workspace) &&
-          model.device_state(selected.channel) is Some(dev) else {
-          return (cmd, model)
-        }
-        let item : @transcript.SessionListItem = {
-          id: hit.session,
-          title: Some(hit.title),
-          workspace,
-          workspace_name: hit.workspace,
-          updated_at_ms: hit.updated_at_ms,
-        }
-        // Search can find a record created since the last sidebar refresh.
-        // Seed its placement before using the ordinary conversation loader.
-        let dev = if hit.archived {
-          {
-            ..dev,
-            archived: [
-              item,
-              ..dev.archived.filter(existing => {
-                existing.id != hit.session || existing.workspace != workspace
-              }),
-            ],
-          }
-        } else {
-          {
-            ..dev,
-            sessions: [
-              item,
-              ..dev.sessions.filter(existing => {
-                existing.id != hit.session || existing.workspace != workspace
-              }),
-            ],
-          }
-        }
-        let model = model.replace_device(dev)
-        let (open_cmd, model) = update_msg(
-          dispatch,
-          if hit.archived {
-            OpenArchivedSession(
-              selected.channel,
-              session=hit.session,
-              workspace~,
-            )
-          } else {
-            OpenSession(selected.channel, hit.session)
-          },
-          model,
-        )
-        (@cmd.batch([cmd, open_cmd]), model)
-      } else {
-        (cmd, model)
+      let command = match selected {
+        Some(id) => SidebarDispatcher::{ emit: dispatch, }.conversation_open(id)
+        None => @cmd.none
       }
+      (@cmd.batch([cmd, command]), { ..model, session_search, })
     }
     OpenCloudExport => {
       guard model.cloud_identity() is Some(identity) else {
@@ -7288,7 +7243,7 @@ fn update_device_msg(
       // comes back through this function, a removed or re-added device fails
       // the state/epoch guards and its old loop simply ends.
       let failures = dev.reconnect_failures + 1
-      let bridge = if failures == WsLostAfter {
+      let bridge = if failures >= WsLostAfter {
         BridgeLost(
           match model.locale {
             SimplifiedChinese =>
@@ -7304,7 +7259,7 @@ fn update_device_msg(
           },
         )
       } else {
-        dev.bridge
+        Connecting
       }
       (
         @cmd.delay(
@@ -12254,6 +12209,18 @@ test "socket losses mark the bridge lost at the third consecutive drop" {
     one,
   )
   inspect(due.dev().reconnect_attempt, content="1")
+  let (_, again) = update(
+    dispatch,
+    FromDevice(channel, ChannelDown(websocket_epoch=0)),
+    model,
+  )
+  assert_true(
+    one.bridge_state() is Connecting && again.bridge_state() is Connecting,
+  )
+  assert_eq(one.dev().reconnect_failures, again.dev().reconnect_failures)
+  assert_eq(one.dev().reconnect_attempt, again.dev().reconnect_attempt)
+  assert_true(model.bridge_state() is Connected)
+  assert_eq(model.dev().reconnect_failures, 0)
   // Terminal retirement is covered by the terminal component's disconnect
   // test; the application state owns only the reconnect policy now.
   let (_, two) = update(
@@ -12262,13 +12229,21 @@ test "socket losses mark the bridge lost at the third consecutive drop" {
     due,
   )
   inspect(two.dev().reconnect_failures, content="2")
-  assert_true(two.bridge_state() is Connected)
+  assert_true(one.bridge_state() is Connecting)
+  assert_true(two.bridge_state() is Connecting)
   let (_, three) = update(
     dispatch,
     FromDevice(channel, ChannelDown(websocket_epoch=0)),
     two,
   )
   assert_true(three.bridge_state() is BridgeLost(_))
+  let (_, four) = update(
+    dispatch,
+    FromDevice(channel, ChannelDown(websocket_epoch=0)),
+    three,
+  )
+  assert_true(four.bridge_state() is BridgeLost(_))
+  assert_true(four.display_status() is Reconnecting)
 }
 
 ///|

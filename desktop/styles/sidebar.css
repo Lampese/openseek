@@ -1274,9 +1274,23 @@ button.row-twisty:hover {
   box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
-  line-height: 20px;
-  text-align: left;
-  cursor: pointer;
 }
-.sidebar-search:hover { background: var(--color-bg-subtle); }
-.sidebar-search:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.sidebar-search:focus-within {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+}
+.sidebar-search input::placeholder { color: var(--color-text-muted); }
+.sidebar-search-clear { --icon-size: 12px; width: 18px; height: 18px; }
+.conversation-row.search-selected { background: var(--color-bg-subtle); }
+.conversation-open strong { color: var(--color-text-primary); font-weight: 600; }

@@ -356,6 +356,7 @@ pub fn ContextComponent::render(
         Some(name) =>
           @html.div(
             class="composer-context-row composer-banner",
+            attrs=@html.Attrs::build().role("status"),
             dynamic_text(locale, DReconnecting(name.to_string())),
           )
         None =>
@@ -1065,7 +1066,9 @@ fn RunHeartbeat::label(
     detail.push(elapsed_label(clock_ms - started))
   }
   if self.tokens > 0 {
-    detail.push("\{@labels.compact_count(self.tokens)} tokens")
+    detail.push(
+      dynamic_text(locale, DTokens(@labels.compact_count(self.tokens))),
+    )
   }
   if detail.is_empty() {
     stage
