@@ -3226,6 +3226,40 @@ pub fn SessionGroup::to_repr(Self) -> @debug.Repr
 pub impl ToJson for SessionGroup
 pub impl @json.FromJson for SessionGroup
 
+pub(all) struct SessionImportPayload {
+  source : SessionImportSource
+  workspace : String
+  worktree_of : String?
+} derive(Eq, @debug.Debug)
+pub fn SessionImportPayload::equal(Self, Self) -> Bool
+pub fn SessionImportPayload::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn SessionImportPayload::not_equal(Self, Self) -> Bool
+pub fn SessionImportPayload::to_json(Self) -> Json
+pub fn SessionImportPayload::to_repr(Self) -> @debug.Repr
+pub impl ToJson for SessionImportPayload
+pub impl @json.FromJson for SessionImportPayload
+
+pub(all) enum SessionImportReply {
+  Success(String)
+  Failed(String)
+}
+pub fn SessionImportReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn SessionImportReply::to_json(Self) -> Json
+pub impl ToJson for SessionImportReply
+pub impl @json.FromJson for SessionImportReply
+
+pub(all) enum SessionImportSource {
+  JsonFile(text~ : String)
+  ShareLink(url~ : String)
+} derive(Eq, @debug.Debug)
+pub fn SessionImportSource::equal(Self, Self) -> Bool
+pub fn SessionImportSource::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn SessionImportSource::not_equal(Self, Self) -> Bool
+pub fn SessionImportSource::to_json(Self) -> Json
+pub fn SessionImportSource::to_repr(Self) -> @debug.Repr
+pub impl ToJson for SessionImportSource
+pub impl @json.FromJson for SessionImportSource
+
 pub(all) enum SessionItem {
   User(SessionUserMessage)
   Assistant(SessionAssistantMessage)

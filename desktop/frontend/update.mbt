@@ -1634,6 +1634,7 @@ fn covering_overlay(model : Model) -> Bool {
   model.project_picker is Some(_) ||
   model.session_search.is_open() ||
   model.export_dialog.is_open() ||
+  model.session_import_dialog.is_open() ||
   model.workspace_settings_dialog is Some(_) ||
   model.archive_confirm is Some(_) ||
   model.delete_confirm is Some(_) ||
@@ -1665,6 +1666,7 @@ fn desired_browser_view(model : Model) -> Int32? {
     model.right_panel_open &&
     !model.right_panel_menu_open &&
     !model.dock_tab_menu_open &&
+    !model.conversation_transfer_menu_open &&
     model.select_menu is None &&
     !git_details_open &&
     !covering_overlay(model) else {
@@ -5811,6 +5813,8 @@ fn update_msg(
     }
     CloseRightPanelMenu =>
       (@cmd.none, { ..model, right_panel_menu_open: false, })
+    ConversationTransferMenuChanged(open) =>
+      (@cmd.none, { ..model, conversation_transfer_menu_open: open, })
     DockTabMenuChanged(open) =>
       (
         @cmd.none,
@@ -6691,6 +6695,70 @@ fn update_msg(
         title=model.cloud_title(),
       )
       (command, { ..model, export_dialog, })
+    }
+    OpenSessionImport => {
+      let selected = if model.screen is Chat {
+        model.conversation_selection()
+      } else {
+        None
+      }
+      let workspace = match selected {
+        Some(selected) => Some(selected.workspace.path)
+        None =>
+          if model.sidebar_mode is WorkMode {
+            model
+            .device_state(model.focused)
+            .bind(dev => dev.active_project.map(p => p.path))
+          } else {
+            None
+          }
+      }
+      // Let the host's current registry choose placement even if this
+      // client's worktree inventory has not arrived yet.
+      let worktree_of = selected.map(selected => selected.session)
+      let (cmd, session_import_dialog) = model.session_import_dialog.open({
+        channel: model.focused,
+        connection_generation: model.focused_connection_generation(),
+        workspace: workspace.map_or(@session_import.Unplaced, path => {
+          @session_import.Registered(path)
+        }),
+        worktree_of,
+      })
+      (cmd, { ..model, session_import_dialog, })
+    }
+    SessionImport(msg) => {
+      let (cmd, session_import_dialog, imported) = model.session_import_dialog.update(
+        dispatch.map(msg => SessionImport(msg)),
+        msg,
+      )
+      let model = { ..model, session_import_dialog, }
+      guard imported is Some((target, session_id)) &&
+        model.device_state(target.channel) is Some(dev) &&
+        dev.connection_generation == target.connection_generation &&
+        model.console.page_device is Some(device) else {
+        return (cmd, model)
+      }
+      let (focus, model) = focus_channel(dispatch, model, target.channel)
+      let (sessions, model) = request_sessions_refresh(
+        dispatch,
+        target.channel,
+        model,
+      )
+      let (visit, model) = navigation_visit(
+        model,
+        { device: Some(device), target: Session(session_id), },
+        replace=false,
+      )
+      // The ordinary navigation resolver opens the session once its catalog
+      // row arrives. Workspace and worktree notifications use their existing
+      // handlers; the import reply carries no inventory snapshot.
+      (
+        @cmd.batch([cmd, focus, sessions, visit]),
+        {
+          ..model,
+          navigation: { ..model.navigation, phase: Waiting, sessions: None, },
+        },
+      )
     }
     ExportDialog(msg) => {
       let (login, model) = if msg is @export_dialog.SignIn {
@@ -8299,11 +8367,16 @@ fn update_device_msg(
       (@cmd.batch([sessions, archived, toast]), model)
     }
     WorktreeFailed(message) => model.notify_error(dispatch, message)
-    SessionsFailed(message) =>
+    SessionsFailed(message~, connection_generation~, request_generation~) => {
+      guard connection_generation == dev.connection_generation &&
+        request_generation == dev.sessions_request_generation else {
+        return (@cmd.none, model)
+      }
       model.notify_error(
         dispatch,
         notice_text(model.locale, ListSessions(message.to_string())),
       )
+    }
     // Another client archived, restored, or deleted a conversation. Both
     // sidebar lists are stale, but this identity-bearing fact takes effect
     // immediately and remains authoritative over in-flight replies.
@@ -11743,7 +11816,15 @@ test "sessions failure pops a toast without touching the transcript" {
       { kind: User(content=Content([Text("hi")])), ts: None, sequence: None, },
     ],
   })
-  let (_, next) = update_dev(dispatch, SessionsFailed("engine exploded"), model)
+  let (_, next) = update_dev(
+    dispatch,
+    SessionsFailed(
+      message="engine exploded",
+      connection_generation=model.dev().connection_generation,
+      request_generation=model.dev().sessions_request_generation,
+    ),
+    model,
+  )
   inspect(next.notifications.length(), content="1")
   inspect(
     next.notifications[0].message,
@@ -18606,7 +18687,15 @@ test "an archive failure pops a toast that a click or its timer dismisses" {
 test "toast ids only ever grow, so timers and toasts stay paired" {
   let dispatch = test_dispatch()
   let (_, first) = update_dev(dispatch, ArchiveFailed("one"), test_model())
-  let (_, second) = update_dev(dispatch, SessionsFailed("two"), first)
+  let (_, second) = update_dev(
+    dispatch,
+    SessionsFailed(
+      message="two",
+      connection_generation=first.dev().connection_generation,
+      request_generation=first.dev().sessions_request_generation,
+    ),
+    first,
+  )
   inspect(second.notifications.length(), content="2")
   assert_true(second.notifications[0].id != second.notifications[1].id)
   inspect(second.notification_seq, content="2")
