@@ -145,10 +145,14 @@ test "archiving the selected Cloud creates a new Cloud without retiring its arch
   }
   let archived = complete_cloud_archive(pending, save.request)
   assert_true(archived.cloud.is_archived("cloud-a"))
-  assert_true(archived.cloud.creating_at(archived.chat_navigation_generation))
+  assert_true(archived.cloud_draft_identity() is Some(_))
   assert_true(archived.cloud_identity() is None)
   assert_true(archived.cloud.retired.is_empty())
   assert_true(archived.cloud.conversations.contains("cloud-a"))
+  assert_true(archived.navigation.location == archived.navigation_location())
+  let (_, settings) = update(test_dispatch(), OpenSetup, archived)
+  let (_, back) = update(test_dispatch(), Navigation(Back), settings)
+  assert_true(back.cloud_draft_identity() == archived.cloud_draft_identity())
 }
 
 ///|
@@ -203,11 +207,12 @@ test "archiving the previous Cloud behind a new-chat page does not retry or reta
     CloudAction(@cloud.Create),
     integrated_cloud_model(),
   )
-  let creation = creating.cloud.creation.unwrap()
+  let submitted = submit_blank_cloud(creating)
+  let creation = submitted.cloud.creation.unwrap()
   let (_, failed) = update(
     test_dispatch(),
     CloudAction(@cloud.CreateFailed(3, creation.request, Http(503))),
-    creating,
+    submitted,
   )
   for model in [creating, failed] {
     let pending = pending_cloud_archive(model)

@@ -648,7 +648,7 @@ fn Model::codex_sidebar_context(
 /// same way `sidebar_component_sections` files rows: a conversation is a chat
 /// exactly when its workspace is under the host's managed chat root.
 fn Model::sidebar_activation(self : Model) -> (@sidebar.Mode, String)? {
-  if self.cloud.creating_at(self.chat_navigation_generation) {
+  if self.cloud_draft_identity() is Some(_) {
     return None
   }
   if self.cloud_identity() is Some(owner) && self.screen is Chat {
@@ -2676,7 +2676,7 @@ fn Model::cloud_chat_section(self : Model, channel : String) -> @section.Input {
     activation: self.cloud_identity().map(owner => owner.session()),
     action: Some({
       title: @sidebar_messages.text(self.locale, NewChat),
-      disabled: self.cloud.creation is Some({ failure: None, .. }),
+      disabled: self.cloud.creation is Some({ submission: Some(_), .. }),
     }),
     entries,
   }

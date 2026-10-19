@@ -27,7 +27,11 @@ test "Cloud delete captures its title and uses the shared confirmation" {
 
 ///|
 test "Cloud deletion falls back within Cloud regardless of the sidebar mode" {
-  let model = { ..integrated_cloud_model(), sidebar_mode: @sidebar.WorkMode, }
+  let model = {
+    ..integrated_cloud_model(),
+    is_desktop: false,
+    sidebar_mode: @sidebar.WorkMode,
+  }
   let pending = delete_cloud(model, "cloud-a")
   let request = pending.cloud.deletions["cloud-a"]
   let (_, removed) = update(
@@ -45,6 +49,10 @@ test "Cloud deletion falls back within Cloud regardless of the sidebar mode" {
     ),
   )
   assert_false(removed.cloud.conversations.contains("cloud-a"))
+  assert_true(removed.navigation.location == removed.navigation_location())
+  let (_, settings) = update(test_dispatch(), OpenSetup, removed)
+  let (_, back) = update(test_dispatch(), Navigation(Back), settings)
+  assert_true(back.cloud_draft_identity() == removed.cloud_draft_identity())
 }
 
 ///|
@@ -95,6 +103,7 @@ test "Cloud deletion keeps a failed creation in Cloud and allows the normal new 
     CloudAction(@cloud.Deleted(3, "cloud-a", request)),
     pending,
   )
+  let removed = submit_blank_cloud(removed)
   guard removed.cloud.creation is Some(creation) else {
     fail("expected Cloud creation")
   }
@@ -104,17 +113,18 @@ test "Cloud deletion keeps a failed creation in Cloud and allows the normal new 
     removed,
   )
   assert_true(failed.cloud_selected())
-  assert_true(failed.chat_column() is LoadFailed(retry=false, ..))
+  assert_true(failed.chat_column() is CloudTranscript(..))
   assert_true(failed.host_selection() is None)
   let (_, retried) = update(test_dispatch(), CloudAction(@cloud.Create), failed)
-  assert_true(retried.cloud.creation is Some({ failure: None, .. }))
-  assert_true(retried.chat_column() is Loading)
+  assert_true(retried.cloud.creation is Some({ submission: None, .. }))
+  assert_true(retried.chat_column() is CloudTranscript(..))
 }
 
 ///|
 test "deletion reuses an existing pending Cloud creation without losing its navigation" {
   let model = integrated_cloud_model()
   let (_, creating) = update(test_dispatch(), CloudAction(@cloud.Create), model)
+  let creating = submit_blank_cloud(creating)
   guard creating.cloud.creation is Some(creation) else {
     fail("expected creation")
   }

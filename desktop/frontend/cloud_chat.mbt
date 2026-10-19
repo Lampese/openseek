@@ -9,10 +9,7 @@ fn Model::host_selection(self : Model) -> ConversationSelection? {
 ///|
 fn Model::cloud_selected(self : Model) -> Bool {
   self.screen is Chat &&
-  (
-    self.selected_conversation is Some(CloudSelection(..)) ||
-    self.cloud.creating_at(self.chat_navigation_generation)
-  )
+  (self.cloud_identity() is Some(_) || self.cloud_draft_identity() is Some(_))
 }
 
 ///|
@@ -25,7 +22,19 @@ fn Model::cloud_identity(self : Model) -> @interop.ConversationIdentity? {
 }
 
 ///|
+fn Model::cloud_draft_identity(self : Model) -> @interop.ConversationIdentity? {
+  match self.selected_conversation {
+    Some(CloudDraftSelection(account~, id~)) => {
+      let owner = @interop.Cloud(account~, session=id)
+      self.cloud.draft_identity().filter(current => current == owner)
+    }
+    _ => None
+  }
+}
+
+///|
 fn Model::cloud_conversation(self : Model) -> @cloud.Conversation? {
+  guard self.cloud_draft_identity() is None else { return None }
   match self.selected_conversation {
     Some(CloudSelection(account~, session~)) if self.cloud.user_id ==
       Some(account) => self.cloud.conversations.get(session)
@@ -35,6 +44,7 @@ fn Model::cloud_conversation(self : Model) -> @cloud.Conversation? {
 
 ///|
 fn Model::cloud_archived(self : Model) -> Bool {
+  self.cloud_draft_identity() is None &&
   self
   .cloud_identity()
   .map_or(false, owner => self.cloud.is_archived(owner.session()))
@@ -89,7 +99,20 @@ fn update_cloud(
   )
   let switched = before.user_id is Some(_) && before.user_id != cloud.user_id
   let retirements = model.composer_entry_retirements.copy()
+  let created = match message {
+    @cloud.Created(epoch, request, session) if epoch == before.epoch &&
+      before.creation is Some(creation) &&
+      creation.request == request &&
+      cloud.creation is None => Some(session)
+    _ => None
+  }
+  if created is Some(_) && before.draft_identity() is Some(owner) {
+    retirements.push(owner)
+  }
   if switched && before.user_id is Some(account) {
+    if before.draft_identity() is Some(owner) {
+      retirements.push(owner)
+    }
     let sessions = before.sessions.map(item => item.id)
     for session in before.conversations.keys() {
       if !sessions.contains(session) {
@@ -129,7 +152,7 @@ fn update_cloud(
   let archived_selection = match message {
     @cloud.Edited(epoch, id, request) =>
       model.screen is Chat &&
-      !model.cloud.creating_at(model.chat_navigation_generation) &&
+      model.cloud_draft_identity() is None &&
       epoch == before.epoch &&
       before.metadata_saves.get(id)
       is Some(
@@ -150,8 +173,18 @@ fn update_cloud(
   }
   let next = {
     ..model,
+    screen: if message is @cloud.Create {
+      Chat
+    } else {
+      model.screen
+    },
     cloud,
     navigation,
+    sidebar_mode: if message is @cloud.Create {
+      @sidebar.ChatMode
+    } else {
+      model.sidebar_mode
+    },
     delete_confirm: match model.delete_confirm {
       Some(CloudDelete(account~, session~, ..)) if cloud.user_id !=
         Some(account) ||
@@ -168,10 +201,22 @@ fn update_cloud(
       other => other
     },
     composer_entry_retirements: retirements,
-    selected_conversation: if removed_selection ||
+    selected_conversation: if message is @cloud.Create &&
+      cloud.draft_identity() is Some(@interop.Cloud(account~, session=id)) {
+      Some(CloudDraftSelection(account~, id~))
+    } else if removed_selection ||
       archived_selection ||
-      (switched && model.cloud_identity() is Some(_)) {
+      (
+        switched &&
+        (
+          model.cloud_identity() is Some(_) ||
+          model.cloud_draft_identity() is Some(_)
+        )
+      ) {
       None
+    } else if created is Some(session) &&
+      model.cloud_draft_identity() is Some(@interop.Cloud(account~, ..)) {
+      Some(CloudSelection(account~, session~))
     } else {
       model.selected_conversation
     },
@@ -217,31 +262,45 @@ fn update_cloud(
 
 ///|
 fn Model::cloud_composer_input(self : Model) -> @composer.Input? {
-  guard self.screen is Chat &&
-    self.cloud_identity() is Some(owner) &&
-    self.cloud_conversation() is Some(conversation) else {
-    return None
+  guard self.screen is Chat else { return None }
+  let owner = match self.cloud_draft_identity() {
+    Some(owner) => Some(owner)
+    None => self.cloud_identity()
   }
+  guard owner is Some(owner) else { return None }
+  let conversation = self.cloud_conversation()
+  let creating = self.cloud_draft_identity() is Some(_)
+  guard creating || conversation is Some(_) else { return None }
+  let pending = creating &&
+    self.cloud.creation is Some({ submission: Some(_), .. })
   let history : Array[String] = []
-  for record in conversation.records {
-    if record.kind == "user" &&
-      record.data is { "content": String(content), .. } {
-      history.push(content)
+  if conversation is Some(conversation) {
+    for record in conversation.records {
+      if record.kind == "user" &&
+        record.data is { "content": String(content), .. } {
+        history.push(content)
+      }
     }
   }
   let input = self.dormant_composer_input()
   Some({
     ..input,
     identity: { ..input.identity, owner, },
-    run: if conversation.sending || conversation.generating {
+    draft: {
+      ..input.draft,
+      task: conversation.bind(value => value.initial_submission).unwrap_or(""),
+    },
+    run: if conversation is Some(value) && (value.sending || value.generating) {
       Some({ stage: @composer.Working, started_ms: None, tokens: 0, })
     } else {
       None
     },
-    turn_id: conversation.task,
+    turn_id: conversation.bind(value => value.task),
     history,
     installed_skills: [],
-    submission_sequence: conversation.submission_sequence,
+    submission_sequence: conversation.map_or(0, value => {
+      value.submission_sequence
+    }),
     file_index: @composer.FileIndexEmpty(epoch=self.composer_context_generation),
     presentation: {
       ..input.presentation,
@@ -261,10 +320,14 @@ fn Model::cloud_composer_input(self : Model) -> @composer.Input? {
         }),
       ],
       placeholder: shell_text(self.locale, AskPlaceholder),
-      disabled: self.cloud_archived(),
+      disabled: pending || self.cloud_archived(),
       primary_action: @composer.Send(
         available=self.account is Some(_) &&
-          self.cloud.can_send(owner.session()),
+          (if creating {
+            !pending
+          } else {
+            self.cloud.can_send(owner.session())
+          }),
       ),
     },
   })
