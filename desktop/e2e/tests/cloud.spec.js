@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { CloudHarness, authOrigin, sessionA, sessionB } from './support/cloud_harness.js';
+import { CloudHarness, authOrigin, sessionA, sessionB, sessionC } from './support/cloud_harness.js';
 
 for (const desktop of [false, true]) {
   test(`${desktop ? 'desktop' : 'browser'} restores Cloud in the ordinary chat UI without an online device`, async ({ page }) => {
@@ -353,4 +353,64 @@ test('Cloud sign-out closes the local reader even when stream cancellation rejec
       expect(cloud.device.pageErrors).toEqual([]);
     });
   }
+}
+
+test('device browser history retains Cloud visits across refresh', async ({ page }) => {
+  const cloud = new CloudHarness(page);
+  await cloud.install(); await cloud.goto();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL(/\/device\/device-a\/settings$/);
+  await cloud.open(sessionA);
+  await page.locator('#task').fill('Cloud draft A');
+  await expect(page).toHaveURL(`${authOrigin}/cloud/session/${sessionA}`);
+  await cloud.open(sessionB);
+  await expect(page).toHaveURL(`${authOrigin}/cloud/session/${sessionB}`);
+  await page.goBack();
+  await expect(page.locator('main > .topbar h1')).toHaveText('Cloud fixture A');
+  await expect(page.locator('#task')).toHaveValue('Cloud draft A');
+  await page.goBack();
+  await expect(page.locator('main > .topbar h1')).toHaveText('Settings');
+  await page.goForward();
+  await expect(page.locator('main > .topbar h1')).toHaveText('Cloud fixture A');
+  await page.reload();
+  await expect(page.locator('main > .topbar h1')).toHaveText('Cloud fixture A');
+  await expect(page.locator('#task')).toHaveValue('');
+  await page.goBack();
+  await expect(page.locator('main > .topbar h1')).toHaveText('Settings');
+  expect(cloud.device.pageErrors).toEqual([]);
+});
+
+for (const destination of ['settings', 'not-a-page']) {
+  test(`late Cloud creation cannot steal browser navigation to ${destination}`, async ({ page }) => {
+    const cloud = new CloudHarness(page);
+    await cloud.install(); await cloud.goto();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await cloud.open();
+    let complete;
+    cloud.pauseCreate = new Promise(resolve => { complete = resolve; });
+    try {
+      await page.locator('.section-primary-action[aria-label="New chat"]').click();
+      await page.locator('#task').fill('First Cloud message');
+      await page.locator('#task').press('Enter');
+      await expect.poll(() => cloud.requests.filter(request => request.method === 'POST' && request.path === '/v1/sessions').length).toBe(1);
+      if (destination !== 'not-a-page') {
+        await page.getByRole('button', { name: 'Settings', exact: true }).click();
+        await expect(page.locator('main > .topbar h1')).toHaveText('Settings');
+      } else {
+        await page.evaluate(() => {
+          history.pushState(null, '', '/device/device-a/not-a-page');
+          dispatchEvent(new PopStateEvent('popstate'));
+        });
+        await expect(page.locator('.navigation-notice')).toBeVisible();
+      }
+      complete();
+      await expect.poll(() => cloud.requests.some(request => request.path === `/v1/sessions/${sessionC}/messages`)).toBe(true);
+      // An invalid URL covers the promoted draft; only Settings leaves Chat.
+      if (destination !== 'not-a-page') await expect(cloud.row(sessionC)).toHaveAttribute('aria-current', 'false');
+      await expect(page).toHaveURL(new RegExp(`/device/device-a/${destination}$`));
+      if (destination !== 'not-a-page') await expect(page.locator('main > .topbar h1')).toHaveText('Settings');
+      else await expect(page.locator('.navigation-notice')).toBeVisible();
+      expect(cloud.device.pageErrors).toEqual([]);
+    } finally { complete(); }
+  });
 }

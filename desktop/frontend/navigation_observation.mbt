@@ -2,13 +2,13 @@
 /// Facts accepted by the application update. This adapter alone interprets
 /// root messages and compares domain state; history policy consumes these facts.
 priv struct NavigationObservation {
-  location : @navigation.Location?
+  location : @routes.Location?
   user_visit : Bool
   session_rotated : Bool
   explicit : Bool
   repeat_visit : Bool
-  promotion : (@navigation.Location, @navigation.Location)?
-  durable : Array[(@navigation.Location, @navigation.Location)]
+  promotion : (@routes.Location, @routes.Location)?
+  durable : Array[(@routes.Location, @routes.Location)]
 }
 
 ///|
@@ -82,7 +82,7 @@ fn observe_navigation(
 ) -> NavigationObservation {
   let old_codex = previous.codex.navigation_target()
   let new_codex = next.codex.navigation_target()
-  let promotion : (@navigation.Location, @navigation.Location)? = if message
+  let promotion : (@routes.Location, @routes.Location)? = if message
     is (ModelPicked(_, ..)
     | ComposerAction(@composer.ModelSelected(..))
     | CodexComposerAction(@composer.ModelSelected(..))) &&
@@ -98,8 +98,11 @@ fn observe_navigation(
     previous.cloud.user_id is Some(account) {
     Some(
       (
-        { device: None, target: CloudDraft(account~, id=creation.id), },
-        { device: None, target: CloudSession(account~, session~), },
+        {
+          device: None,
+          target: CloudDraft(account=Some(account), id=creation.id),
+        },
+        { device: None, target: CloudSession(account=Some(account), session~), },
       ),
     )
   } else if message is Codex(_, ..) &&
@@ -128,14 +131,16 @@ fn observe_navigation(
     .conversation_selection()
     .map(selection => (selection.channel, selection.session)) ==
     Some((pending.source.channel, reply.session))
+  // A cleared selection on a Cloud URL is not a visit: it keeps that URL's
+  // unavailable state instead of falling back to the Cloud landing page.
   let cloud_opened = message is (CloudAction(_) | AccountLoaded(_, _)) &&
-    next.cloud_selected() &&
+    (next.cloud_identity() is Some(_) || next.cloud_draft_identity() is Some(_)) &&
     next.selected_conversation != previous.selected_conversation
   let explicit = message.is_navigation_visit() ||
     cloud_opened ||
     fork_opened ||
     (message is SessionRotated(_) && previous.navigation.new_chat_requested)
-  let durable : Array[(@navigation.Location, @navigation.Location)] = []
+  let durable : Array[(@routes.Location, @routes.Location)] = []
   if next.console.page_device is Some(device) {
     for conv in next.conversations {
       if conv.has_begun() &&
