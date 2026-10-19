@@ -267,10 +267,8 @@ fn Input::completion(
         })
       } else {
         [
-          for skill in self.installed_skills if trigger.matches([
-            skill.name,
-            skill.description,
-          ]) => {
+          for skill in self.installed_skills if skill.enabled &&
+          trigger.matches([skill.name, skill.description]) => {
             CompletionItem::{
               label: "$\{skill.name}",
               detail: skill.description,
