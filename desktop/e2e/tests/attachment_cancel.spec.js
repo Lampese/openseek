@@ -25,14 +25,14 @@ async function openNative(page, pick, prepare) {
       openseek: new Proxy({}, { get: (_, method) => async params => {
         if (method === 'host.connect') {
           for (const callback of listeners.get('openseek.agent.connected') || []) {
-            callback({ payload: { stage: 'serving' } });
+            callback({ payload: { protocol: 1 } });
           }
         }
         return window.attachmentDesktopRequest({ method, params });
       } }),
     };
   });
-  await page.goto('/dist/browser/index.html');
+  await page.goto('/index.html');
   await page.getByRole('main').waitFor();
   await page.locator('#task').fill('Keep this draft');
   return app;

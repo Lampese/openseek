@@ -5,15 +5,16 @@ for (const deviceScaleFactor of [1, 2]) {
     test.use({ deviceScaleFactor });
 
     test('full terminal rows remain inside their clipping boundary', async ({ page }) => {
+      const assetBase = '/assets/';
       // Isolate the imperative widget while keeping the packaged application
       // CSS (including body typography) and the actual xterm renderer.
       await page.route('**/terminal-layout-fixture', route => route.fulfill({
         contentType: 'text/html',
         body: `<!doctype html>
-          <link rel="stylesheet" href="/dist/browser/app.css">
-          <link rel="stylesheet" href="/dist/browser/xterm.css">
+          <link rel="stylesheet" href="${assetBase}app.css">
+          <link rel="stylesheet" href="${assetBase}xterm.css">
           <div class="terminal-instance" style="display:block;width:428px;height:360px"></div>
-          <script src="/dist/browser/xterm.js"></script>`,
+          <script src="${assetBase}xterm.js"></script>`,
       }));
       await page.goto('/terminal-layout-fixture');
       await page.evaluate(async () => {

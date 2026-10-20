@@ -54,14 +54,16 @@ new subscription and resync. Paused subscriptions do not replay missed events.
 
 ## Transport
 
-All HTTP lives at the relay. Browser releases are versioned alongside Desktop
-releases. Public account, device, and share management APIs use `/v2`.
+All HTTP lives at the relay, which serves one current Browser bundle to every
+host. Public account, device, and share management APIs use `/v2`.
 The host control tunnel and the private local Dev console retain `/v1`:
 
 | Route | What |
 |---|---|
-| `GET /console/` | The server-selected Browser release |
-| `GET /console/releases/v<version>/index.html` | One published Browser bundle. Device consoles require `?device=<id>` to fix the page/tab to that device; optional `?workspace=<path>` selects where its first conversation lands. Cloud chats use the same console without requiring a device. Packaged Desktop links here with its installed version |
+| `GET /device/<device>/…`, `GET /cloud…` | Client page routes; each serves the current Browser document without redirecting the requested location. Packaged Desktop links a device to `/device/<device>/chat` |
+| `GET /assets/…` | The current Browser bundle's resources, at the same path as in the packaged Desktop host and local console |
+| `GET /console/` | Redirects to the current release's `/console/releases/v<version>/index.html`, preserving the query |
+| `GET /console/releases/v<version>/…` | One published release's own files, kept so links from older Desktop builds keep opening their release |
 | `GET /d/<device>/…` | Retired: `302` to `/console/?device=<device>` with the original query appended, so old deep links keep their device target |
 | `GET /healthz` | Relay liveness probe, `200 ok` |
 | `/v2/auth/account/*`, `/v2/auth/session`, `/v2/auth/login` | Account sign-in and browser session recovery (see Authentication) |
@@ -70,8 +72,15 @@ The host control tunnel and the private local Dev console retain `/v1`:
 Everything else — commands, queries, and host-pushed events — travels over
 `GET /v2/devices/<device>/ws`, upgraded from the same origin the bundle was
 served from and spliced through to the host. A browser page takes its one
-`<device>` from the required `?device=` query and verifies it against
-`GET /v2/devices`; other roster devices need their own page/tab. Frames are
+`<device>` from the page route (or the legacy `?device=` entry query) and verifies it against
+`GET /v2/devices`; other roster devices need their own page/tab. The host's
+first notification, `agent.connected`, carries its `protocol` revision. A page
+starts its automatic resync only once that revision matches its own; a host
+built for another revision (or one that predates the field) has its socket
+closed without retrying, and every page except Cloud shows it as unavailable.
+Requests are not gated at the transport, so a manual read made in the moment
+before `agent.connected` arrives can still reach such a host. There is no
+compatibility layer for older hosts. Frames are
 JSON text, shaped as **JSON-RPC 2.0**:
 
 ```jsonc
@@ -238,10 +247,10 @@ moment it exists; whatever a client missed while disconnected it recovers by
 re-reading state:
 
 1. Connect the WebSocket. The host sends `agent.connected` as the connection's
-   first notification — `{stage}`, where `stage` is `"accepted"` (the
-   transport took this client; the engine pump may still be between
-   generations) or `"serving"` (the pump entered a serving generation and
-   accepts runs). Both mean the same thing to a client: re-read your state.
+   first notification — `{protocol}`, its `HostProtocolRevision` — and again
+   when its engine pump enters a serving generation. Each means the same thing
+   to a client whose revision matches: re-read your state. Any other field is
+   ignored, so every host's `agent.connected` decodes.
    Every conversation belongs to a registered workspace, so a broadcast store
    root names its own project (`<project>/.openseek`) and needs no anchor
    value here. The host then starts forwarding the remote delivery stream.
@@ -500,6 +509,7 @@ still signs out a session whose issuer no longer matches the origin.
 
 | method | params | result |
 |---|---|---|
+| `app.info` | `{}` | `{version, console_url?}` — the installed package version and a development build's loopback console URL |
 | `settings.get` | `{}` | the status shape below |
 | `settings.set` | `{provider?, custom_api_url?, deepseek_api_key?, glm_api_key?, custom_api_key?}` — absent fields stay unchanged; a present string field is trimmed and, when empty, **clears** the stored value; an unknown `provider` is refused. | the status shape below, post-write |
 | `mcp.status` | `{session}` | what that conversation's engine holds of its MCP servers: `{engine:"stopped"}` when it has no engine running, `{engine:"connecting"}` when its engine is running and has not reported yet, else `{engine:"running", status}`. `status` is the engine's latest `mcp_status` event on the serve protocol, kept by the host and returned unchanged: `{configs, servers}`, each config `{path, state:"loaded"}` or `{path, state:"failed", error}` in the order the engine was given them, each server `{name, transport:"stdio"\|"http", target, state, …}` with `state:"connected"` or `"lost"` plus `tools:[{name, description}]`, `"no_tools"`, `"failed"` plus `error`, or `"skipped"`; no configuration at all is `{configs:[], servers:[]}`. The request reads what the host kept: it starts nothing and does not ask the engine. An engine reports when it has connected its servers and again on every change — a connected server exiting. Each report also reaches connected clients as an `agent.event` carrying `mcp_status`, which is transient like every notification — a client that shows this state re-reads `mcp.status` when one arrives, and on reconnect. An engine that exits sends nothing more, so a client re-reading later gets `stopped` |
@@ -826,7 +836,7 @@ The status shape, also the params of every `auth.changed` notification:
   "connected": false,            // control WS currently registered
   "managed_by_env": true,        // present only under the OPENSEEK_RELAY_URL override
   "user":   {"login": "…", "avatar_url": "…"},   // absent when signed out
-  "device": {"id": "d_…", "name": "…", "url": "…/console/releases/v0.1.16/index.html?device=d_…"}  // absent when ordinary remote access is disabled
+  "device": {"id": "d_…", "name": "…", "url": "…/device/d_…/chat"}  // absent when ordinary remote access is disabled
 }
 ```
 

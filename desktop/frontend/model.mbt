@@ -1153,6 +1153,9 @@ priv enum BridgeState {
   Connecting
   Connected
   BridgeLost(String)
+  // A browser reached a host built for another `HostProtocolRevision`. Its
+  // socket is closed and not retried; reloading the page connects again.
+  HostIncompatible
 } derive(Eq)
 
 ///|
@@ -2288,6 +2291,8 @@ priv enum DeviceMsg {
   ApprovalsChanged(ApprovalMirror)
   BridgeReady
   BridgeUnavailable(String)
+  // `agent.connected` named another `HostProtocolRevision`, or none.
+  HostMismatched
   // The channel's WebSocket closed (or failed to open). The handler counts
   // the loss and schedules `ReconnectDue`, making the model's device list
   // the single authority over which reconnect loops keep running. The epoch
@@ -3272,6 +3277,8 @@ fn Model::display_status(self : Model) -> Status {
   match self.bridge_state() {
     Connecting => WaitingBridge
     BridgeLost(message) => Unavailable(message)
+    HostIncompatible =>
+      Unavailable(shell_text(self.locale, HostIncompatibleNotice))
     // Onboarding has no conversation and therefore no run of its own; the
     // settings-derived readiness is the whole of what can be reported.
     Connected =>

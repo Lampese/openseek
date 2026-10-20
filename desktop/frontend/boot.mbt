@@ -461,7 +461,9 @@ fn SidebarDispatcher::actions(self : SidebarDispatcher) -> @sidebar.Actions {
 ///|
 #warnings("-alert_unstable")
 fn main {
-  preserve_navigation_asset_base()
+  // Every host serves the frontend's resources under /assets/, independent of
+  // the page route (index.html names the same root-absolute directory).
+  @editor_viewer.set_mermaid_module_url("/assets/mermaid/mermaid.esm.min.mjs")
   // Proton installs the bridge synchronously when the page's JS context is
   // created, so this is a one-time read of the page's environment, not a
   // wait for something that may still arrive.

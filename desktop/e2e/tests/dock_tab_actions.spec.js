@@ -201,14 +201,14 @@ test('tab menu hides and restores the native browser view through the host bridg
       openseek: new Proxy({}, { get: (_, method) => async params => {
         if (method === 'host.connect') {
           for (const callback of listeners.get('openseek.agent.connected') || []) {
-            callback({ payload: { stage: 'serving' } });
+            callback({ payload: { protocol: 1 } });
           }
         }
         return window.dockDesktopRequest({ method, params });
       } }),
     };
   });
-  await page.goto('/dist/browser/index.html');
+  await page.goto('/index.html');
   await app.openSession();
   await app.openReview();
   await page.locator('.tab-add').click();

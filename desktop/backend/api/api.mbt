@@ -304,7 +304,7 @@ pub fn ApiState::ApiState(
     hub: Hub(),
     auth: match auth {
       Some(store) => store
-      None => @auth.AuthStore::empty(app_version~)
+      None => @auth.AuthStore::empty()
     },
     app_version,
     console_url,

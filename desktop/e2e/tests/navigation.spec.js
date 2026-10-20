@@ -22,7 +22,7 @@ test('browser and application arrows share history, preserve drafts and branch a
   const app = new DesktopBrowserHarness(page);
   await app.install(); await app.goto(); await app.openSession();
   await expect(page).toHaveURL(new RegExp(path('chat/session/session-1') + '$'));
-  expect(await page.evaluate(() => new URL('frontend.js', document.baseURI).pathname)).toBe('/dist/browser/frontend.js');
+  expect(await page.evaluate(() => new URL(document.querySelector('script[src$="frontend.js"]').src).pathname)).toBe('/assets/frontend.js');
   const composer = page.getByRole('textbox', { name: 'Ask SeekMoon to inspect, edit, or explain this workspace.' });
   await composer.fill('Unsent input survives navigation');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -77,7 +77,7 @@ for (const [target, title] of [
           jsonrpc: '2.0', id: request.id, result: await app.replyFor(request),
         }));
       });
-      socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'agent.connected', params: { stage: 'serving' } }));
+      socket.send(JSON.stringify({ jsonrpc: '2.0', method: 'agent.connected', params: { protocol: 1 } }));
     });
     const destination = `/device/host/${target}`;
     await page.goto(destination);

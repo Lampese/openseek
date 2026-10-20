@@ -8,6 +8,8 @@ import {
 }
 
 // Values
+pub const HostProtocolRevision : Int32 = 1
+
 pub fn approval(String, allow~ : Bool) -> @openseek_protocol.Command
 
 pub fn cancel() -> @openseek_protocol.Command
@@ -930,7 +932,7 @@ pub impl ToJson for CompactReply
 pub impl @json.FromJson for CompactReply
 
 pub(all) struct ConnectedPayload {
-  stage : ConnectedStage
+  protocol : Int32?
 } derive(Eq, @debug.Debug)
 pub fn ConnectedPayload::equal(Self, Self) -> Bool
 pub fn ConnectedPayload::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
@@ -939,18 +941,6 @@ pub fn ConnectedPayload::to_json(Self) -> Json
 pub fn ConnectedPayload::to_repr(Self) -> @debug.Repr
 pub impl ToJson for ConnectedPayload
 pub impl @json.FromJson for ConnectedPayload
-
-pub(all) enum ConnectedStage {
-  Accepted
-  Serving
-} derive(Eq, @debug.Debug)
-pub fn ConnectedStage::equal(Self, Self) -> Bool
-pub fn ConnectedStage::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
-pub fn ConnectedStage::not_equal(Self, Self) -> Bool
-pub fn ConnectedStage::to_json(Self) -> Json
-pub fn ConnectedStage::to_repr(Self) -> @debug.Repr
-pub impl ToJson for ConnectedStage
-pub impl @json.FromJson for ConnectedStage
 
 pub(all) struct CreateDirectoryPayload {
   parent : String

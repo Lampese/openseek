@@ -7404,6 +7404,13 @@ fn update_device_msg(
     }
     BridgeUnavailable(message) =>
       (@cmd.none, model.replace_device({ ..dev, bridge: BridgeLost(message), }))
+    // The desktop window and its host ship as one build and are never gated.
+    HostMismatched =>
+      if model.is_desktop {
+        update_device_msg(dispatch, channel, BridgeReady, model)
+      } else {
+        (@cmd.none, model.replace_device({ ..dev, bridge: HostIncompatible, }))
+      }
     ChannelDown(websocket_epoch~) => {
       // A close callback may already be queued when sign-out retires a
       // device. If the same relay id is later re-added, it owns a new epoch

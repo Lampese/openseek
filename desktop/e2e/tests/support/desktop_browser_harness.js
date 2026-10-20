@@ -8,6 +8,9 @@ export class DesktopBrowserHarness {
   constructor(page) {
     this.page = page;
     this.ticketStatus = 200;
+    // `HostProtocolRevision` in desktop/protocol; another value is an
+    // incompatible host build.
+    this.hostProtocol = 1;
     this.pauseTicket = null;
     this.ticketRequests = [];
     this.issuedTickets = new Map();
@@ -523,15 +526,14 @@ export class DesktopBrowserHarness {
 
   async install() {
     this.page.on('pageerror', error => this.pageErrors.push(error.message));
-    // Match openseek-api's stable page entry and versioned asset base: it
-    // serves the document on `/device/:device/*page`, `/cloud` and `/cloud/*page`.
+    // Match openseek-api: every page route (`/device/:device/*page`, `/cloud`
+    // and `/cloud/*page`) serves the one current document.
     await this.page.route(url => url.pathname.startsWith('/device/') || url.pathname === '/cloud' ||
       url.pathname.startsWith('/cloud/'), async route => {
       if (!route.request().isNavigationRequest()) return route.continue();
-      const url = new URL('/dist/browser/index.html', route.request().url());
+      const url = new URL('/index.html', route.request().url());
       const response = await route.fetch({ url: url.href });
-      const html = (await response.text()).replace('<head>', '<head><base href="/dist/browser/">');
-      await route.fulfill({ response, body: html, contentType: 'text/html' });
+      await route.fulfill({ response });
     });
 
 
@@ -605,7 +607,8 @@ export class DesktopBrowserHarness {
       socket.send(JSON.stringify({
         jsonrpc: '2.0',
         method: 'agent.connected',
-        params: { stage: 'serving' },
+        // The handshake: this host's `HostProtocolRevision`.
+        params: this.connectedParams ?? { protocol: this.hostProtocol },
       }));
     });
   }
@@ -650,6 +653,8 @@ export class DesktopBrowserHarness {
       }
       case 'mcp.status':
         return this.mcpStatus;
+      case 'app.info':
+        return { version: '0.0.0-fixture' };
       case 'settings.get':
         return this.hostSettings;
       case 'settings.set': {
@@ -1049,7 +1054,7 @@ export class DesktopBrowserHarness {
   }
 
   async goto() {
-    await this.page.goto('/dist/browser/index.html?device=device-a');
+    await this.page.goto('/index.html?device=device-a');
     await this.page.getByRole('main').waitFor();
   }
 

@@ -37,6 +37,16 @@ seekmoon/
   web/
 ```
 
+The shared frontend document lives at `web/index.html`; its resources live at
+`web/assets/`. Browser archives use the identical layout, and every host
+serves the document at its page routes with the resources at `/assets/`.
+`index.html` and the lazy PDF, Mermaid and export loads name those resources
+with root-absolute `/assets/` paths, so no host rewrites the document or
+depends on a `<base>`. The relay serves one current Browser bundle; a host
+built for another `HostProtocolRevision` is shown as unavailable instead of
+being driven. The separate visualization app remains under `web/viz/` for the
+host's own session sharing.
+
 Add the executable and its licenses in `Build.stage`. Preserve platform
 suffixes and executable permissions. If a macOS binary requires signing, also
 add its `seekmoon/...` path to `package.sign.binaries` in
