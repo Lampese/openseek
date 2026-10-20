@@ -63,6 +63,8 @@ priv enum UiMessage {
   WaitingPlacement
   MissingCheckout
   NoConversation
+  PreviewAnyway
+  LoadingFile
   ExplorerViews
   WorkspaceFiles
   FilesLabel
@@ -204,6 +206,16 @@ priv enum UiMessage {
 ///|
 fn ui(locale : @i18n.Locale, message : UiMessage) -> String {
   match (locale, message) {
+    (English, LoadingFile) => "Loading file…"
+    (SimplifiedChinese, LoadingFile) => "正在加载文件…"
+    (TraditionalChinese, LoadingFile) => "正在載入檔案…"
+    (Japanese, LoadingFile) => "ファイルを読み込み中…"
+    (Spanish, LoadingFile) => "Cargando archivo…"
+    (English, PreviewAnyway) => "Preview anyway"
+    (SimplifiedChinese, PreviewAnyway) => "仍要预览"
+    (TraditionalChinese, PreviewAnyway) => "仍要預覽"
+    (Japanese, PreviewAnyway) => "それでもプレビュー"
+    (Spanish, PreviewAnyway) => "Previsualizar de todos modos"
     (English, ExcelCopyTable) => "Copy table"
     (SimplifiedChinese, ExcelCopyTable) => "复制表格"
     (TraditionalChinese, ExcelCopyTable) => "複製表格"
