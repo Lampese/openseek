@@ -1739,8 +1739,43 @@ fn Model::overview_environment(
 }
 
 ///|
+/// What `conv` runs in the background, for the overview's card; `None` while
+/// nothing runs. The jobs listing counts only while it is `conv`'s own.
+fn Model::overview_background(
+  self : Model,
+  dispatch : @cmd.Emit[Msg],
+  conv : Conversation,
+) -> @conversation_overview.Background? {
+  let own_jobs = self.jobs.owner is Some(owner) &&
+    owner.channel == conv.device &&
+    owner.scope.session == conv.session_id
+  let tasks = @conversation_overview.BackgroundTasks::from_listing(
+    jobs=if own_jobs { self.jobs.jobs } else { [] },
+    more_jobs=own_jobs && self.jobs.next_offset is Some(_),
+    workflows=conv.workflows,
+  )
+  // Each panel's link hides the side panel when it is the one on screen, as
+  // the titlebar's panel toggles do.
+  let active = if self.file_panel_visible() {
+    self.dock_state().active
+  } else {
+    None
+  }
+  fn link(shown : Bool, request : Msg) -> @conversation_overview.PanelLink {
+    { shown, toggle: dispatch(if shown { ToggleRightPanel } else { request }), }
+  }
+  tasks.map(tasks => {
+    tasks,
+    now_ms: @interop.now_ms(),
+    jobs: link(active is Some(Jobs), JobsRequested),
+    workflows: link(active is Some(Workflows), WorkflowsRequested),
+  })
+}
+
+///|
 /// The overview beside `conv`: where it runs, which pull requests and branches
-/// it works on, and what its engine is connected to.
+/// it works on, what its engine is connected to, and what it runs in the
+/// background.
 fn overview_view(
   dispatch : @cmd.Emit[Msg],
   model : Model,
@@ -1779,6 +1814,7 @@ fn overview_view(
         Some(dispatch(Mcp(Refresh(key))))
       },
     },
+    background?=model.overview_background(dispatch, conv),
     dispatch.map(msg => Overview(msg)),
   )
 }
