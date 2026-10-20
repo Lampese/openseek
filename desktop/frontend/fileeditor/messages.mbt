@@ -9,6 +9,7 @@ priv enum UiMessage {
   ExcelCopied
   ExcelCopyFailed
   ExcelCopyTooLarge
+  OfficeCitationUnavailable
   UnresolvedGithubConversations
   AddToContext
   OfficeControls
@@ -534,6 +535,16 @@ fn ui(locale : @i18n.Locale, message : UiMessage) -> String {
       "PDF のプレビューをキャンセルしました。ファイルを開き直すと再試行できます。"
     (Spanish, PdfPreviewCancelled) =>
       "Vista del PDF cancelada. Vuelve a abrir el archivo para intentarlo de nuevo."
+    (English, OfficeCitationUnavailable) =>
+      "The cited location is unavailable or ambiguous in this preview. The file is open; check its page, heading, or cell range."
+    (SimplifiedChinese, OfficeCitationUnavailable) =>
+      "当前预览无法定位此引用，或位置不唯一。文件已打开，请核对页码、标题或单元格范围。"
+    (TraditionalChinese, OfficeCitationUnavailable) =>
+      "目前預覽無法定位此引用，或位置不唯一。檔案已開啟，請核對頁碼、標題或儲存格範圍。"
+    (Japanese, OfficeCitationUnavailable) =>
+      "このプレビューでは引用位置を特定できません。開いたファイルのページ、見出し、セル範囲を確認してください。"
+    (Spanish, OfficeCitationUnavailable) =>
+      "La ubicación citada no está disponible o es ambigua en esta vista previa. Comprueba la página, el título o el rango en el archivo abierto."
     (English, OfficeSelectionFailed) =>
       "Could not add this selection. Select the content again."
     (SimplifiedChinese, OfficeSelectionFailed) =>

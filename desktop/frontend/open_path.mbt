@@ -8,6 +8,7 @@ priv struct FileOpenContext {
   range : @common.Range?
   annotation : String?
   return_to : @interop.ConversationKey?
+  office_target : @office_location.Target?
 }
 
 ///|
@@ -17,8 +18,9 @@ fn FileOpenContext::new(
   range? : @common.Range,
   annotation? : String,
   return_to? : @interop.ConversationKey,
+  office_target? : @office_location.Target,
 ) -> FileOpenContext {
-  { owner, generation, range, annotation, return_to, }
+  { owner, generation, range, annotation, return_to, office_target, }
 }
 
 ///|
@@ -50,15 +52,23 @@ fn request_open_path(
     }
   }
   let model = model.begin_editor_navigation()
+  let office = @office_location.parse(path)
   let context = FileOpenContext::new(
     active.owner,
     model.file_panel.file_link_generation,
     range?,
     annotation?,
     return_to?,
+    office_target?=office.map(reference => reference.target),
   )
   (
-    open_file(dispatch, context, cwd, path, preview_browser=model.is_desktop),
+    open_file(
+      dispatch,
+      context,
+      cwd,
+      office.map(reference => reference.path).unwrap_or(path),
+      preview_browser=model.is_desktop,
+    ),
     model,
   )
 }
@@ -113,6 +123,7 @@ fn finish_open_path(
         range,
         file_link_generation=context.generation,
         annotation?=context.annotation,
+        office_target?=context.office_target,
       )
     }
     Browser(path) => show_browser_path(dispatch, selected, path)
@@ -139,6 +150,7 @@ fn show_editor_at(
   range : @common.Range?,
   file_link_generation~ : Int32,
   annotation? : String,
+  office_target? : @office_location.Target,
 ) -> (@cmd.Cmd, Model) {
   let ctx = file_ctx(model)
   // Chip/transcript jumps call the file-editor package directly rather than
@@ -165,6 +177,7 @@ fn show_editor_at(
     range,
     file_link_generation~,
     annotation?,
+    office_target?,
   )
 }
 
@@ -176,6 +189,7 @@ fn show_editor_resource(
   range : @common.Range?,
   file_link_generation~ : Int32,
   annotation? : String,
+  office_target? : @office_location.Target,
 ) -> (@cmd.Cmd, Model) {
   let ctx = file_ctx(model)
   let owner = ctx.owner
@@ -217,6 +231,7 @@ fn show_editor_resource(
     file_link_generation~,
     range~,
     annotation?,
+    office_target?,
     had_active~,
   )
   (cmd, { ..model, file_panel: panel, })
