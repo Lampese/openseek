@@ -70,6 +70,8 @@ pub fn icon_folder() -> @html.Html
 
 pub fn icon_folder_opened() -> @html.Html
 
+pub fn icon_git_branch() -> @html.Html
+
 pub fn icon_github() -> @html.Html
 
 pub fn icon_globe() -> @html.Html
@@ -101,6 +103,8 @@ pub fn icon_package() -> @html.Html
 pub fn icon_pin() -> @html.Html
 
 pub fn icon_play() -> @html.Html
+
+pub fn icon_preview() -> @html.Html
 
 pub fn icon_pull_request() -> @html.Html
 
