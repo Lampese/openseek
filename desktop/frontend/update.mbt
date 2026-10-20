@@ -5235,6 +5235,12 @@ fn update_msg(
                   delete_confirm: None,
                   // The delete can still come back to be confirmed again.
                   delete_pending: Some((confirm.channel, confirm.key)),
+                  deletes_in_flight: model.confirm_delete(
+                    confirm.channel,
+                    confirm.key,
+                    LiveRecord,
+                    dev.sessions,
+                  ),
                 },
               )
             ArchivedChat(sessions~) => sessions
@@ -5252,6 +5258,14 @@ fn update_msg(
             {
               ..model.replace_device({ ..dev, archived_request_generation, }),
               delete_confirm: None,
+              // The host can announce the deletion before this reply, which
+              // the announcement then makes stale.
+              deletes_in_flight: model.confirm_delete(
+                confirm.channel,
+                confirm.key,
+                ArchivedRecord,
+                dev.archived,
+              ),
             },
           )
         }
@@ -8290,6 +8304,13 @@ fn update_device_msg(
         @cmd.none,
         { ..model, archive_confirm: Some({ channel, session, refusal, }), },
       )
+    DeleteStopped(key~, checkout~) =>
+      update_device_msg(
+        dispatch,
+        channel,
+        DeleteChecked(key~, checkout=Some(checkout)),
+        model.settle_delete(channel, key),
+      )
     DeleteChecked(key~, checkout~) => {
       // Only the question still outstanding opens a dialog, and only for a
       // chat still listed, titled from the record as it is listed now.
@@ -8486,7 +8507,11 @@ fn update_device_msg(
       )
       (@cmd.batch([refresh, archived, toast]), model)
     }
-    DeleteFailed(message) => {
+    DeleteFailed(message, deleting~) => {
+      let model = match deleting {
+        Some(key) => model.settle_delete(channel, key)
+        None => model
+      }
       // Either list may be what this page had wrong: the delete targets a
       // live row as well as an archived one.
       let (sessions, model) = request_sessions_refresh(dispatch, channel, model)
@@ -8568,7 +8593,18 @@ fn update_device_msg(
         let next = changed
           .replace_device({ ..dev, sessions, archived, })
           .with_archive_override(channel, key, ArchiveDeleted)
-        return (commands, { ..next, conversations, delete_confirm: confirm, })
+        return (
+          commands,
+          {
+            ..next,
+            conversations,
+            delete_confirm: confirm,
+            // Every delete of this chat is settled by its removal.
+            deletes_in_flight: next.deletes_in_flight.filter(entry => {
+              entry.channel != channel || entry.key != key
+            }),
+          },
+        )
       }
       if change == "unarchived" {
         let mut restored : @transcript.SessionListItem? = None

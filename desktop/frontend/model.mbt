@@ -1575,6 +1575,13 @@ priv struct Model {
   // answer overtaken by a later click must not put another chat's dialog
   // under the user's pointer.
   delete_pending : (@interop.ChannelId, ArchiveRecordKey)?
+  // Confirmed live and archived deletes still out with the host, one entry
+  // per request, keyed by the conversation the user chose. They outlive later
+  // clicks, so a deletion the host announces for that conversation or one of
+  // its sub-run descendants is known to be this page's own. The host
+  // announces every deleted record, so the chosen one's announcement settles
+  // its entry; a refusal or a stop settles it otherwise.
+  deletes_in_flight : Array[ConfirmedDelete]
   // Controlled sidebar editor for one live conversation title.
   conversation_rename : ConversationRename?
   conversation_fork : ConversationFork?
@@ -2510,6 +2517,9 @@ priv enum DeviceMsg {
   // delete that stopped because more would go than its request agreed to.
   // Either way it stages the confirmation that states exactly that.
   DeleteChecked(key~ : ArchiveRecordKey, checkout~ : @protocol.CheckoutRemoval?)
+  // A confirmed delete the host stopped because more would go than it agreed
+  // to. That request is over; the checkout it names stages the next dialog.
+  DeleteStopped(key~ : ArchiveRecordKey, checkout~ : @protocol.CheckoutRemoval)
   // The archived conversations — the reply to `archived_sessions` and to a
   // successful `archive_session`/`unarchive_session` alike.
   ArchivedLoaded(
@@ -2535,7 +2545,9 @@ priv enum DeviceMsg {
     fresh_session~ : String
   )
   ArchiveFailed(String)
-  DeleteFailed(String)
+  // A refused delete. `deleting` names the confirmed delete it ends; a
+  // refused check ends none.
+  DeleteFailed(String, deleting~ : ArchiveRecordKey?)
   // A rebuild of a missing worktree failed. The canonical rows still arrive
   // as `worktree.changed`, so this only reports the refusal.
   WorktreeFailed(String)
@@ -2882,6 +2894,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     archive_confirm: None,
     delete_confirm: None,
     delete_pending: None,
+    deletes_in_flight: [],
     conversation_rename: None,
     conversation_fork: None,
     fork_focus: None,

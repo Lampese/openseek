@@ -331,6 +331,7 @@ test "navigation write policy distinguishes foreground visits and background ide
     session_rotated: false,
     explicit: false,
     repeat_visit: false,
+    retired: [],
     promotion: None,
     durable: [],
   }
@@ -355,6 +356,7 @@ test "blank draft addressing does not turn an explicit visit into replacement" {
     session_rotated: false,
     explicit: false,
     repeat_visit: false,
+    retired: [],
     promotion: None,
     durable: [],
   }
@@ -368,4 +370,280 @@ test "blank draft addressing does not turn an explicit visit into replacement" {
   assert_false(
     { ..observed, session_rotated: true, }.addresses_blank(navigation),
   )
+}
+
+///|
+fn deletion_key(session : String) -> ArchiveRecordKey {
+  { session, workspace: @interop.ChannelId::Local.test_project(), }
+}
+
+///|
+/// A page showing `shown` from `record`'s store, with `sessions` live and
+/// `archived` rows listed in the fixture project.
+fn deletion_model(
+  shown : String,
+  record~ : ConversationRecord = LiveRecord,
+  sessions~ : Array[String] = [],
+  archived~ : Array[String] = [],
+  desktop~ : Bool = false,
+) -> Model raise {
+  let location : @routes.Location = {
+    device: Some("local"),
+    target: Session(shown),
+  }
+  {
+    ..test_model()
+    .replace_conversation({
+      ..empty_conversation(
+        @interop.ChannelId::Local,
+        shown,
+        @interop.ChannelId::Local.test_project(),
+      ),
+      record,
+    })
+    .with_dev(dev => {
+      ..dev,
+      sessions: sessions.map(placed_archived_item),
+      archived: archived.map(placed_archived_item),
+    }),
+    is_desktop: desktop,
+    active_session: shown,
+    navigation: {
+      ..AppNavigation::empty(),
+      location: Some(location),
+      phase: Active,
+      history: @navigation.History::empty().visit(location, replace=true),
+    },
+  }
+}
+
+///|
+/// Click Delete on `key`'s row and confirm the dialog. A live row first gets
+/// the host's answer about what goes with it.
+fn confirm_host_delete(
+  model : Model,
+  key : ArchiveRecordKey,
+  record~ : ConversationRecord = LiveRecord,
+) -> Model {
+  let dispatch = test_dispatch()
+  let (_, asked) = update(
+    dispatch,
+    DeleteSession(@interop.ChannelId::Local, key, record),
+    model,
+  )
+  let staged = if record is LiveRecord {
+    update_dev(dispatch, DeleteChecked(key~, checkout=None), asked).1
+  } else {
+    asked
+  }
+  update(dispatch, ConfirmDeleteSession, staged).1
+}
+
+///|
+/// The host's `session.changed` deletion of `key`.
+fn announce_deletion(model : Model, key : ArchiveRecordKey) -> Model {
+  update_dev(
+    test_dispatch(),
+    SessionsChanged(change="deleted", key~, fresh_session=Some("fresh")),
+    model,
+  ).1
+}
+
+///|
+fn shows_new_draft(model : Model) -> Bool {
+  model.navigation.location is Some({ target: ChatNew, .. }) &&
+  model.navigation.phase is Active &&
+  model.navigation.history.current() == model.navigation.location
+}
+
+///|
+test "deleting the shown conversation from this page returns to a draft" {
+  let dispatch = test_dispatch()
+  let key = deletion_key("desktop-test")
+  // The browser page and the desktop window share this navigation.
+  for desktop in [false, true] {
+    let live = deletion_model("desktop-test", sessions=[key.session], desktop~)
+    let own = announce_deletion(confirm_host_delete(live, key), key)
+    assert_true(shows_new_draft(own))
+    assert_eq(own.active_session, "fresh")
+    assert_true(own.active_conversation() is Some(conv) && conv.draft_empty())
+  }
+  // An archived delete is announced while the host commits it, usually
+  // before its reply, which the announcement then makes stale.
+  let archived = confirm_host_delete(
+    deletion_model("desktop-test", record=ArchivedRecord, archived=[key.session]),
+    key,
+    record=ArchivedRecord,
+  )
+  let dev = archived.dev()
+  let reply_at = request_generation => {
+    ArchivedDeleted(
+      key~,
+      sessions=[key.session],
+      items=[],
+      connection_generation=dev.connection_generation,
+      request_generation~,
+      fresh_session="fresh",
+    )
+  }
+  let reply = reply_at(dev.archived_request_generation)
+  let announced = announce_deletion(archived, key)
+  assert_true(shows_new_draft(announced))
+  let (_, late) = update_dev(dispatch, reply, announced)
+  assert_true(late.navigation == announced.navigation)
+  // The reply can also arrive first.
+  let (_, replied) = update_dev(dispatch, reply, archived)
+  assert_true(shows_new_draft(replied))
+  // A stale reply the update discards moves nothing.
+  let stale = reply_at(dev.archived_request_generation - 1)
+  assert_true(
+    observe_navigation(on_home(stale), archived, archived).retired.is_empty(),
+  )
+}
+
+///|
+test "a deletion this page did not confirm keeps the unavailable target" {
+  let dispatch = test_dispatch()
+  let key = deletion_key("desktop-test")
+  let base = deletion_model("desktop-test", sessions=[key.session])
+  let kept = (model : Model) => {
+    model.navigation.location == base.navigation.location
+  }
+  // Another client deletes it with no delete from this page, while this
+  // page only asks what a delete would remove, or after this page's own
+  // delete was refused.
+  assert_true(kept(announce_deletion(base, key)))
+  let (_, asked) = update(
+    dispatch,
+    DeleteSession(@interop.ChannelId::Local, key, LiveRecord),
+    base,
+  )
+  assert_true(kept(announce_deletion(asked, key)))
+  let (_, refused) = update_dev(
+    dispatch,
+    DeleteFailed("busy", deleting=Some(key)),
+    confirm_host_delete(base, key),
+  )
+  assert_true(refused.deletes_in_flight.is_empty())
+  assert_true(kept(announce_deletion(refused, key)))
+  // The host deletes a family from one store only: a child archived apart
+  // from its live parent is not part of the parent's delete.
+  let parent = deletion_key("desktop-parent")
+  let child = deletion_key("desktop-parent-sr-1")
+  let apart = confirm_host_delete(
+    deletion_model(
+      child.session,
+      record=ArchivedRecord,
+      sessions=[parent.session],
+      archived=[child.session],
+    ),
+    parent,
+  )
+  let elsewhere = announce_deletion(apart, child)
+  assert_true(elsewhere.navigation.location == apart.navigation.location)
+}
+
+///|
+test "each confirmed delete settles only itself" {
+  let dispatch = test_dispatch()
+  let key = deletion_key("desktop-test")
+  let other = deletion_key("desktop-other")
+  let base = deletion_model("desktop-test", sessions=[
+    key.session,
+    other.session,
+  ])
+  // A later click on another chat does not take over the confirmed delete.
+  let (_, asked_other) = update(
+    dispatch,
+    DeleteSession(@interop.ChannelId::Local, other, LiveRecord),
+    confirm_host_delete(base, key),
+  )
+  assert_true(shows_new_draft(announce_deletion(asked_other, key)))
+  // Deleting the same chat twice: the first one's refusal ends only itself.
+  let twice = confirm_host_delete(confirm_host_delete(base, key), key)
+  assert_eq(twice.deletes_in_flight.length(), 2)
+  let (_, refused) = update_dev(
+    dispatch,
+    DeleteFailed("busy", deleting=Some(key)),
+    twice,
+  )
+  let own = announce_deletion(refused, key)
+  assert_true(shows_new_draft(own))
+  assert_true(own.deletes_in_flight.is_empty())
+  // A delete the host stops ends that request and asks again.
+  let (_, stopped) = update_dev(
+    dispatch,
+    DeleteStopped(key~, checkout={
+      worktree: "wt-1",
+      dirty_paths: [],
+      dirty_path_count: 0,
+    }),
+    confirm_host_delete(base, key),
+  )
+  assert_true(stopped.deletes_in_flight.is_empty())
+  assert_true(
+    stopped.delete_confirm is Some(HostDelete({ key: k, .. })) && k == key,
+  )
+  // A refused check ends no delete and leaves the latest click's question
+  // out, so its dialog still opens.
+  let mut asked = base
+  for clicked in [key, other, key] {
+    asked = update(
+        dispatch,
+        DeleteSession(@interop.ChannelId::Local, clicked, LiveRecord),
+        asked,
+      ).1
+  }
+  let (_, late) = update_dev(
+    dispatch,
+    DeleteFailed("busy", deleting=None),
+    asked,
+  )
+  let (_, staged) = update_dev(
+    dispatch,
+    DeleteChecked(key~, checkout=None),
+    late,
+  )
+  assert_true(
+    staged.delete_confirm is Some(HostDelete({ key: k, .. })) && k == key,
+  )
+}
+
+///|
+test "deleting a family from this page retires its shown descendant" {
+  let dispatch = test_dispatch()
+  let parent = deletion_key("desktop-parent")
+  let child = deletion_key("desktop-parent-sr-1")
+  // The child was opened from a transcript link before the catalog listed
+  // it; the host still deletes it with its parent.
+  let confirmed = confirm_host_delete(
+    deletion_model(child.session, sessions=[parent.session]),
+    parent,
+  )
+  // A catalog read can land after the host removed the records but before
+  // it announces them, one descendant at a time before the parent.
+  let dev = confirmed.dev()
+  let (_, refreshed) = update_dev(
+    dispatch,
+    SessionsLoaded(
+      [],
+      connection_generation=dev.connection_generation,
+      request_generation=dev.sessions_request_generation,
+    ),
+    confirmed,
+  )
+  let child_gone = announce_deletion(refreshed, child)
+  assert_true(shows_new_draft(child_gone))
+  let parent_gone = announce_deletion(child_gone, parent)
+  assert_true(parent_gone.deletes_in_flight.is_empty())
+  assert_true(parent_gone.navigation == child_gone.navigation)
+  // Descent follows the `-sr-N` structure, not a textual prefix.
+  assert_true(
+    is_subrun_descendant("desktop-parent-sr-1-sr-2", "desktop-parent"),
+  )
+  assert_false(
+    is_subrun_descendant("desktop-parent-sr-other", "desktop-parent"),
+  )
+  assert_false(is_subrun_descendant("desktop-parent-copy", "desktop-parent"))
+  assert_false(is_subrun_descendant("desktop-parent", "desktop-parent"))
 }
