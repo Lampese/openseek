@@ -73,6 +73,8 @@ test('Excel table copy retains merged coverage and a trailing empty row', async 
   await page.getByRole('button', { name: 'Copy table', exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()).then(text => text.replaceAll('\r\n', '\n')))
     .toBe('合并\t\tEND\n\t\t');
+  // Clipboard bytes can be visible before the asynchronous completion enables the button.
+  await expect(page.getByRole('button', { name: 'Copy table', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Copy table', exact: true }).press('Escape');
   await expect(page.locator('.excel-copy-controls')).toHaveCount(0);
   await expect(page.locator('.office-cell-selected')).toHaveCount(0);

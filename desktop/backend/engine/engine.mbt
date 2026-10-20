@@ -2613,6 +2613,10 @@ async test "a failed command leaves settlement to the EOF retirement" {
     slot.engine = Some(engine)
     manager.pump = Serving(sessions~)
     engine.wait_process()
+    // Inject the write failure explicitly: a reaped child alone does not
+    // prove that no other process holds its pipe's read end. A successful
+    // write would leave write_commands waiting on its open command queue.
+    writer.close()
     let ack : @async.Queue[EngineError?] = Queue(kind=Blocking(1))
     assert_true(
       engine.submit(
