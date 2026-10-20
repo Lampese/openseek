@@ -1,0 +1,15 @@
+import {
+  "moonbitlang/openseek/env" @executable,
+  "moonbitlang/x/path",
+  "openseek_desktop/backend/api",
+  "openseek_desktop/backend/mcp",
+  "openseek_desktop/backend/remote",
+  "openseek_desktop/backend/host",
+  "moonbitlang/async",
+  "moonbitlang/async/stdio",
+  "moonbitlang/core/env",
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")

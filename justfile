@@ -38,11 +38,16 @@ inspect *args:
     moon run inspect -- {{ args }}
 
 # Run workspace MoonBit tests plus the offline OpenSeek CLI documentation tests.
-test: test-moon test-cram test-turn-finish test-subagents test-workflows
+test: test-moon test-cram test-app-server test-turn-finish test-subagents test-workflows
 
 # Run the offline CLI documentation tests (Git Bash on Windows).
 test-cram:
     moon cram test tests/cram --shell '{{ CRAM_SHELL }}'
+
+# Verify direct service startup and sibling engine resolution after changing workspace.
+test-app-server:
+    moon build desktop/backend/server --target native
+    moon run tests/integration/app_server.mbtx _build/native/debug/build/openseek_desktop/backend/server/server.exe
 
 # Real CLI lifecycle regression with an offline scripted model.
 test-turn-finish:
