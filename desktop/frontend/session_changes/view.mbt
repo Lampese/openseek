@@ -141,7 +141,12 @@ pub fn rows(
     } else {
       Some(emit(Remove(conversation, artifact)))
     }
-    rows.push(attached_row(locale, artifact, remove))
+    let pull_request = if artifact.type_ is PullRequest {
+      state.summary(artifact.url)
+    } else {
+      None
+    }
+    rows.push(attached_row(locale, artifact, pull_request, remove))
   }
   if state.phase_for(conversation) is CheckFailed(error) {
     rows.push(failure(text(locale, CheckFailed), error))
@@ -158,22 +163,7 @@ fn checkout_row(locale : @i18n.Locale, checkout : Checkout) -> @html.Html {
   let current = @html.span(class="conv-overview-tag", text(locale, Current))
   match checkout.pull_request {
     Some(pull_request) => {
-      let (tone, image, state) = match pull_request.state {
-        Open => ("open", @icons.icon_git_pull_request, text(locale, StateOpen))
-        Draft =>
-          (
-            "draft",
-            @icons.icon_git_pull_request_draft,
-            text(locale, StateDraft),
-          )
-        Merged => ("merged", @icons.icon_git_merge, text(locale, StateMerged))
-        Closed =>
-          (
-            "closed",
-            @icons.icon_git_pull_request_closed,
-            text(locale, StateClosed),
-          )
-      }
+      let (tone, image, state) = pull_request.state.look(locale)
       item(
         tone~,
         image~,
@@ -227,13 +217,49 @@ fn checkout_row(locale : @i18n.Locale, checkout : Checkout) -> @html.Html {
 }
 
 ///|
+/// How a pull request in `self` state looks: its icon's tone, the icon, and
+/// the state's name.
+fn PullRequestState::look(
+  self : PullRequestState,
+  locale : @i18n.Locale,
+) -> (String, () -> @html.Html, String) {
+  match self {
+    Open => ("open", @icons.icon_git_pull_request, text(locale, StateOpen))
+    Draft =>
+      ("draft", @icons.icon_git_pull_request_draft, text(locale, StateDraft))
+    Merged => ("merged", @icons.icon_git_merge, text(locale, StateMerged))
+    Closed =>
+      ("closed", @icons.icon_git_pull_request_closed, text(locale, StateClosed))
+  }
+}
+
+///|
 /// An attached item. The host keeps only its kind and address, so a pull
-/// request reads as its repository and number, and a branch as its name.
+/// request reads as its repository and number, and a branch as its name. Once
+/// GitHub has summarized a pull request, `pull_request` puts its title and
+/// state in place of the repository, as the checkout row shows its own.
 fn attached_row(
   locale : @i18n.Locale,
   artifact : @protocol.SessionArtifact,
+  pull_request : PullRequest?,
   remove : @cmd.Cmd?,
 ) -> @html.Html {
+  if pull_request is Some(pull_request) {
+    let (tone, image, state) = pull_request.state.look(locale)
+    return item(
+      tone~,
+      image~,
+      href=Some(artifact.url),
+      title="#\{pull_request.number} \{pull_request.title}\n\{state}\n\{artifact.url}",
+      [
+        @html.span(class="conv-changes-number", "#\{pull_request.number}"),
+        @html.span(class="conv-changes-name", pull_request.title),
+      ],
+      aside=[],
+      remove=Some(remove),
+      locale~,
+    )
+  }
   let place = match artifact.url.strip_prefix("https://") {
     Some(rest) => rest.to_owned()
     None => artifact.url

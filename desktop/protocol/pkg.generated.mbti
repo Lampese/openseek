@@ -1619,6 +1619,28 @@ pub fn GithubPullRequestPayload::to_repr(Self) -> @debug.Repr
 pub impl ToJson for GithubPullRequestPayload
 pub impl @json.FromJson for GithubPullRequestPayload
 
+pub(all) struct GithubPullRequestSummaryPayload {
+  url : String
+} derive(Eq, @debug.Debug)
+pub fn GithubPullRequestSummaryPayload::equal(Self, Self) -> Bool
+pub fn GithubPullRequestSummaryPayload::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn GithubPullRequestSummaryPayload::not_equal(Self, Self) -> Bool
+pub fn GithubPullRequestSummaryPayload::to_json(Self) -> Json
+pub fn GithubPullRequestSummaryPayload::to_repr(Self) -> @debug.Repr
+pub impl ToJson for GithubPullRequestSummaryPayload
+pub impl @json.FromJson for GithubPullRequestSummaryPayload
+
+pub(all) struct GithubPullRequestSummaryReply {
+  pull_request : GitPullRequest?
+} derive(Eq, @debug.Debug)
+pub fn GithubPullRequestSummaryReply::equal(Self, Self) -> Bool
+pub fn GithubPullRequestSummaryReply::from_json(Json, @json.JsonPath) -> Self raise @json.JsonDecodeError
+pub fn GithubPullRequestSummaryReply::not_equal(Self, Self) -> Bool
+pub fn GithubPullRequestSummaryReply::to_json(Self) -> Json
+pub fn GithubPullRequestSummaryReply::to_repr(Self) -> @debug.Repr
+pub impl ToJson for GithubPullRequestSummaryReply
+pub impl @json.FromJson for GithubPullRequestSummaryReply
+
 pub(all) struct GithubReview {
   url : String
   head : String
