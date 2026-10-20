@@ -33,6 +33,58 @@ test "Cloud blank, expired and changed-account file contexts have no Host placem
 }
 
 ///|
+test "Explorer from Settings preserves Cloud files and the covered Host dock" {
+  let dispatch = test_dispatch()
+  let model = integrated_cloud_model()
+  let cloud_owner = model.dock_owner()
+  let host_owner = @interop.Host({
+    channel: model.focused,
+    session: model.active_session,
+  })
+  let host_dock = @dock.open_jobs(@dock.DockState::empty())
+  let mut model = model.with_dock_state_for(host_owner, host_dock)
+  let files = ["first.txt", "second.txt"].map(name => {
+    @resource.join_relative(file_ctx(model).root().unwrap(), Relative(name))
+  })
+  for path in files {
+    let (_, opened) = show_editor_resource(
+      dispatch,
+      model,
+      path,
+      None,
+      file_link_generation=model.file_panel.file_link_generation,
+    )
+    model = opened
+  }
+  let (_, settings) = update(dispatch, OpenSetup, model)
+  assert_true(settings.screen is Settings)
+  assert_true(settings.dock_owner() == host_owner)
+  let input_ctx = file_ctx(settings)
+  for _ in 0..<2 {
+    let (_, searched) = update(
+      dispatch,
+      ExplorerRequested(ExplorerSearch),
+      settings,
+    )
+    assert_true(
+      searched.dock_state_for(cloud_owner).tabs ==
+      [File(path=files[0]), File(path=files[1]), FilePicker],
+    )
+    assert_true(searched.dock_state_for(cloud_owner).active == Some(FilePicker))
+    assert_true(searched.dock_state_for(host_owner) == host_dock)
+    assert_true(
+      settings.dock_state_for(cloud_owner).tabs ==
+      [File(path=files[0]), File(path=files[1])],
+    )
+    assert_true(
+      settings.dock_state_for(cloud_owner).active == Some(File(path=files[1])),
+    )
+    assert_true(settings.dock_state_for(host_owner) == host_dock)
+    assert_true(file_ctx(settings) == input_ctx)
+  }
+}
+
+///|
 test "account changes retire Cloud file strips and fence old reads after same-account sign-in" {
   let model = integrated_cloud_model()
   let ctx = file_ctx(model)
@@ -83,8 +135,8 @@ test "account changes retire Cloud file strips and fence old reads after same-ac
   )
   assert_true(signed_out.file_panel.docs.is_empty())
   assert_true(signed_out.file_panel.cloud_documents.is_empty())
-  assert_true(signed_out.dock.tabs.is_empty())
-  assert_false(signed_out.dock.remembered.contains(ctx.owner))
+  assert_true(signed_out.dock_state().tabs.is_empty())
+  assert_false(signed_out.docks.contains(ctx.owner))
   for account in ["other-user", "fixture-user"] {
     let credentials = model.account.unwrap()
     let (_, signed_in) = update(
@@ -107,7 +159,7 @@ test "account changes retire Cloud file strips and fence old reads after same-ac
     )
     let (_, ignored) = update(test_dispatch(), old_reply, reopened)
     assert_false(ignored.file_panel.docs.contains(path))
-    assert_true(ignored.dock.tabs.is_empty())
+    assert_true(ignored.dock_state().tabs.is_empty())
   }
 }
 
@@ -121,7 +173,7 @@ test "deleting an inactive Cloud session clears its documents and dock bookmarks
   )
   let tab = @dock.File(path~)
   let model = {
-    ..model,
+    ..model.with_dock_state_for(owner, { tabs: [tab], active: Some(tab), }),
     cloud: {
       ..model.cloud,
       sessions: [
@@ -134,10 +186,6 @@ test "deleting an inactive Cloud session clears its documents and dock bookmarks
           archived: false,
         },
       ],
-    },
-    dock: {
-      ..model.dock,
-      remembered: Map([(owner, { tabs: [tab], active: Some(tab), })]),
     },
     file_panel: {
       ..model.file_panel,
@@ -176,7 +224,7 @@ test "deleting an inactive Cloud session clears its documents and dock bookmarks
     pending,
   )
   assert_false(deleted.file_panel.cloud_documents.contains(owner))
-  assert_false(deleted.dock.remembered.contains(owner))
+  assert_false(deleted.docks.contains(owner))
   assert_true(deleted.cloud_identity() == model.cloud_identity())
 }
 
@@ -187,7 +235,8 @@ test "a web link in a Cloud conversation reveals its tab in the Cloud dock" {
     right_panel_open: false,
     right_panel_menu_open: true,
   }
-  guard model.dock.owner is Some(@interop.Cloud(..) as cloud) else {
+  let cloud = model.dock_owner()
+  guard cloud is @interop.Cloud(..) else {
     fail("the Cloud conversation owns the dock on screen")
   }
   let (_, opened) = update(
@@ -197,17 +246,17 @@ test "a web link in a Cloud conversation reveals its tab in the Cloud dock" {
   )
   assert_true(opened.right_panel_open)
   assert_false(opened.right_panel_menu_open)
-  assert_true(opened.dock.owner == Some(cloud))
-  guard @dock.active_browser(opened.dock) is Some(id) else {
+  assert_true(opened.dock_owner() == cloud)
+  guard @dock.active_browser(opened.dock_state()) is Some(id) else {
     fail("the link opens a browser tab")
   }
-  assert_true(opened.dock.tabs.contains(Browser(id~)))
+  assert_true(opened.dock_state().tabs.contains(Browser(id~)))
   assert_true(
     @preview.page(opened.preview, id).unwrap().url ==
     Some("https://example.com/"),
   )
-  // A Host conversation's agent page opens in that conversation's parked
-  // strip and leaves the Cloud screen as it is.
+  // A Host conversation's agent page opens in that conversation's own
+  // dock and leaves the Cloud screen as it is.
   let (_, background) = update(
     test_dispatch(),
     BrowserOpenRequested(
@@ -219,7 +268,7 @@ test "a web link in a Cloud conversation reveals its tab in the Cloud dock" {
   )
   assert_false(background.right_panel_open)
   assert_true(background.right_panel_menu_open)
-  assert_true(background.dock.tabs == model.dock.tabs)
+  assert_true(background.dock_state() == model.dock_state())
   let away = @interop.Host({ channel: Local, session: "host-away", })
-  assert_true(background.dock.remembered.get(away) is Some({ tabs: [_], .. }))
+  assert_true(background.dock_state_for(away).tabs is [Browser(..)])
 }
