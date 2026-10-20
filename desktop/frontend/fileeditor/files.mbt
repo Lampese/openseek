@@ -39,21 +39,48 @@ fn read_directory(
 }
 
 ///|
-/// Load the bounded workspace snapshot used by file-completion consumers.
+/// Load the workspace snapshot used by file-completion consumers.
 /// The request carries this panel incarnation's owner and epoch so the update
 /// loop can reject a reply that outlived a conversation or worktree switch.
 fn list_files(
   dispatch : @cmd.Emit[Msg],
-  owner : @interop.ConversationKey,
+  owner : @interop.ConversationIdentity,
   epoch : Int32,
   root~ : @common.Uri?,
+  cloud? : CloudFiles,
 ) -> @cmd.Cmd {
-  @files.Request(owner.channel, owner.session, root).run(
-    (files, truncated) => {
-      dispatch(FilesIndexed(owner~, epoch~, files~, truncated~))
-    },
-    () => dispatch(FileIndexFailed(owner~, epoch~)),
-  )
+  match owner {
+    Host(host) =>
+      @files.Request(host.channel, host.session, root).run(
+        (files, truncated) => {
+          dispatch(FilesIndexed(owner~, epoch~, files~, truncated~))
+        },
+        () => dispatch(FileIndexFailed(owner~, epoch~)),
+      )
+    Cloud(account~, session~) => {
+      guard root is Some(root) &&
+        cloud is Some(cloud) &&
+        @resource.cloud_root(@cloud.CloudOrigin, account, session) == Some(root) else {
+        return @cmd.none
+      }
+      @cmd.custom_cmd(scheduler => {
+        @js.Promise::from_async(() => {
+          let paths = match @cloud.read_file_index(cloud.token, session) {
+            Ok(paths) => paths
+            Err(_) => {
+              scheduler.add(dispatch(FileIndexFailed(owner~, epoch~)))
+              return
+            }
+          }
+          let files = paths.map(path => @pathx.Relative(path))
+          scheduler.add(
+            dispatch(FilesIndexed(owner~, epoch~, files~, truncated=false)),
+          )
+        })
+        |> ignore
+      })
+    }
+  }
 }
 
 ///|
