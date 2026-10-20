@@ -1668,6 +1668,7 @@ fn desired_browser_view(model : Model) -> Int32? {
     !model.conversation_transfer_menu_open &&
     model.select_menu is None &&
     !git_details_open &&
+    !(model.screen is Chat && model.connectors_open) &&
     !covering_overlay(model) else {
     return None
   }
@@ -1983,6 +1984,19 @@ fn update(
   //
   // The second clause is the invariant rather than a list of paths: no chip,
   // no popover, however the branch came to be gone.
+  // The connectors panel describes the conversation on screen; one that is
+  // switched away from, or a screen without a run status, closes it.
+  let model = if model.connectors_open &&
+    (
+      model.active_session != previous.active_session ||
+      model.focused != previous.focused ||
+      !(model.screen is Chat) ||
+      model.active_conversation() is None
+    ) {
+    { ..model, connectors_open: false, }
+  } else {
+    model
+  }
   let model = if model.git_details_open &&
     (
       model.active_session != previous.active_session ||
@@ -5787,6 +5801,22 @@ fn update_msg(
       )
     }
     CloseGitDetails => (@cmd.none, { ..model, git_details_open: false, })
+    ToggleConnectors => {
+      let opening = !model.connectors_open
+      let model = { ..model, connectors_open: opening, }
+      // Opening asks the host again: what the engine holds changes on its
+      // own, and asking starts nothing.
+      guard opening && model.connectors_conversation() is Some(conversation) else {
+        return (@cmd.none, model)
+      }
+      let (cmd, mcp) = @mcp.update(
+        dispatch.map(msg => Mcp(msg)),
+        Opened(conversation),
+        model.mcp,
+      )
+      (cmd, { ..model, mcp, })
+    }
+    CloseConnectors => (@cmd.none, { ..model, connectors_open: false, })
     TranscriptLeft(slot~, scroll~) =>
       (
         @cmd.none,
@@ -6338,6 +6368,14 @@ fn update_msg(
         model.jobs,
       )
       (cmd, { ..model, jobs, })
+    }
+    Mcp(msg) => {
+      let (cmd, mcp) = @mcp.update(
+        dispatch.map(msg => Mcp(msg)),
+        msg,
+        model.mcp,
+      )
+      (cmd, { ..model, mcp, })
     }
     Github(msg) => {
       let completed = msg is @github.CheckedOut(epoch, _) &&
@@ -7209,6 +7247,20 @@ fn update_device_msg(
           }
           _ => model
         }
+      } else {
+        model
+      }
+      // MCP reports are not replayed across a connection gap either: a panel
+      // holding a conversation on this device asks about it again.
+      let model = if model.mcp.conversation is Some(conversation) &&
+        conversation.channel == channel {
+        let (cmd, mcp) = @mcp.update(
+          dispatch.map(msg => Mcp(msg)),
+          Changed(conversation),
+          model.mcp,
+        )
+        commands.push(cmd)
+        { ..model, mcp, }
       } else {
         model
       }
@@ -9302,6 +9354,14 @@ fn update_device_msg(
         conv
       })
       (@cmd.none, { ..model, conversations: settled, })
+    }
+    McpChanged(session) => {
+      let (cmd, mcp) = @mcp.update(
+        dispatch.map(msg => Mcp(msg)),
+        Changed({ channel, session, }),
+        model.mcp,
+      )
+      (cmd, { ..model, mcp, })
     }
     JobsChanged(session) => {
       let (jobs_cmd, model) = if model.jobs.owner is Some(owner) &&

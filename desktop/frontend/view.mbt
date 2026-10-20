@@ -1694,20 +1694,44 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
 }
 
 ///|
-fn run_indicator(model : Model, conv : Conversation) -> @html.Html {
+fn run_indicator(
+  dispatch : @cmd.Emit[Msg],
+  model : Model,
+  conv : Conversation,
+) -> @html.Html {
   let status = model.display_status()
   let label = status.label(locale=model.locale)
-  if conv.is_running() {
-    @html.div(class="run-status accent", [
-      @html.span(class="run-dot accent pulse", ""),
-      @html.span(class="run-text", label),
-    ])
+  let (class, dot) = if conv.is_running() {
+    ("run-status accent", "run-dot accent pulse")
   } else {
-    @html.div(class="run-status", [
-      @html.span(class="run-dot \{status.kind().css()}", ""),
-      @html.span(class="run-text", label),
-    ])
+    ("run-status", "run-dot \{status.kind().css()}")
   }
+  let opened = if model.connectors_open { " open" } else { "" }
+  // The status is also the way into what this conversation's engine is
+  // connected to. The panel renders after the stable button, so opening it
+  // never replaces the node under the pointer.
+  let children : Array[@html.Html] = [
+    @html.button(
+      class="\{class} run-status-button\{opened}",
+      type_="button",
+      attrs=@html.Attrs::build().aria_expanded(
+        model.connectors_open.to_string(),
+      ),
+      on_click=dispatch(ToggleConnectors),
+      [@html.span(class=dot, ""), @html.span(class="run-text", label)],
+    ),
+  ]
+  if model.connectors_open {
+    children.push(
+      @mcp.panel(
+        locale=model.locale,
+        { channel: conv.device, session: conv.session_id, },
+        model.mcp,
+        dispatch.map(msg => Mcp(msg)),
+      ),
+    )
+  }
+  @html.div(class="run-status-control", children)
 }
 
 ///|
@@ -1774,7 +1798,7 @@ fn conversation_header(
     session_tooltip(model, conv),
     Some(workspace),
   )
-  items.push(run_indicator(model, conv))
+  items.push(run_indicator(dispatch, model, conv))
   if conv.turn.usage_tokens > 0 {
     items.push(
       @html.span(

@@ -73,6 +73,10 @@ priv struct ServeEngine {
   // reaper (idle.mbt) stops an engine whose stamp is old enough; the reaper's
   // own job probe is the one exchange that leaves it alone.
   mut last_activity_ms : Int64
+  // The engine's latest `mcp_status` — what this process holds of its MCP
+  // servers, as it last said. `None` until its first report, which comes
+  // once it has connected them.
+  mut mcp_status : @wire.McpStatus?
 }
 
 ///|
@@ -1650,6 +1654,7 @@ async fn[G] start_serve_engine(
     queued_runs: [],
     job_requests: Map([]),
     last_activity_ms: engine_clock_ms(),
+    mcp_status: None,
   }
   startup_engine = Some(engine)
   // Spawned before the handle is reachable from any request, so stdin has an
@@ -1845,6 +1850,9 @@ async fn ServeEngine::consume(
             if manager.mcp.current_engine_id == Some(engine.id) {
               manager.mcp.errors = mcp_errors
             }
+          // Kept for `mcp.status`, and still forwarded: a page showing this
+          // conversation's status reads it again when it sees one.
+          Some(McpStatus(status~)) => engine.mcp_status = Some(status)
           Some(PredictionResult(source_sequence~, outcome~)) => {
             if outcome is Completed(..) {
               emit(
@@ -2396,6 +2404,7 @@ fn test_serve_engine(
     queued_runs: [],
     job_requests: Map([]),
     last_activity_ms,
+    mcp_status: None,
   }
 }
 
