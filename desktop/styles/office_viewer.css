@@ -658,6 +658,7 @@
   min-width: 0;
 }
 .office-viewer-surface .sheet-document.office-excel-workbook {
+  min-width: 0;
   padding: 0;
   background: transparent;
   box-shadow: none;
@@ -770,6 +771,9 @@
   outline: 2px solid #2563eb;
   outline-offset: -2px;
   background: #e8f0ff;
+}
+.sheet-document .office-virtual-table td.office-cell-selected {
+  background: #e8f0ff !important;
 }
 .sheet-document td.office-search-hit { box-shadow: inset 0 0 0 2px #facc15; }
 .sheet-document td.office-cell-anchor { box-shadow: inset 3px 0 0 #2563eb; }

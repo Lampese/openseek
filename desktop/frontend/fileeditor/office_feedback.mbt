@@ -109,6 +109,15 @@ fn office_feedback_anchor(
   surface : @dom.Element,
   preview : OfficeSelectionPreview,
 ) -> (() -> @dom.DOMRect?, () -> Array[@dom.DOMRect], Bool)? {
+  if excel_feedback_range(surface, preview.materialized) is Some(resolve) {
+    return Some(
+      (
+        () => resolve().last().map(cell => cell.get_bounding_client_rect()),
+        () => resolve().map(cell => cell.get_bounding_client_rect()),
+        true,
+      ),
+    )
+  }
   let document : @js.Value = @js.Value::cast_from(surface).get_with_string(
     "ownerDocument",
   )
@@ -406,4 +415,90 @@ fn feedback_range_rects(range : @js.Value) -> Array[@dom.DOMRect] {
     current = next.to_option()
   }
   rects
+}
+
+///|
+fn excel_feedback_cell(address : StringView) -> (Int32, Int32)? {
+  let mut row = 0
+  let mut column = 0
+  let mut digits = false
+  for ch in address.to_owned() {
+    if !digits && ch >= 'A' && ch <= 'Z' {
+      column = column * 26 + ch.to_int() - 64
+    } else if ch >= '0' && ch <= '9' {
+      digits = true
+      row = row * 10 + ch.to_int() - 48
+    } else {
+      return None
+    }
+    if row > 1048576 || column > 16384 {
+      return None
+    }
+  }
+  if row > 0 && column > 0 {
+    Some((row, column))
+  } else {
+    None
+  }
+}
+
+///|
+/// Virtual rows replace their DOM nodes. Resolve the saved source range on
+/// every layout, as PDF feedback already does for a rebuilt text layer.
+fn excel_feedback_range(
+  surface : @dom.Element,
+  materialized : String,
+) -> (() -> Array[@dom.Element])? {
+  let value = @json.parse(materialized) catch { _ => return None }
+  guard value
+    is {
+      "selection": {
+        "kind": String("excel"),
+        "sheet": String(sheet),
+        "range": String(range),
+        ..
+      },
+      ..
+    } else {
+    return None
+  }
+  let parts = range.split(":").to_array()
+  guard parts.length() >= 1 &&
+    parts.length() <= 2 &&
+    excel_feedback_cell(parts[0]) is Some((r1, c1)) &&
+    excel_feedback_cell(parts[parts.length() - 1]) is Some((r2, c2)) &&
+    r2 >= r1 &&
+    c2 >= c1 else {
+    return None
+  }
+  Some(() => {
+    surface
+    .query_selector_all("td[data-cell]")
+    .iter()
+    .filter(cell => {
+      if cell.get_attribute("data-sheet") != Some(sheet) {
+        return false
+      }
+      guard cell
+        .get_attribute("data-cell")
+        .bind(address => excel_feedback_cell(address[:]))
+        is Some((row, column)) else {
+        return false
+      }
+      let rows = cell
+        .get_attribute("rowspan")
+        .map(text => @string.parse_int(text) catch { _ => 1 })
+        .unwrap_or(1)
+      let cols = cell
+        .get_attribute("colspan")
+        .map(text => @string.parse_int(text) catch { _ => 1 })
+        .unwrap_or(1)
+      row <= r2 &&
+      row + rows - 1 >= r1 &&
+      column <= c2 &&
+      column + cols - 1 >= c1 &&
+      cell.closest("section[hidden]") is None
+    })
+    .to_array()
+  })
 }
