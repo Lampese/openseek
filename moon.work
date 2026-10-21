@@ -9,4 +9,5 @@ members = [
   "./desktop",
   "./desktop/backend",
   "./desktop/frontend",
+  "./openseek_tui",
 ]
