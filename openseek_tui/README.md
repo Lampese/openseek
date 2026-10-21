@@ -9,10 +9,11 @@ blocks. Pressing Enter while a task runs steers it mid-turn; Ctrl-C cancels the
 turn.
 
 The UI runs no agent code itself. The engine is the separate `openseek` binary
-from the [moonbitlang/openseek](https://github.com/moonbitlang/openseek)
-repository; this module depends on that repository's published module
-(`moonbitlang/openseek` on mooncakes) for the agent, session, and provider
-packages, and on `moonbitlang/openseek_protocol` for the wire contract.
+built from the root of this repository. This module imports
+`moonbitlang/openseek` for the agent, session, and provider packages and
+`moonbitlang/openseek_protocol` for the wire contract; it is a member of the
+repository's `moon.work`, so it builds against this checkout's copies of both,
+while the published package resolves them from mooncakes.
 
 ## Running it
 
@@ -21,9 +22,9 @@ provides `moon` and `moonx`. The engine is not installed separately: the UI runs
 the `moonbitlang/openseek` release it was built against through `moonx`.
 
 ```bash
-git clone https://github.com/moonbitlang/openseek_tui && cd openseek_tui
+git clone https://github.com/moonbitlang/openseek && cd openseek/openseek_tui
 moon build --release cmd/openseek_tui
-cp _build/native/release/build/moonbitlang/openseek_tui/cmd/openseek_tui/openseek_tui.exe ~/.moon/bin/openseek_tui
+cp ../_build/native/release/build/moonbitlang/openseek_tui/cmd/openseek_tui/openseek_tui.exe ~/.moon/bin/openseek_tui
 
 export DEEPSEEK=sk-...
 openseek_tui
@@ -63,58 +64,54 @@ takes; `openseek_tui --help` lists them all.
 
 ## Development
 
+The repository's root gates (`just check`, `just test`) cover this module
+along with the rest of the workspace. From the repository root, to work on the
+UI alone:
+
 ```bash
 moon check --target native --deny-warn
-moon test --target native
-moon cram test tests/cram          # verified CLI docs: tests/cram/tui.md
+moon test --target native $(git ls-files -- 'openseek_tui/*moon.pkg' | xargs -n1 dirname)
+moon cram test openseek_tui/tests/cram   # verified CLI docs: tests/cram/tui.md
 moon fmt
-moon info                          # regenerate pkg.generated.mbti after API changes
+moon info                                # regenerate pkg.generated.mbti after API changes
 ```
+
+A plain `moon test` tests every workspace member, not just this module.
 
 `tests/cram/tui.md` is executable documentation of the `openseek_tui` command
 line (help banner, argument errors, the engine preflight). It runs offline and
 needs no API key.
 
-**Developing against a local openseek checkout.** `moonbitlang/openseek` comes
-from mooncakes by default. To build against an unpublished checkout, add a
-`moon.work` (git-ignored) that lists this module and the checkout's workspace
-members:
-
-```
-members = [
-  ".",
-  "../openseek",
-  "../openseek/protocol",
-  "../openseek/editor",
-  "../openseek/editor/server",
-]
-```
-
-The editor members are needed because `moonbitlang/openseek` itself depends on
-`moonbitlang/editor`, and the checkout's editor is the one it is developed
+**Running the checkout's engine.** The workspace only changes what the UI
+compiles against. To also *run* this checkout's engine, build it at the
+repository root (`moon build --release .`) and pass its binary with
+`--engine <path>`; otherwise the UI still spawns the pinned release through
+`moonx`, which may speak an older protocol than the one the UI was built
 against.
-
-The workspace only changes what the UI compiles against. To also *run* the
-checkout's engine, build it there (`moon build --release cmd/openseek`) and pass
-its binary with `--engine <path>`; otherwise the UI still spawns the pinned
-release through `moonx`.
 
 ## Publishing
 
 The module is published to mooncakes as `moonbitlang/openseek_tui` by the
-`publish-package` workflow (`.github/workflows/publish.yml`, run manually via
-workflow dispatch) using the organization's mooncakes token. Bump `version` in
-`moon.mod` first. When bumping the `moonbitlang/openseek` import, bump
+repository's `publish-openseek-tui` workflow
+(`.github/workflows/publish-openseek-tui.yml`, run manually via workflow
+dispatch) using the organization's mooncakes token. Bump `version` in
+`moon.mod` first. The workflow checks the staged package against the registry,
+so publish the `moonbitlang/openseek` and `moonbitlang/openseek_protocol`
+releases it imports before it. When bumping the `moonbitlang/openseek` import, bump
 `EngineModuleVersion` in `cmd/tui/main.mbt` with it (`moon test` fails until
 they match) and check that the release has a published linear-Wasm build, since
 that is what `moonx` downloads.
 
 ## History
 
-This repository was extracted from
-[moonbitlang/openseek](https://github.com/moonbitlang/openseek) on 2026-09-03
-with `git filter-repo`, keeping the history of `tui/`, `cmd/tui/`,
-`cmd/openseek_tui/`, and `tests/cram/tui.md`.
+The UI was extracted from this repository on 2026-09-03 into
+[moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui) with
+`git filter-repo`, keeping the history of `tui/`, `cmd/tui/`,
+`cmd/openseek_tui/`, and `tests/cram/tui.md`. It was merged back into
+`openseek_tui/` on 2026-10-21, again with its history, as a `moon.work` member
+so that engine and protocol changes are built and tested against it in the same
+change. PR numbers in its commit messages from that period refer to
+moonbitlang/openseek_tui.
 
 ## License
 
