@@ -9,8 +9,88 @@ pub(all) struct CloudFiles {
 pub extend CloudFiles with Eq::{equal, not_equal}
 
 ///|
+/// Cloud document URIs use a virtual `/` root; model references use paths
+/// relative to that session's workspace. Host references keep their path.
+fn reference_file(
+  owner : @interop.ConversationIdentity,
+  path : @common.Uri,
+) -> String {
+  match owner {
+    Host(_) => path.path
+    Cloud(..) =>
+      path.path.strip_prefix("/").unwrap_or(path.path.view()).to_owned()
+  }
+}
+
+///|
 fn Ctx::host_ready(self : Ctx) -> Bool {
   self.owner is @interop.Host(_) && self.checkout_ready()
+}
+
+///|
+fn Doc::cloud_signature(
+  self : Doc,
+  owner : @interop.ConversationIdentity,
+) -> String? {
+  guard owner is @interop.Cloud(..) else { return None }
+  match self.state {
+    TabLoaded(sig~, ..)
+    | TabOffice(sig~, ..)
+    | TabPdf(sig~, ..)
+    | TabImage(sig~, ..) => Some(sig)
+    _ => None
+  }
+}
+
+///|
+fn State::surface_epoch(
+  self : State,
+  owner : @interop.ConversationIdentity,
+) -> Int32 {
+  match owner {
+    Host(_) => self.request_epoch
+    Cloud(..) => self.cloud_surface_epoch
+  }
+}
+
+///|
+fn State::accepts_surface_epoch(
+  self : State,
+  ctx : Ctx,
+  owner : @interop.ConversationIdentity,
+  epoch : Int32,
+) -> Bool {
+  self.surface_epoch(owner) == epoch &&
+  (match owner {
+    Host(_) => true
+    Cloud(..) =>
+      ctx.cloud_files is Some(files) && self.cloud_epoch == Some(files.epoch)
+  })
+}
+
+///|
+priv suberror SourceError {
+  SourceError(String)
+}
+
+///|
+async fn check_source(
+  owner : @interop.ConversationIdentity,
+  cloud : CloudFiles?,
+  path : @common.Uri,
+  sig : String,
+) -> Bool {
+  guard owner is @interop.Cloud(account~, session~) &&
+    cloud is Some(cloud) &&
+    @resource.cloud_root(@cloud.CloudOrigin, account, session) is Some(root) &&
+    @resource.relative_to(path, root) is Some(relative) else {
+    raise SourceError("Cloud file no longer belongs to this conversation.")
+  }
+  @cloud.file_unchanged(cloud.token, session, relative.0, sig) catch {
+    @cloud.RequestError::RequestError(failure) =>
+      raise SourceError(failure.label())
+    _ => raise SourceError(@cloud.Failure::Unreachable.label())
+  }
 }
 
 ///|
@@ -19,30 +99,30 @@ async fn read_source(
   cloud : CloudFiles?,
   path : @common.Uri,
   allow_large~ : Bool = false,
-) -> Result[@protocol.ReadFileReply, String] {
+) -> @protocol.ReadFileReply {
   match owner {
     Host(owner) => {
       guard @resource.belongs_to(path, owner.channel) else {
-        return Err("file root moved to another host before file read")
+        raise SourceError("file root moved to another host before file read")
       }
-      Ok(
-        @interop.bridge_request(owner.channel, @commands.fs_read_file, {
-          path: path.path,
-          root: None,
-        }),
-      ) catch {
-        error => Err(@interop.bridge_error_text(error))
+      @interop.bridge_request(owner.channel, @commands.fs_read_file, {
+        path: path.path,
+        root: None,
+      }) catch {
+        error => raise SourceError(@interop.bridge_error_text(error))
       }
     }
     Cloud(account~, session~) => {
       guard cloud is Some(cloud) &&
         @resource.cloud_root(@cloud.CloudOrigin, account, session) is Some(root) &&
         @resource.relative_to(path, root) is Some(relative) else {
-        return Err("Cloud file no longer belongs to this conversation.")
+        raise SourceError("Cloud file no longer belongs to this conversation.")
       }
-      @cloud.read_file(cloud.token, session, relative.0, allow_large~).map_err(failure => {
-        failure.label()
-      })
+      @cloud.read_file(cloud.token, session, relative.0, allow_large~) catch {
+        @cloud.RequestError::RequestError(failure) =>
+          raise SourceError(failure.label())
+        _ => raise SourceError(@cloud.Failure::Unreachable.label())
+      }
     }
   }
 }
@@ -69,35 +149,39 @@ async fn read_directory_source(
   cloud : CloudFiles?,
   root : @common.Uri,
   path : @pathx.Relative,
-) -> Result[@protocol.ReadDirReply, String] {
+) -> @protocol.ReadDirReply {
   match owner {
     Host(owner) => {
       guard @resource.belongs_to(root, owner.channel) else {
-        return Err("file root moved to another host before directory read")
+        raise SourceError(
+          "file root moved to another host before directory read",
+        )
       }
-      Ok(
-        @interop.bridge_request(owner.channel, @commands.fs_read_directory, {
-          path: @resource.join_relative(root, path).path,
-        }),
-      ) catch {
-        error => Err(@interop.bridge_error_text(error))
+      @interop.bridge_request(owner.channel, @commands.fs_read_directory, {
+        path: @resource.join_relative(root, path).path,
+      }) catch {
+        error => raise SourceError(@interop.bridge_error_text(error))
       }
     }
     Cloud(account~, session~) => {
       guard cloud is Some(cloud) &&
         @resource.cloud_root(@cloud.CloudOrigin, account, session) == Some(root) else {
-        return Err("Cloud directory no longer belongs to this conversation.")
+        raise SourceError(
+          "Cloud directory no longer belongs to this conversation.",
+        )
       }
-      @cloud.read_directory(cloud.token, session, path.0).map_err(failure => {
-        failure.label()
-      })
+      @cloud.read_directory(cloud.token, session, path.0) catch {
+        @cloud.RequestError::RequestError(failure) =>
+          raise SourceError(failure.label())
+        _ => raise SourceError(@cloud.Failure::Unreachable.label())
+      }
     }
   }
 }
 
 ///|
-/// Cloud has no filesystem watcher. A manual Files refresh and a settled
-/// generation share this invalidation, keeping background tabs lazy.
+/// File events, manual refreshes and settled generations share invalidation,
+/// keeping background tabs lazy.
 fn refresh_cloud_files(
   dispatch : @cmd.Emit[Msg],
   state : State,
@@ -163,6 +247,7 @@ fn refresh_cloud_files(
         doc.name,
         range=None,
         cloud?=ctx.cloud_files,
+        cached_sig?=doc.cloud_signature(ctx.owner),
       ),
     )
   }
@@ -178,7 +263,6 @@ fn refresh_cloud_files(
       removed_directory_reads: Map([]),
       directory_errors: Map([]),
       error: None,
-      explorer_mode: ExplorerFiles,
     },
   )
 }

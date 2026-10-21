@@ -177,7 +177,26 @@ fn ExplorerMode::previous(self : ExplorerMode) -> ExplorerMode {
 }
 
 ///|
-fn explorer_tab_key_target(mode : ExplorerMode, key : String) -> ExplorerMode? {
+fn explorer_tab_key_target(
+  mode : ExplorerMode,
+  key : String,
+  cloud~ : Bool = false,
+) -> ExplorerMode? {
+  if cloud &&
+    (
+      key == "ArrowRight" ||
+      key == "ArrowDown" ||
+      key == "ArrowLeft" ||
+      key == "ArrowUp"
+    ) {
+    return Some(
+      if mode is ExplorerFiles {
+        ExplorerSearch
+      } else {
+        ExplorerFiles
+      },
+    )
+  }
   match key {
     "Home" => Some(ExplorerFiles)
     "End" => Some(ExplorerSearch)
@@ -196,7 +215,7 @@ fn explorer_tab(
   mode : ExplorerMode,
   title : String,
   children : Array[@html.Html],
-  single~ : Bool = false,
+  cloud~ : Bool = false,
 ) -> @html.Html {
   let active = selected == mode
   @html.button(
@@ -210,12 +229,7 @@ fn explorer_tab(
       .aria_controls(ExplorerPanelId)
       .aria_selected(active.to_string())
       .on_keydown(event => {
-        match
-          (if single {
-            None
-          } else {
-            explorer_tab_key_target(mode, event.key())
-          }) {
+        match explorer_tab_key_target(mode, event.key(), cloud~) {
           Some(target) => {
             event.prevent_default()
             @cmd.batch([
@@ -332,8 +346,20 @@ pub fn body_view(
     }
   }
   let office_document = active_office_surface(state, ctx)
+  let image = if !use_diff_surface {
+    ctx.active_file.bind(path => {
+      match state.docs.get(path) {
+        Some({ name, state: TabImage(url~, ..), .. }) => Some((name, url))
+        _ => None
+      }
+    })
+  } else {
+    None
+  }
+  let use_image_surface = image is Some(_)
   let use_office_surface = !use_diff_surface && office_document is Some(_)
   let use_markdown_surface = !use_diff_surface &&
+    !use_image_surface &&
     !use_office_surface &&
     (match ctx.active_file {
       Some(path) =>
@@ -343,10 +369,12 @@ pub fn body_view(
       None => false
     })
   let use_mbti_surface = !use_diff_surface &&
+    !use_image_surface &&
     !use_markdown_surface &&
     !use_office_surface &&
     uses_mbti_diagram_surface(state, ctx)
   let use_package_surface = !use_diff_surface &&
+    !use_image_surface &&
     !use_markdown_surface &&
     !use_mbti_surface &&
     !use_office_surface &&
@@ -365,6 +393,7 @@ pub fn body_view(
       .id(ViewerHostId)
       .class(
         if use_diff_surface ||
+          use_image_surface ||
           use_office_surface ||
           use_markdown_surface ||
           use_mbti_surface ||
@@ -381,6 +410,17 @@ pub fn body_view(
     match office_document {
       Some(config) => config
       None => empty_office_surface_config(state)
+    },
+  )
+  let image_surface = @html.div(
+    class=if use_image_surface {
+      "viewer-host file-image-preview"
+    } else {
+      "viewer-host file-image-preview moonbit-viewer-surface-hidden"
+    },
+    match image {
+      Some((name, url)) => [@html.img(src=url, alt=name)]
+      None => []
     },
   )
   let markdown_viewer_host = @html.div(
@@ -487,6 +527,7 @@ pub fn body_view(
         office_pages_view(locale~, dispatch, state, ctx),
         viewer_host,
         office_surface,
+        image_surface,
         pdf_password_dialog(locale~, dispatch, state, ctx),
         markdown_viewer_host,
         mbti_diagram_host,
@@ -595,7 +636,7 @@ fn viewer_notice(
                 PdfReady | PdfPasswordRequired(_) => ""
               }
             TabLoading => ui(locale, LoadingFile)
-            TabLoaded(..) | TabOffice(..) => ""
+            TabLoaded(..) | TabOffice(..) | TabImage(..) => ""
           }
         None => ""
       }
@@ -739,7 +780,7 @@ fn tree_pane(
             @icons.icon(@icons.icon_folder),
             @html.span(class="visually-hidden", ui(locale, FilesLabel)),
           ],
-          single=ctx.owner.host() is None,
+          cloud=ctx.owner is @interop.Cloud(..),
         ),
         if ctx.owner.host() is Some(_) {
           explorer_tab(
@@ -757,7 +798,7 @@ fn tree_pane(
         } else {
           @html.nothing
         },
-        if ctx.owner.host() is Some(_) {
+        if ctx.search_input() is Some(_) {
           explorer_tab(
             dispatch,
             state.explorer_mode,
@@ -767,6 +808,7 @@ fn tree_pane(
               @icons.icon(@icons.icon_search),
               @html.span(class="visually-hidden", ui(locale, SearchLabel)),
             ],
+            cloud=ctx.owner is @interop.Cloud(..),
           )
         } else {
           @html.nothing

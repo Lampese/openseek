@@ -1102,48 +1102,6 @@ fn send_goal(
 }
 
 ///|
-/// Whether an engine event reports progress on the open step's model request,
-/// which ends a pending retry notice: the replacement attempt produced output
-/// or completed (a tool-only response has no deltas, so its usage report or
-/// tool result is the first sign), or the step moved on or the run ended.
-/// Events about other work in the same run say nothing about that request.
-fn ends_retry(event : @transcript.EngineEvent) -> Bool {
-  match event {
-    AssistantDelta(_)
-    | ReasoningDelta(_)
-    | ReasoningMessage(_)
-    | AssistantMessage(_)
-    | Usage(..)
-    | ToolResult(..)
-    | ToolCallDecodeError(..)
-    | AgentStep(_)
-    | AgentFinished(_)
-    | ContextYield(_)
-    | AgentAborted(_)
-    | MaxStepsExhausted
-    | AgentSetupFailed(_) => true
-    StreamRetry(..)
-    | BackgroundNotice(_)
-    | SubrunOpened(..)
-    | SubrunClosed(..)
-    | WorkflowOpened(..)
-    | WorkflowClosed(..)
-    | SteerApplied(..)
-    | SteerDropped(..)
-    | AutoCompactionFinished(_)
-    | CompactionStarted
-    | CompactionFinished(_)
-    | CompactionFailed(_)
-    | ApprovalRequested(..)
-    | ApprovalResolved(..)
-    | SessionAppendFailed(_)
-    | McpConfigFailed(..)
-    | McpServerFailed(..)
-    | McpToolsDropped(..) => false
-  }
-}
-
-///|
 /// Fold one engine event into its conversation. Returns the new conversation
 /// and, when the event reported a failure the durable record will never carry,
 /// the text to raise as a toast — the caller owns the dispatch a toast needs.
@@ -1154,7 +1112,7 @@ fn apply_engine_event(
 ) -> (String?, Conversation) {
   // A retry notice lasts until the engine reports progress on the request it
   // is retrying; events about other work in the run leave it in place.
-  let conv = if ends_retry(event) {
+  let conv = if event.ends_retry() {
     { ..conv, turn: { ..conv.turn, retrying: None, }, }
   } else {
     conv
@@ -2599,6 +2557,12 @@ fn update_msg(
               @cloud.Submit(identity.owner, draft),
               model,
             )
+          @composer.DraftAttachmentsSubmitted(identity~, draft~, attachments~) =>
+            return update_cloud(
+              dispatch,
+              @cloud.SubmitAttachments(identity.owner, draft, attachments),
+              model,
+            )
           @composer.MentionOpened(identity~, mention~) => {
             guard mention.ref_ is File(path~) else { return (@cmd.none, model) }
             return open_cloud_file(
@@ -2623,6 +2587,7 @@ fn update_msg(
         }
       }
       match action {
+        @composer.DraftAttachmentsSubmitted(..) => (@cmd.none, model)
         @composer.ModelMenuToggled(..)
         | @composer.ReasoningMenuToggled(..)
         | @composer.SelectMenuDismissed(..)
@@ -3322,7 +3287,11 @@ fn update_msg(
     // mention, and Quick Open navigation. An active picker is fulfilled in
     // place; an already-open file is activated.
     FileEditor(@fileeditor.SearchMatchSelected(path~, range~)) =>
-      request_open_path(dispatch, model, path, Some(range))
+      match model.cloud_identity() {
+        Some(owner) =>
+          open_cloud_file(dispatch, model, owner, path, Some(range))
+        None => request_open_path(dispatch, model, path, Some(range))
+      }
     SemanticSelectionMaterialized(owner~, submission_id~, artifact~) => {
       guard model.find_conversation(owner.channel, owner.session) is Some(conv) &&
         conv.pending_semantic_submission is Some(pending) &&
@@ -3461,10 +3430,7 @@ fn update_msg(
       ) else {
         return (@cmd.none, model)
       }
-      match owner {
-        Host(host) => offer_office_selection(dispatch, model, host, selection)
-        Cloud(..) => (@cmd.none, model)
-      }
+      offer_office_selection(dispatch, model, owner, selection)
     }
     FileEditor(@fileeditor.OfficeFeedbackSubmitted(preview, text, apply~)) => {
       guard model.file_panel.pending_office_selection(file_ctx(model)) ==
@@ -3593,12 +3559,7 @@ fn update_msg(
       guard ctx.panel_open &&
         owns_office_selection(model, owner) &&
         model.file_panel.accepts_pdf_callback(
-          ctx,
-          @interop.Host(owner),
-          epoch,
-          path,
-          sig,
-          generation,
+          ctx, owner, epoch, path, sig, generation,
         ) else {
         return (@cmd.none, model)
       }
@@ -3671,10 +3632,7 @@ fn update_msg(
       ) else {
         return (@cmd.none, model)
       }
-      match owner {
-        Host(host) => offer_office_selection(dispatch, model, host, selection)
-        Cloud(..) => (@cmd.none, model)
-      }
+      offer_office_selection(dispatch, model, owner, selection)
     }
     // The host classifies tree selections before the dock opens their viewer.
     FileEditor(FileSelected(path~, ..)) =>

@@ -60,7 +60,7 @@ fn Doc::diff_content(self : Doc) -> (String, String)? {
   }
   let modified = match self.state {
     TabLoaded(content~, ..) => content
-    TabOffice(..) | TabPdf(..) => return None
+    TabOffice(..) | TabPdf(..) | TabImage(..) => return None
     TabDeleted => ""
     TabLoading
     | TabBinary
@@ -274,7 +274,8 @@ fn show_tab_impl(
           )
         _ => clear_document()
       }
-    TabBinary | TabOversized | TabUnavailable(_) => clear_document()
+    TabBinary | TabOversized | TabUnavailable(_) | TabImage(..) =>
+      clear_document()
   }
   // A document that went stale in the background (or was deleted and
   // reappeared) shows what it has and reloads in the same breath; the reply
@@ -294,6 +295,7 @@ fn show_tab_impl(
         doc.name,
         review_generation?=doc.review_generation(),
         range=None,
+        cached_sig?=doc.cloud_signature(ctx.owner),
       ),
     ])
   } else {
@@ -1745,6 +1747,7 @@ pub fn subscriptions(
       @sub.none
     },
     changes_poll_subscription(state, ctx, dispatch),
+    cloud_files_subscription(ctx, dispatch),
     review_diff_navigation_subscription(state, ctx, dispatch),
     review_context_dismiss_subscription(),
     match ctx.search_input() {
@@ -2138,6 +2141,7 @@ pub fn sync(
         github_review: state.github_review,
         owner: Some(ctx.owner),
         cloud_epoch,
+        cloud_surface_epoch: state.cloud_surface_epoch + 1,
         cloud_documents,
         // A new incarnation must not inherit the identity it replaced, so this
         // reconciles from `PlacementUnknown` rather than the outgoing value.
@@ -2155,7 +2159,9 @@ pub fn sync(
         } else {
           state.explorer_mode
         },
-        search: state.search.reset_checkout(),
+        search: state.search.reset_checkout(
+          text_only=ctx.owner is @interop.Cloud(..),
+        ),
         review_diff_layout: state.review_diff_layout,
         review_diff_mode: state.review_diff_mode,
         review_diff_ignore_comments: state.review_diff_ignore_comments,
@@ -3243,10 +3249,7 @@ fn update_inner(
       )
     ToggleActiveReviewHunk => (@cmd.none, state.toggle_active_review_hunk(ctx))
     Search(msg) => {
-      guard ctx.search_input() is Some(input) &&
-        ctx.owner is @interop.Host(owner) else {
-        return (@cmd.none, state)
-      }
+      guard ctx.search_input() is Some(input) else { return (@cmd.none, state) }
       let search = state.search.handle(msg, input)
       let next = { ..state, search, }
       let highlights = ctx.active_file.bind(path => {
@@ -3256,7 +3259,8 @@ fn update_inner(
         ctx.root().bind(root => search.selected_semantic_reference(root.path))
       }
       let reference = selection(search)
-      let selection_command = if reference != selection(state.search) {
+      let selection_command = if ctx.owner is @interop.Host(owner) &&
+        reference != selection(state.search) {
         @cmd.custom_cmd(scheduler => {
           scheduler.add(dispatch(SemanticSelectionChanged(owner~, reference~)))
         })
@@ -3274,10 +3278,15 @@ fn update_inner(
     SemanticSelectionChanged(..) => (@cmd.none, state)
     ExplorerModeSelected(mode) => {
       if ctx.owner is @interop.Cloud(..) {
-        return if mode is ExplorerFiles {
-          refresh_cloud_files(dispatch, state, ctx)
-        } else {
-          (@cmd.none, state)
+        match mode {
+          ExplorerFiles =>
+            return refresh_cloud_files(
+              dispatch,
+              { ..state, explorer_mode: ExplorerFiles, },
+              ctx,
+            )
+          ExplorerChanges => return (@cmd.none, state)
+          ExplorerSearch => ()
         }
       }
       let already_selected = state.explorer_mode == mode
@@ -4100,6 +4109,33 @@ fn update_inner(
       history_docs[key] = doc
       (@cmd.none, { ..state, history_docs, })
     }
+    FileVersionChecked(owner~, epoch~, path~, sig~, unchanged~) => {
+      guard ctx.owner == owner &&
+        state.owner == Some(owner) &&
+        state.cloud_epoch == ctx.cloud_files.map(files => files.epoch) &&
+        state.request_epoch == epoch &&
+        state.docs.get(path) is Some(doc) &&
+        doc.cloud_signature(owner) == Some(sig) else {
+        return (@cmd.none, state)
+      }
+      if !unchanged {
+        return (
+          read_file(
+            dispatch,
+            owner,
+            epoch,
+            path,
+            doc.name,
+            range=None,
+            cloud?=ctx.cloud_files,
+          ),
+          state,
+        )
+      }
+      let docs = state.docs.copy()
+      docs[path] = { ..doc, stale: false, }
+      (@cmd.none, { ..state, docs, })
+    }
     FileLoaded(
       owner~,
       epoch~,
@@ -4148,6 +4184,7 @@ fn update_inner(
         let previous = doc.state
         let doc_state = match file {
           Content(content~, sig~) => TabState::TabLoaded(content~, sig~)
+          Raster(url~, sig~) => TabImage(url~, sig~)
           Office(data_base64~, media_type~, sig~) =>
             if media_type == "application/pdf" {
               match
@@ -4254,7 +4291,8 @@ fn update_inner(
               ])
             // The notice overlay (rendered from the tab's new state) covers
             // the viewer; drop whatever document it was showing.
-            TabBinary | TabOversized | TabReadFailed(_) => clear_document()
+            TabBinary | TabOversized | TabReadFailed(_) | TabImage(..) =>
+              clear_document()
             TabLoading | TabDeleted | TabUnavailable(_) => clear_document()
           }
         } else {
@@ -4276,6 +4314,13 @@ fn update_inner(
         (@cmd.none, state)
       }
     }
+    WorkspaceInvalidated(owner~, auth_epoch~) =>
+      if owner == ctx.owner &&
+        ctx.cloud_files.map(files => files.epoch) == Some(auth_epoch) {
+        refresh_cloud_files(dispatch, state, ctx)
+      } else {
+        (@cmd.none, state)
+      }
     RunSettled(owner=@interop.Cloud(..)) =>
       refresh_cloud_files(dispatch, state, ctx)
     RunSettled(owner=@interop.Host(owner)) =>
@@ -4625,8 +4670,11 @@ fn update_inner(
               // deletion row reviews HEAD rather than whatever now sits at
               // its path.
               let affected = match doc.state {
-                TabLoaded(..) | TabOffice(..) | TabPdf(..) | TabReadFailed(_) =>
-                  true
+                TabLoaded(..)
+                | TabOffice(..)
+                | TabPdf(..)
+                | TabImage(..)
+                | TabReadFailed(_) => true
                 TabDeleted =>
                   doc.review
                   .map(review => review.selected.has_working_tree_file())
@@ -4672,7 +4720,8 @@ fn update_inner(
           let changed = match doc.state {
             // The loaded baseline says whether the disk moved on.
             TabLoaded(sig~, ..) => sig != current_sig
-            TabOffice(sig~, ..) | TabPdf(sig~, ..) => sig != current_sig
+            TabOffice(sig~, ..) | TabPdf(sig~, ..) | TabImage(sig~, ..) =>
+              sig != current_sig
             // A deleted file whose signature came back ordinarily reappeared.
             // A selected deletion row is different: porcelain can also carry
             // a same-path untracked row, so the current filesystem object is

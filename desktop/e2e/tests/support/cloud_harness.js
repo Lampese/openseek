@@ -40,6 +40,8 @@ export class CloudHarness {
     this.disconnectSend = false;
     this.rejectStreamCancel = false;
     this.streamCancellations = 0;
+    this.fileStreamCancellations = 0;
+    this.fileEventStatus = 200;
     this.pauseCreate = null;
     this.pauseSend = null;
     this.pauseHistory = null;
@@ -59,6 +61,7 @@ export class CloudHarness {
     await this.page.exposeFunction('cloudWaitForStream', () => this.pauseStream);
     await this.page.exposeFunction('cloudWaitForEvent', index => this.eventPauses?.get(index));
     await this.page.exposeFunction('cloudStreamCancelled', () => this.streamCancellations++);
+    await this.page.exposeFunction('cloudFileStreamCancelled', () => this.fileStreamCancellations++);
     await this.page.addInitScript(({ cached, authOrigin, cloudOrigin, rejectStreamCancel }) => {
       window.cloudUnhandledRejections = [];
       window.addEventListener('unhandledrejection', event => window.cloudUnhandledRejections.push(String(event.reason)));
@@ -69,8 +72,34 @@ export class CloudHarness {
         localStorage.setItem('seekmoon.account.v1', JSON.stringify({ token: 'ts_fixture-123', user: { user_id: '123', login: 'octocat', avatar_url: '' } }));
       }
       const original = window.fetch;
+      window.cloudFileStreams = new Map();
+      window.cloudInvalidateFiles = session => {
+        for (const controller of window.cloudFileStreams.get(session) || []) {
+          controller.enqueue(new TextEncoder().encode('event: workspace_invalidated\ndata: {}\n\n'));
+        }
+      };
+      window.cloudCloseFileEvents = session => {
+        for (const controller of window.cloudFileStreams.get(session) || []) controller.close();
+        window.cloudFileStreams.delete(session);
+      };
       window.fetch = async (...args) => {
         const response = await original(...args);
+        const fileEvents = String(args[0]).match(/\/v1\/sessions\/([^/]+)\/files\/events$/);
+        if (String(args[0]).startsWith(cloudOrigin) && fileEvents && response.ok) {
+          const initial = new TextEncoder().encode(await response.text());
+          const session = decodeURIComponent(fileEvents[1]);
+          let current;
+          return new Response(new ReadableStream({ start(controller) {
+            current = controller;
+            const streams = window.cloudFileStreams.get(session) || new Set();
+            streams.add(controller);
+            window.cloudFileStreams.set(session, streams);
+            controller.enqueue(initial);
+          }, cancel() {
+            window.cloudFileStreams.get(session)?.delete(current);
+            window.cloudFileStreamCancelled();
+          } }), { status: response.status, headers: response.headers });
+        }
         if (String(args[0]).startsWith(cloudOrigin) && response.headers.get('content-type')?.startsWith('text/event-stream')) {
           const bytes = new TextEncoder().encode(await response.text());
           let cancelled = false;
@@ -194,6 +223,9 @@ export class CloudHarness {
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
     this.requests.push({ side: 'cloud', path, method: request.method(), body: request.postData(), headers: await request.allHeaders() });
     const json = (data, status = 200) => route.fulfill({ status, headers, contentType: 'application/json', body: JSON.stringify(data) });
+    if (/^\/v1\/sessions\/[^/]+\/files\/events$/.test(path)) {
+      return route.fulfill({ status: this.fileEventStatus, headers, contentType: 'text/event-stream', body: 'event: workspace_invalidated\ndata: {}\n\n' });
+    }
     if (path === '/v1/sessions') {
       if (request.method() === 'POST') {
         const finish = this.pauseCreate;
@@ -246,7 +278,8 @@ export class CloudHarness {
     const body = request.postDataJSON();
     if (Object.keys(body).join(',') !== 'content') throw new Error('Cloud must send content without a model key');
     if (this.sendStatus !== 200) return this.sendErrorBody ? route.fulfill({ status: this.sendStatus, headers, contentType: 'text/plain', body: this.sendErrorBody }) : json({}, this.sendStatus);
-    if (!this.titles.get(session)) this.titles.set(session, body.content.trim().split('\n')[0].trim());
+    const text = typeof body.content === 'string' ? body.content : body.content.filter(part => part.type === 'text').map(part => part.text).join('');
+    if (!this.titles.get(session) && text.trim()) this.titles.set(session, text.trim().split('\n')[0].trim());
     const task = `fixture-task-${++this.taskCount}`;
     const data = this.streamEvents || [
       ['task_started', {}],
@@ -257,7 +290,7 @@ export class CloudHarness {
     ];
     const previous = this.histories.get(session)?.messages || [];
     const messages = [...previous, { id: previous.length + 70, task_id: task, kind: 'user', data: { content: body.content }, created_at: 1000 },
-      ...data.slice(1).filter(([kind]) => !['assistant_delta', 'stream_retry', 'step'].includes(kind)).map(([kind, value], i) => ({ id: previous.length + i + 71, task_id: task, kind, data: value, created_at: 1001 + i }))];
+      ...data.slice(1).filter(([kind]) => !['assistant_delta', 'reasoning_delta', 'reasoning_message', 'stream_retry', 'step', 'usage', 'compaction_started', 'compaction_finished', 'auto_compaction_started', 'auto_compaction_finished'].includes(kind)).map(([kind, value], i) => ({ id: previous.length + i + 71, task_id: task, kind, data: value, created_at: 1001 + i }))];
     this.histories.set(session, { messages, generating: false, outcome: { status: 'completed' } });
     if (this.pauseSend) await this.pauseSend;
     if (this.disconnectSend) return route.abort('failed');

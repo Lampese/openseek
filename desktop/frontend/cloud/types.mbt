@@ -34,7 +34,7 @@ pub(all) struct Event {
 /// Only a submitted snapshot is retained here. The shared composer owns all
 /// editable drafts, their revisions, and delivery acknowledgement.
 pub struct Submission {
-  content : String
+  content : @wire.Content
   known_tasks : Array[String]
 } derive(Eq)
 
@@ -50,13 +50,20 @@ pub(all) struct Conversation {
   submission_sequence : Int32
   // Seed the shared composer after creation assigns a remote ID. Clear only
   // when the first prompt is admitted, not when its send fails.
-  initial_submission : String?
+  initial_submission : @composer.Draft?
+  initial_attachments : Array[@protocol.AttachmentSource]
+  uploads : Array[UploadedAttachment]
   pending : Submission?
   stream : StreamLease?
   task : String?
   last_seq : Int32?
   // Provisional text belongs to this response stream, never to history.
   streaming_response : String?
+  streaming_reasoning : String?
+  reasoning_complete : Bool
+  heartbeat : @composer.RunHeartbeat?
+  retrying : @composer.RunStage?
+  compacting : Bool
   notice : String?
 } derive(Eq)
 
@@ -72,11 +79,18 @@ fn Conversation::empty() -> Conversation {
     history_required: true,
     submission_sequence: 0,
     initial_submission: None,
+    initial_attachments: [],
+    uploads: [],
     pending: None,
     stream: None,
     task: None,
     last_seq: None,
     streaming_response: None,
+    streaming_reasoning: None,
+    reasoning_complete: false,
+    heartbeat: None,
+    retrying: None,
+    compacting: false,
     notice: None,
   }
 }
@@ -88,6 +102,7 @@ pub struct Creation {
   request : Int32
   navigation : Int32
   submission : @composer.Draft?
+  attachments : Array[@protocol.AttachmentSource]
 } derive(Eq)
 
 ///|
@@ -152,32 +167,7 @@ pub fn State::empty() -> State {
 }
 
 ///|
-pub(all) enum Failure {
-  Unauthorized
-  Busy
-  Http(Int32)
-  Unreachable
-  Malformed
-  ServiceNotConfigured
-  CredentialServiceUnavailable
-  SignInFailed(String)
-}
-
-///|
-pub fn Failure::label(self : Failure) -> String {
-  match self {
-    Unauthorized => "Your account sign-in expired. Sign in again to continue."
-    Busy => "This conversation is already generating. Loading its history…"
-    Http(status) => "Cloud answered HTTP \{status}. Try again."
-    Unreachable => "Cloud is unreachable. Check your connection and try again."
-    Malformed => "Cloud returned an invalid response. Try again."
-    ServiceNotConfigured =>
-      "Cloud model credentials are not configured. Contact the service administrator."
-    SignInFailed(message) => message
-    CredentialServiceUnavailable =>
-      "The sign-in service is unavailable. Try again."
-  }
-}
+pub using @cloud_client {type Failure}
 
 ///|
 pub(all) enum Msg {
@@ -192,6 +182,11 @@ pub(all) enum Msg {
   Edited(Int32, String, Int32)
   EditFailed(Int32, String, Int32, Failure)
   Submit(@interop.ConversationIdentity, @composer.Draft)
+  SubmitAttachments(
+    @interop.ConversationIdentity,
+    @composer.Draft,
+    Array[@protocol.AttachmentSource]
+  )
   Listed(Int32, Int32, Array[Session])
   ListFailed(Int32, Int32, Failure)
   Created(Int32, Int32, String)
@@ -201,62 +196,62 @@ pub(all) enum Msg {
   StreamEvent(Int32, String, Int32, Event)
   StreamEnded(Int32, String, Int32)
   SendFailed(Int32, String, Int32, Failure)
+  AttachmentStored(Int32, String, Int32, @protocol.AttachmentSource, String)
+  MessagePrepared(Int32, String, Int32, @composer.Draft, @wire.Content)
   Poll(Int32, String, Int32)
 }
 
 ///|
-priv suberror CloudError {
-  CloudError(Failure)
-}
+pub using @cloud_client {type RequestError}
 
 ///|
-fn required_string(json : Json, key : String) -> String raise CloudError {
+fn required_string(json : Json, key : String) -> String raise RequestError {
   guard json is Object(fields) && fields.get(key) is Some(String(value)) else {
-    raise CloudError(Malformed)
+    raise @cloud_client.RequestError(Malformed)
   }
   value
 }
 
 ///|
-fn required_number(json : Json, key : String) -> Double raise CloudError {
+fn required_number(json : Json, key : String) -> Double raise RequestError {
   guard json is Object(fields) && fields.get(key) is Some(Number(value, ..)) else {
-    raise CloudError(Malformed)
+    raise @cloud_client.RequestError(Malformed)
   }
   value
 }
 
 ///|
-fn required_bool(json : Json, key : String) -> Bool raise CloudError {
+fn required_bool(json : Json, key : String) -> Bool raise RequestError {
   match json {
     Object(fields) =>
       match fields.get(key) {
         Some(True) => true
         Some(False) => false
-        _ => raise CloudError(Malformed)
+        _ => raise @cloud_client.RequestError(Malformed)
       }
-    _ => raise CloudError(Malformed)
+    _ => raise @cloud_client.RequestError(Malformed)
   }
 }
 
 ///|
-fn required_data(json : Json) -> Json raise CloudError {
+fn required_data(json : Json) -> Json raise RequestError {
   guard json is Object(fields) && fields.get("data") is Some(data) else {
-    raise CloudError(Malformed)
+    raise @cloud_client.RequestError(Malformed)
   }
   data
 }
 
 ///|
-fn decode_sessions(json : Json) -> Array[Session] raise CloudError {
+fn decode_sessions(json : Json) -> Array[Session] raise RequestError {
   guard json is { "sessions": Array(items), .. } else {
-    raise CloudError(Malformed)
+    raise @cloud_client.RequestError(Malformed)
   }
   items.map(item => {
     id: required_string(item, "id"),
     title: match item {
       { "title": String(title), .. } => Some(title)
       { "title": Null, .. } => None
-      _ => raise CloudError(Malformed)
+      _ => raise @cloud_client.RequestError(Malformed)
     },
     updated_at: Some(required_number(item, "updated_at")),
     generating: required_bool(item, "generating"),
@@ -268,9 +263,9 @@ fn decode_sessions(json : Json) -> Array[Session] raise CloudError {
 }
 
 ///|
-fn decode_history(json : Json) -> History raise CloudError {
+fn decode_history(json : Json) -> History raise RequestError {
   guard json is { "messages": Array(items), .. } else {
-    raise CloudError(Malformed)
+    raise @cloud_client.RequestError(Malformed)
   }
   let messages = items.map(item => {
     task_id: required_string(item, "task_id"),
@@ -282,10 +277,10 @@ fn decode_history(json : Json) -> History raise CloudError {
 }
 
 ///|
-fn decode_event(json : Json) -> Event raise CloudError {
+fn decode_event(json : Json) -> Event raise RequestError {
   let seq = required_number(json, "seq")
   guard seq > 0 && seq == seq.to_int().to_double() else {
-    raise CloudError(Malformed)
+    raise @cloud_client.RequestError(Malformed)
   }
   {
     session_id: required_string(json, "session_id"),

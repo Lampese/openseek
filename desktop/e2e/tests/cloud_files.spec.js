@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
-import { CloudHarness, authOrigin, sessionA, sessionB } from './support/cloud_harness.js';
+import { CloudHarness, authOrigin, cloudOrigin, sessionA, sessionB } from './support/cloud_harness.js';
 
 class CloudFilesHarness extends CloudHarness {
   constructor(page, options) {
@@ -12,6 +14,7 @@ class CloudFilesHarness extends CloudHarness {
     this.largePreviews = new Map();
     this.fileStatus = 200;
     this.holdRead = null;
+    this.holdHead = null;
     for (const session of [sessionA, sessionB]) {
       this.indexes.set(session, ['src/hello #.mbt']);
       this.directories.set(`${session}:`, [{ name: 'src', is_dir: true }]);
@@ -27,27 +30,37 @@ class CloudFilesHarness extends CloudHarness {
     const url = new URL(route.request().url());
     const match = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/files(\/content|\/index)?$/);
     if (!match) return super.cloudRequest(route);
-    const headers = { 'Access-Control-Allow-Origin': authOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, OPTIONS' };
-    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    const headers = { 'Access-Control-Allow-Origin': authOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type, If-None-Match', 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS', 'Access-Control-Expose-Headers': 'ETag', 'Cache-Control': 'no-store' };
+    const method = route.request().method();
+    if (method === 'OPTIONS') return route.fulfill({ status: 204, headers });
     const session = decodeURIComponent(match[1]);
     const path = url.searchParams.get('path') || '';
-    const content = match[2] === '/content';
+    const contentPath = match[2] === '/content';
+    const head = contentPath && method === 'HEAD';
+    const content = contentPath && method === 'GET';
     const index = match[2] === '/index';
     const allowLarge = url.searchParams.get('allow_large');
-    this.fileRequests.push({ session, path, content, index, allowLarge, headers: await route.request().allHeaders() });
+    const request = { session, path, method, content, head, index, allowLarge, headers: await route.request().allHeaders() };
+    this.fileRequests.push(request);
     let body;
     if (index) {
       body = { files: this.indexes.get(session) || [] };
-    } else if (content) {
+    } else if (contentPath) {
       body = allowLarge === 'true' && this.largePreviews.has(`${session}:${path}`)
         ? this.largePreviews.get(`${session}:${path}`) : this.contents.get(`${session}:${path}`);
     } else {
       body = { entries: this.directories.get(`${session}:${path}`) || [] };
     }
-    const status = this.fileStatus;
+    let status = this.fileStatus;
+    if (contentPath && status === 200 && ['content', 'binary_content'].includes(body?.kind)) {
+      headers.ETag = `W/"content-v1-${createHash('sha256').update(JSON.stringify(body)).digest('hex')}"`;
+      if (head && request.headers['if-none-match'] === headers.ETag) status = 304;
+    }
     if (this.fileOffline) return route.abort('failed');
+    if (head && this.holdHead) await this.holdHead;
     if (content && this.holdRead) await this.holdRead;
-    return route.fulfill({ status, headers, contentType: 'application/json', body: JSON.stringify(body) });
+    request.status = status;
+    return route.fulfill({ status, headers, contentType: 'application/json', ...(head ? {} : { body: JSON.stringify(body) }) });
   }
 }
 
@@ -61,7 +74,7 @@ async function openFiles(page, cloud) {
   const launcher = page.locator('.dock-launcher');
   await expect(launcher.getByRole('button')).toHaveCount(1);
   await launcher.getByRole('button', { name: /^Files / }).click();
-  await expect(file(page, 'src')).toBeVisible();
+  await expect(tree(page).getByRole('treeitem').first()).toBeVisible();
 }
 
 async function openText(page) {
@@ -79,6 +92,139 @@ function fileHostRequests(cloud) {
   return [...cloud.hostRequests, ...cloud.device.requests].filter(request =>
     /^(fs\.|lsp\.|git\.|moon\.|file\.|host\.open_path$)/.test(request.method));
 }
+
+async function expectFileValidation(page, session, path, action, status = 304) {
+  const reply = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return response.request().method() === 'HEAD'
+      && url.pathname === `/v1/sessions/${session}/files/content`
+      && url.searchParams.get('path') === path;
+  });
+  await action();
+  const response = await reply;
+  // HEAD is complete when its headers arrive; there is no response body.
+  expect(response.status()).toBe(status);
+  expect(new URL(response.url()).searchParams.get('allow_large')).toBe('true');
+  const validator = response.request().headers()['if-none-match'];
+  expect(validator).toMatch(/^W\/"content-v1-[a-f0-9]{64}"$/);
+  if (status === 304) expect(response.headers().etag).toBe(validator);
+}
+
+test('Cloud raster files reuse the file panel and restore the cached image after a text tab', async ({ page }, testInfo) => {
+  const cloud = new CloudFilesHarness(page);
+  const png = readFileSync(new URL('../../../deepseek/client/testdata/two-colors.png', import.meta.url)).toString('base64');
+  cloud.directories.set(`${sessionA}:`, [{ name: 'picture.png', is_dir: false }, { name: 'src', is_dir: true }]);
+  cloud.contents.set(`${sessionA}:picture.png`, { kind: 'binary_content', data_base64: png, media_type: 'image/png', sig: 'image:1' });
+  await cloud.install(); await cloud.goto(); await openFiles(page, cloud);
+  await file(page, 'picture.png').click();
+  const image = page.locator('.file-image-preview img');
+  await expect(image).toBeVisible();
+  await expect(image).toHaveAttribute('src', `data:image/png;base64,${png}`);
+  await expect(image).toHaveAttribute('alt', 'picture.png');
+  await expect.poll(() => image.evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
+  await page.screenshot({ path: testInfo.outputPath('cloud-image-preview.png'), fullPage: true });
+  await showTree(page);
+  await openText(page);
+  await expect(image).toHaveCount(0);
+  const reads = cloud.fileRequests.filter(request => request.content && request.path === 'picture.png').length;
+  await showTree(page); await file(page, 'picture.png').click();
+  await expect(image).toBeVisible();
+  const renderedImage = await image.elementHandle();
+  await expectFileValidation(page, sessionA, 'picture.png', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
+  expect(await renderedImage.evaluate(element => element.isConnected)).toBe(true);
+  await cloud.open(sessionB);
+  await expectFileValidation(page, sessionA, 'picture.png', () => cloud.open(sessionA));
+  await expect(image).toHaveAttribute('src', `data:image/png;base64,${png}`);
+  expect(cloud.fileRequests.filter(request => request.content && request.path === 'picture.png')).toHaveLength(reads);
+  expect(fileHostRequests(cloud)).toEqual([]);
+  expect(cloud.device.pageErrors).toEqual([]);
+});
+
+test('Cloud Office selections reuse the existing feedback composer and send relative file references', async ({ page }) => {
+  const cloud = new CloudFilesHarness(page);
+  cloud.directories.set(`${sessionA}:`, [{ name: 'book1.xlsx', is_dir: false }]);
+  cloud.contents.set(`${sessionA}:book1.xlsx`, { kind: 'binary_content', ...cloud.device.officeFiles['docs/book1.xlsx'] });
+  await cloud.install(); await cloud.goto(); await openFiles(page, cloud);
+  await file(page, 'book1.xlsx').click();
+  const cells = page.locator('.sheet-document td[data-cell]');
+  await expect(cells.first()).toBeVisible();
+  await expectFileValidation(page, sessionA, 'book1.xlsx', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
+  await cells.first().click();
+  const feedback = page.locator('.office-selection-preview');
+  await expect(feedback.locator('textarea')).toBeVisible();
+  await page.locator('#task').fill('Existing Cloud draft');
+  await feedback.locator('textarea').fill('Explain this cell');
+  await feedback.getByRole('checkbox').check();
+  await feedback.locator('textarea').press('Enter');
+  await expect(feedback).toBeHidden();
+  await expect(page.locator('.composer .mention-chip')).toContainText('book1.xlsx');
+  await expect(page.locator('#task')).toHaveValue('Existing Cloud draft');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(() => cloud.postCount).toBe(1);
+  const send = cloud.requests.find(request => request.method === 'POST' && request.path.endsWith('/messages'));
+  const content = JSON.parse(send.body).content;
+  const selection = JSON.parse(content.match(/<office_selection>([\s\S]*?)<\/office_selection>/)[1]);
+  expect(selection.source.file).toBe('book1.xlsx');
+  if (selection.source.reference?.file) expect(selection.source.reference.file).toBe('book1.xlsx');
+  expect(selection.comment).toBe('Explain this cell');
+  expect(content).toContain('Existing Cloud draft');
+  expect(fileHostRequests(cloud)).toEqual([]);
+  expect(cloud.device.pageErrors).toEqual([]);
+});
+
+test('Cloud PDF text and region feedback reuse the current PDF surface, capture and image input', async ({ page }, testInfo) => {
+  const cloud = new CloudFilesHarness(page);
+  cloud.directories.set(`${sessionA}:`, [{ name: 'report.pdf', is_dir: false }]);
+  cloud.contents.set(`${sessionA}:report.pdf`, { kind: 'binary_content', ...cloud.device.officeFiles['docs/report.pdf'] });
+  await cloud.install();
+  await page.route(`${cloudOrigin}/v1/sessions/${sessionA}/files/import`, async route => {
+    const headers = { 'Access-Control-Allow-Origin': authOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    return route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ path: '.openseek/attachments/fixture/capture.png' }) });
+  });
+  await cloud.goto(); await openFiles(page, cloud); await file(page, 'report.pdf').click();
+  await expect(page.locator('#openseek-office-surface')).toHaveAttribute('data-pdf-painted', 'true');
+  await expectFileValidation(page, sessionA, 'report.pdf', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
+  const text = page.locator('.textLayer [data-pdf-item]').first();
+  await text.evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+  const feedback = page.locator('.office-selection-preview');
+  await expect(feedback.locator('textarea')).toBeVisible();
+  await feedback.locator('textarea').fill('Explain this passage');
+  await feedback.getByRole('checkbox').check();
+  await feedback.locator('textarea').press('Enter');
+  await expect(feedback).toBeHidden();
+  const bounds = await page.locator('.pdfViewer canvas').first().boundingBox();
+  await page.getByRole('button', { name: 'Capture region', exact: true }).click();
+  await expect(page.locator('.pdf-region-capture')).toBeVisible();
+  await page.mouse.move(bounds.x + 30, bounds.y + 30); await page.mouse.down();
+  await page.mouse.move(bounds.x + 210, bounds.y + 120, { steps: 8 }); await page.mouse.up();
+  const capture = page.locator('.pdf-capture-feedback');
+  await expect(capture.locator('textarea')).toBeVisible();
+  await capture.locator('textarea').fill('Explain this region');
+  await capture.getByRole('checkbox').check();
+  await capture.locator('.agent-feedback-input-action').click();
+  await expect(capture).toBeHidden();
+  await expect(page.locator('.composer-image')).toHaveCount(1);
+  await page.locator('#task').fill('Keep the PDF context');
+  await page.screenshot({ path: testInfo.outputPath('cloud-pdf-capture.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(() => cloud.postCount).toBe(1);
+  const send = cloud.requests.find(request => request.method === 'POST' && request.path.endsWith('/messages'));
+  const content = JSON.parse(send.body).content;
+  expect(content[1]).toMatchObject({ type: 'image', media_type: 'image/png' });
+  const selections = [...content[0].text.matchAll(/<office_selection>([\s\S]*?)<\/office_selection>/g)].map(match => JSON.parse(match[1]));
+  expect(selections).toHaveLength(2);
+  expect(selections.every(selection => selection.source.file === 'report.pdf')).toBe(true);
+  const selectedText = selections.find(selection => selection.source.readable);
+  expect(selectedText.source.reference.file).toBe('report.pdf');
+  expect(content[0].text).toContain('Keep the PDF context');
+  expect(fileHostRequests(cloud)).toEqual([]);
+  expect(cloud.device.pageErrors).toEqual([]);
+});
 
 test('Cloud file links and mentions reuse source previews and the composer envelope', async ({ page }) => {
   const cloud = new CloudFilesHarness(page);
@@ -99,14 +245,14 @@ test('Cloud file links and mentions reuse source previews and the composer envel
   await expect(source(page).locator('h1')).toHaveCount(0);
   await page.locator('.workspace-file-card').click();
   await expect(source(page)).toContainText('<h1>Cloud source</h1>');
-  await expect(page.locator('.composer-attach')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Attach files', exact: true })).toBeVisible();
   const input = page.locator('#task');
-  const directories = () => cloud.fileRequests.filter(request => !request.content && !request.index);
+  const directories = () => cloud.fileRequests.filter(request => !request.content && !request.head && !request.index);
   const indexes = () => cloud.fileRequests.filter(request => request.index);
   const directoryReads = directories().length;
   await input.fill('@index');
   await expect(page.locator('.completion-item .completion-label')).toHaveText(['index.html']);
-  expect(indexes()).toHaveLength(1);
+  await expect.poll(() => indexes().length).toBe(1);
   expect(directories()).toHaveLength(directoryReads);
   await input.fill('@src/index');
   await expect(page.locator('.completion-item .completion-label')).toHaveText(['index.html']);
@@ -141,7 +287,7 @@ test('Cloud browses nested text files through the existing read-only Files pane'
   const cloud = new CloudFilesHarness(page);
   await cloud.install(); await cloud.goto(); await openFiles(page, cloud);
   await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Search', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Search', exact: true })).toHaveCount(1);
   await openText(page);
   expect(cloud.fileRequests.at(-1)).toMatchObject({ session: sessionA, path: 'src/hello #.mbt', content: true });
   expect(cloud.fileRequests.at(-1).headers.authorization).toBe('Bearer ts_fixture-123');
@@ -200,12 +346,37 @@ test('Cloud keeps Office and PDF previews in existing tabs and unsupported binar
   await page.locator('.dock-launcher').getByRole('button', { name: /^Files / }).click();
   await file(page, 'report.docx').click();
   await expect(page.locator('.word-page')).toBeVisible();
+  const wordPage = await page.locator('.word-page').elementHandle();
+  const wordReads = cloud.fileRequests.filter(request => request.content && request.path === 'report.docx').length;
+  await expectFileValidation(page, sessionA, 'report.docx', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
+  expect(await wordPage.evaluate(element => element.isConnected)).toBe(true);
+  await cloud.open(sessionB);
+  await expectFileValidation(page, sessionA, 'report.docx', () => cloud.open(sessionA));
+  await expect(page.locator('.word-page')).toBeVisible();
+  expect(cloud.fileRequests.filter(request => request.content && request.path === 'report.docx')).toHaveLength(wordReads);
   await expect(page.getByRole('button', { name: 'Annotate region', exact: true })).toBeDisabled();
   await showTree(page); await file(page, 'book1.xlsx').click();
   await expect(page.locator('.sheet-document table').first()).toBeVisible();
   await showTree(page); await file(page, 'report.pdf').click();
   await expect(page.locator('#openseek-office-surface')).toHaveAttribute('data-pdf-painted', 'true');
-  await expect(page.getByRole('button', { name: 'Capture region', exact: true })).toBeDisabled();
+  const pdfCanvas = await page.locator('.pdfViewer canvas').first().elementHandle();
+  const pdfReads = cloud.fileRequests.filter(request => request.content && request.path === 'report.pdf').length;
+  await expectFileValidation(page, sessionA, 'report.pdf', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
+  expect(await pdfCanvas.evaluate(element => element.isConnected)).toBe(true);
+  await cloud.open(sessionB);
+  await expectFileValidation(page, sessionA, 'report.pdf', () => cloud.open(sessionA));
+  await expect(page.locator('#openseek-office-surface')).toHaveAttribute('data-pdf-painted', 'true');
+  expect(cloud.fileRequests.filter(request => request.content && request.path === 'report.pdf')).toHaveLength(pdfReads);
+  await expect(page.getByRole('button', { name: 'Capture region', exact: true })).toBeEnabled();
+  const bounds = await page.locator('.pdfViewer canvas').first().boundingBox();
+  await page.getByRole('button', { name: 'Capture region', exact: true }).click();
+  await expect(page.locator('.pdf-region-capture')).toBeVisible();
+  await page.mouse.move(bounds.x + 30, bounds.y + 30); await page.mouse.down();
+  await page.mouse.move(bounds.x + 210, bounds.y + 120, { steps: 8 }); await page.mouse.up();
+  const capture = page.locator('.pdf-capture-feedback');
+  await expect(capture.locator('textarea')).toBeVisible();
+  await capture.locator('textarea').press('Escape');
+  await expect(capture).toBeHidden();
   await showTree(page); await file(page, 'image.png').click();
   await expect(page.locator('.viewer-notice')).toBeVisible();
   await expect(page.locator('.viewer-notice')).toContainText(/binary/i);
@@ -294,7 +465,7 @@ test('Cloud directory and file errors are visible and retry without Host fallbac
 });
 
 
-test('Cloud oversized previews require a fresh explicit click for each unrestricted read', async ({ page }, testInfo) => {
+test('changed Cloud oversized previews require a fresh explicit click for each unrestricted read', async ({ page }, testInfo) => {
   const cloud = new CloudFilesHarness(page);
   cloud.directories.set(`${sessionA}:`, [{ name: 'large.txt', is_dir: false }]);
   cloud.contents.set(`${sessionA}:large.txt`, { kind: 'oversized' });
@@ -316,17 +487,23 @@ test('Cloud oversized previews require a fresh explicit click for each unrestric
   await expect(preview).toHaveCount(0);
   expect(reads().map(request => request.allowLarge)).toEqual([null, 'true']);
   await showTree(page);
-  await page.getByRole('tab', { name: 'Files', exact: true }).click();
+  cloud.largePreviews.set(`${sessionA}:large.txt`, {
+    kind: 'content', content: 'Explicitly requested changed large preview.', sig: 'large:2', absolute: '/large.txt',
+  });
+  await expectFileValidation(page, sessionA, 'large.txt', () => page.getByRole('tab', { name: 'Files', exact: true }).click(), 200);
   await expect(preview).toBeVisible();
   expect(reads().at(-1).allowLarge).toBeNull();
   await preview.click();
-  await expect(source(page)).toContainText('Explicitly requested large preview.');
+  await expect(source(page)).toContainText('Explicitly requested changed large preview.');
+  cloud.largePreviews.set(`${sessionA}:large.txt`, {
+    kind: 'content', content: 'Explicitly requested generated large preview.', sig: 'large:3', absolute: '/large.txt',
+  });
   await page.locator('#task').fill('Update the file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(preview).toBeVisible();
   expect(reads().at(-1).allowLarge).toBeNull();
   await preview.click();
-  await expect(source(page)).toContainText('Explicitly requested large preview.');
+  await expect(source(page)).toContainText('Explicitly requested generated large preview.');
   await page.locator('.editor-tab.active').getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Show panel', exact: true }).click();
   await page.locator('.dock-launcher').getByRole('button', { name: /^Files / }).click();
@@ -405,7 +582,11 @@ test('Cloud open text and explicitly allowed large previews survive session swit
     await page.mouse.wheel(0, 100000);
     await expect(source(page).getByText('CLOUD_CACHE_END', { exact: true })).toBeVisible();
     const reads = cloud.fileRequests.filter(request => request.content).length;
-    await cloud.open(sessionB); await cloud.open(sessionA);
+    await cloud.open(sessionB);
+    await expectFileValidation(page, sessionA, name, () => cloud.open(sessionA));
+    await expect(source(page).getByText('CLOUD_CACHE_END', { exact: true })).toBeVisible();
+    expect(cloud.fileRequests.filter(request => request.content)).toHaveLength(reads);
+    await expectFileValidation(page, sessionA, name, () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
     await expect(source(page).getByText('CLOUD_CACHE_END', { exact: true })).toBeVisible();
     expect(cloud.fileRequests.filter(request => request.content)).toHaveLength(reads);
   }
@@ -415,6 +596,56 @@ test('Cloud open text and explicitly allowed large previews survive session swit
   await file(page, 'large.txt').click();
   await expect(page.getByRole('button', { name: 'Preview anyway', exact: true })).toBeVisible();
   expect(cloud.fileRequests.filter(request => request.content).at(-1).allowLarge).toBeNull();
+  expect(fileHostRequests(cloud)).toEqual([]);
+});
+
+test('changed oversized Cloud caches return to the size limit after a session switch', async ({ page }) => {
+  const cloud = new CloudFilesHarness(page);
+  cloud.directories.set(`${sessionA}:`, [{ name: 'large.txt', is_dir: false }]);
+  cloud.contents.set(`${sessionA}:large.txt`, { kind: 'oversized' });
+  cloud.largePreviews.set(`${sessionA}:large.txt`, { kind: 'content', content: 'Previously approved large body.', sig: 'large:1', absolute: '/large.txt' });
+  await cloud.install(); await cloud.goto(); await openFiles(page, cloud);
+  await file(page, 'large.txt').click();
+  const preview = page.getByRole('button', { name: 'Preview anyway', exact: true });
+  await preview.click();
+  await expect(source(page)).toContainText('Previously approved large body.');
+  await cloud.open(sessionB);
+  cloud.largePreviews.set(`${sessionA}:large.txt`, { kind: 'content', content: 'Changed large body needs new approval.', sig: 'large:2', absolute: '/large.txt' });
+  await expectFileValidation(page, sessionA, 'large.txt', () => cloud.open(sessionA), 200);
+  await expect(preview).toBeVisible();
+  await expect(source(page)).not.toContainText('Changed large body needs new approval.');
+  const reads = () => cloud.fileRequests.filter(request => request.content && request.path === 'large.txt');
+  expect(reads().map(request => request.allowLarge)).toEqual([null, 'true', null]);
+  await preview.click();
+  await expect(source(page)).toContainText('Changed large body needs new approval.');
+  expect(reads().map(request => request.allowLarge)).toEqual([null, 'true', null, 'true']);
+  expect(fileHostRequests(cloud)).toEqual([]);
+});
+
+test('a delayed Cloud validator cannot reload a restored session after a newer read', async ({ page }) => {
+  const cloud = new CloudFilesHarness(page);
+  await cloud.install(); await cloud.goto(); await openFiles(page, cloud); await openText(page);
+  const path = 'src/hello #.mbt';
+  cloud.contents.set(`${sessionA}:${path}`, { kind: 'content', content: '// Superseded A text', sig: 'superseded', absolute: `/${path}` });
+  let release;
+  cloud.holdHead = new Promise(resolve => { release = resolve; });
+  await page.evaluate(session => window.cloudInvalidateFiles(session), sessionA);
+  await expect.poll(() => cloud.fileRequests.filter(request => request.head).length).toBe(1);
+  await cloud.open(sessionB);
+  cloud.holdHead = null;
+  await page.locator('.dock-launcher').getByRole('button', { name: /^Files / }).click();
+  await openText(page);
+  await expect(source(page)).toContainText(`// ${sessionB}`);
+  cloud.contents.set(`${sessionA}:${path}`, { kind: 'content', content: '// Current A text', sig: 'current', absolute: `/${path}` });
+  await expectFileValidation(page, sessionA, path, () => cloud.open(sessionA), 200);
+  await expect(source(page)).toContainText('Current A text');
+  const reads = cloud.fileRequests.filter(request => request.content).length;
+  const oldResponse = page.waitForResponse(response => response.request().method() === 'HEAD' && response.url().includes(`/v1/sessions/${sessionA}/files/content`));
+  release();
+  await oldResponse;
+  await expect(source(page)).toContainText('Current A text');
+  await expect(source(page)).not.toContainText('Superseded A text');
+  expect(cloud.fileRequests.filter(request => request.content)).toHaveLength(reads);
   expect(fileHostRequests(cloud)).toEqual([]);
 });
 
@@ -435,4 +666,121 @@ test('a Cloud generation finishing off screen invalidates only its parked file c
   await cloud.open(sessionA);
   await expect(source(page)).toContainText('Background generation finished');
   expect(cloud.fileRequests.filter(request => request.content).at(-1).allowLarge).toBeNull();
+});
+
+test('Cloud text search reuses options, results, keyboard tabs and positioned file opens', async ({ page }, testInfo) => {
+  const cloud = new CloudFilesHarness(page);
+  cloud.contents.set(`${sessionA}:src/hello #.mbt`, { kind: 'content', content: 'fn hello {\n  // moon moon\n}', sig: 'search', absolute: '/src/hello #.mbt' });
+  const searches = [];
+  await cloud.install();
+  await page.route(`${cloudOrigin}/v1/sessions/*/files/search`, async route => {
+    const headers = { 'Access-Control-Allow-Origin': authOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    const body = route.request().postDataJSON(); searches.push(body);
+    if (body.query === '[') return route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ generation: body.generation, matches: [], match_count: 0, file_count: 0, limit_hit: false, cancelled: false, error_code: 'invalid_regex', error_message: 'regex parse error: unclosed character class' }) });
+    return route.fulfill({ headers, contentType: 'application/json', body: JSON.stringify({ generation: body.generation, matches: [{ path: 'src/hello #.mbt', line_number: 2, preview: '  // moon moon', preview_start_column: 1, ranges: [{ start_column: 6, end_column: 10 }, { start_column: 11, end_column: 15 }] }], match_count: 2, file_count: 1, limit_hit: false, cancelled: false }) });
+  });
+  await cloud.goto(); await openFiles(page, cloud);
+  const filesTab = page.getByRole('tab', { name: 'Files', exact: true });
+  await filesTab.focus(); await page.keyboard.press('ArrowRight');
+  const searchTab = page.getByRole('tab', { name: 'Search', exact: true });
+  await expect(searchTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Changes', exact: true })).toHaveCount(0);
+  const search = page.locator('.workspace-search');
+  await expect(search.getByRole('button', { name: 'Code search', exact: true })).toHaveCount(0);
+  await search.getByTitle('Match Case', { exact: true }).click();
+  await search.getByTitle('Match Whole Word', { exact: true }).click();
+  await search.getByTitle('Use Regular Expression', { exact: true }).click();
+  await search.getByTitle('Toggle Search Details', { exact: true }).click();
+  await search.getByRole('textbox', { name: 'files to include', exact: true }).fill('src/**/*.mbt');
+  await search.getByRole('textbox', { name: 'files to exclude', exact: true }).fill('**/*_test.mbt');
+  const query = search.getByRole('textbox', { name: 'Search', exact: true });
+  await query.fill('['); await query.press('Enter');
+  await expect(search.getByRole('alert')).toContainText('regex parse error: unclosed character class');
+  await query.fill('moon'); await query.press('Enter');
+  await expect(search.locator('.search-summary')).toHaveText('2 matches in 1 file');
+  await expect(search.getByRole('alert')).toHaveCount(0);
+  expect(searches.at(-1)).toMatchObject({ query: 'moon', case_sensitive: true, whole_word: true, regex: true, include_glob: 'src/**/*.mbt', exclude_glob: '**/*_test.mbt' });
+  expect(Object.keys(searches.at(-1)).sort()).toEqual(['query', 'case_sensitive', 'whole_word', 'regex', 'include_glob', 'exclude_glob', 'generation', 'max_results'].sort());
+  await expect(search.locator('.search-match-highlight')).toHaveText(['moon', 'moon']);
+  await page.screenshot({ path: testInfo.outputPath('cloud-search.png'), fullPage: true });
+  await search.locator('.search-result-row').getByRole('button', { name: /moon moon/ }).click();
+  await expect(source(page)).toContainText('moon moon');
+  expect(cloud.fileRequests.some(request => request.content && request.path === 'src/hello #.mbt')).toBe(true);
+  expect(fileHostRequests(cloud)).toEqual([]);
+  expect(cloud.device.pageErrors).toEqual([]);
+});
+
+test('Cloud file events refresh the visible preview, keep other tabs lazy, and reconnect without read-epoch churn', async ({ page }) => {
+  const cloud = new CloudFilesHarness(page);
+  cloud.directories.get(`${sessionA}:`).push({ name: 'background.txt', is_dir: false });
+  cloud.contents.set(`${sessionA}:background.txt`, { kind: 'content', content: 'Old background', sig: 'old', absolute: '/background.txt' });
+  await cloud.install(); await cloud.goto(); await openFiles(page, cloud); await openText(page);
+  await showTree(page); await file(page, 'background.txt').click();
+  await expect(source(page)).toContainText('Old background');
+  await showTree(page); await file(page, 'hello #.mbt').click();
+  await expect(source(page)).toContainText('Cloud text');
+  const connections = () => cloud.requests.filter(request => request.path.endsWith('/files/events'));
+  await expect.poll(() => connections().length).toBe(1);
+  const backgroundReads = cloud.fileRequests.filter(request => request.content && request.path === 'background.txt').length;
+  cloud.contents.set(`${sessionA}:src/hello #.mbt`, { kind: 'content', content: 'Changed visible', sig: 'new', absolute: '/src/hello #.mbt' });
+  cloud.contents.set(`${sessionA}:background.txt`, { kind: 'content', content: 'Changed background', sig: 'new', absolute: '/background.txt' });
+  await page.evaluate(session => window.cloudInvalidateFiles(session), sessionA);
+  await expect(source(page)).toContainText('Changed visible');
+  expect(cloud.fileRequests.filter(request => request.content && request.path === 'background.txt')).toHaveLength(backgroundReads);
+  expect(connections()).toHaveLength(1);
+  await showTree(page); await file(page, 'background.txt').click();
+  await expect(source(page)).toContainText('Changed background');
+  expect(cloud.fileRequests.filter(request => request.content && request.path === 'background.txt')).toHaveLength(backgroundReads + 1);
+  await page.evaluate(session => window.cloudCloseFileEvents(session), sessionA);
+  await expect.poll(() => connections().length).toBe(2);
+  await expect(source(page)).toContainText('Changed background');
+  await cloud.open(sessionB);
+  await expect.poll(() => cloud.fileStreamCancellations).toBe(1);
+  const reads = cloud.fileRequests.length;
+  await page.evaluate(session => window.cloudInvalidateFiles(session), sessionA);
+  expect(cloud.fileRequests).toHaveLength(reads);
+  expect(fileHostRequests(cloud)).toEqual([]);
+  expect(cloud.device.pageErrors).toEqual([]);
+});
+
+for (const [status, message] of [[401, 'Your account sign-in expired'], [404, 'HTTP 404']]) {
+  test(`Cloud cached preview validation shows HTTP ${status} without reading another body`, async ({ page }) => {
+    const cloud = new CloudFilesHarness(page);
+    await cloud.install(); await cloud.goto(); await openFiles(page, cloud); await openText(page);
+    const reads = cloud.fileRequests.filter(request => request.content).length;
+    cloud.fileStatus = status;
+    await expectFileValidation(page, sessionA, 'src/hello #.mbt', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA), status);
+    await showTree(page);
+    await expect(page.locator('.file-panel-error')).toContainText(message);
+    expect(cloud.fileRequests.filter(request => request.content)).toHaveLength(reads);
+    expect(fileHostRequests(cloud)).toEqual([]);
+    expect(cloud.device.pageErrors).toEqual([]);
+  });
+}
+
+test('Cloud validation handles bodyless browser HEAD responses for changed and unchanged content', async ({ page }) => {
+  const cloud = new CloudFilesHarness(page);
+  await cloud.install();
+  await page.addInitScript(() => {
+    const original = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await original(...args);
+      // Route interception can supply a stream for HEAD. Browser fetch uses
+      // null for its body; exercise that contract without adding any content.
+      return args[1]?.method === 'HEAD'
+        ? new Response(null, { status: response.status, headers: response.headers })
+        : response;
+    };
+  });
+  await cloud.goto(); await openFiles(page, cloud); await openText(page);
+  const reads = cloud.fileRequests.filter(request => request.content).length;
+  cloud.contents.set(`${sessionA}:src/hello #.mbt`, { kind: 'content', content: 'Bodyless HEAD changed', sig: 'changed', absolute: '/src/hello #.mbt' });
+  await expectFileValidation(page, sessionA, 'src/hello #.mbt', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA), 200);
+  await expect(source(page)).toContainText('Bodyless HEAD changed');
+  await expectFileValidation(page, sessionA, 'src/hello #.mbt', () => page.evaluate(session => window.cloudInvalidateFiles(session), sessionA));
+  await expect(source(page)).toContainText('Bodyless HEAD changed');
+  expect(cloud.fileRequests.filter(request => request.content)).toHaveLength(reads + 1);
+  expect(cloud.device.pageErrors).toEqual([]);
+  expect(await page.evaluate(() => window.cloudUnhandledRejections)).toEqual([]);
 });

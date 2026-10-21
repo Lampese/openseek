@@ -27,6 +27,7 @@ pub(all) enum FileContent {
   // contract cannot carry ZIP bytes in a String. The renderer consumes them
   // for `.docx`, `.xlsx`, and `.pdf` files.
   Office(data_base64~ : String, media_type~ : String, sig~ : String)
+  Raster(url~ : String, sig~ : String)
   // `sig` is the file's mtime signature, stat'ed by the host from the same
   // handle it read — the baseline `stat_files` results are compared against.
   Content(content~ : String, sig~ : String)
@@ -52,6 +53,7 @@ pub(all) enum TabState {
   // bytes and the runtime state on this tab; other tabs never receive events
   // from its asynchronous loader.
   TabPdf(document~ : PdfDocument, sig~ : String)
+  TabImage(url~ : String, sig~ : String)
   TabBinary
   TabOversized
   // The host could not read this file. Unlike `TabDeleted`, this keeps the
@@ -588,6 +590,9 @@ pub(all) struct State {
   // Advancing this value on either boundary rejects reads, listings, and
   // stats that outlived the checkout they addressed.
   request_epoch : Int32
+  // Cached Cloud surfaces outlive content revalidation, but never an owner
+  // or credential switch. Their callbacks use this separate incarnation.
+  cloud_surface_epoch : Int32
   // Page-lifetime navigation token. Transcript file-link clicks capture it;
   // every competing editor navigation advances it, so a slower older click
   // cannot move the viewer after a newer user action has taken precedence.
@@ -743,6 +748,7 @@ pub fn State::empty() -> State {
     review_navigation_display: None,
     changes_generation: 0,
     request_epoch: 0,
+    cloud_surface_epoch: 0,
     file_link_generation: 0,
     changes_head: None,
     changes_head_known: false,
@@ -921,16 +927,28 @@ pub fn Ctx::root(self : Ctx) -> @common.Uri? {
 
 ///|
 fn Ctx::search_input(self : Ctx) -> @grep_search.Input? {
-  self.owner
-  .host()
-  .map(owner => {
-    @grep_search.Input(
-      owner~,
-      root=self.root(),
-      model=self.model,
-      thinking=self.thinking,
-    )
-  })
+  match self.owner {
+    Host(owner) =>
+      Some(
+        @grep_search.Input(
+          owner~,
+          root=self.root(),
+          model=self.model,
+          thinking=self.thinking,
+        ),
+      )
+    Cloud(..) => {
+      guard self.root() is Some(root) && self.cloud_files is Some(files) else {
+        return None
+      }
+      Some(
+        @grep_search.Input::cloud(owner=self.owner, root~, access={
+          token: files.token,
+          epoch: files.epoch,
+        }),
+      )
+    }
+  }
 }
 
 ///|
@@ -1038,7 +1056,7 @@ pub(all) enum Msg {
   OfficeRegionDismissed(OfficeRegionPreview)
   PdfCaptureRequested
   PdfCaptureFinished(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     sig~ : String,
@@ -1341,6 +1359,17 @@ pub(all) enum Msg {
   // the one cheap signal that covers them. `owner` fences a background
   // conversation's finish.
   RunSettled(owner~ : @interop.ConversationIdentity)
+  WorkspaceInvalidated(
+    owner~ : @interop.ConversationIdentity,
+    auth_epoch~ : Int32
+  )
+  FileVersionChecked(
+    owner~ : @interop.ConversationIdentity,
+    epoch~ : Int32,
+    path~ : @common.Uri,
+    sig~ : String,
+    unchanged~ : Bool
+  )
   // Files outside the checkout, or whose watcher failed, share one stat tick.
   RefreshExternalFiles
   // A `stat_files` reply: each open tab's current mtime signature, or that
