@@ -288,7 +288,14 @@ pub fn panel(
               ),
               @html.div(
                 id="jobs-history-content",
-                hidden=!state.history_expanded,
+                class=if state.history_expanded {
+                  "jobs-history-content open"
+                } else {
+                  "jobs-history-content"
+                },
+                attrs=@html.Attrs::build()
+                  .aria_hidden((!state.history_expanded).to_string())
+                  .inert(!state.history_expanded),
                 content,
               ),
             ]

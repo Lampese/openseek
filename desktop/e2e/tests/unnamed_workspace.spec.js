@@ -36,10 +36,20 @@ for (const legacy of [false, true]) {
     if (legacy) {
       const local = page.locator('.conversation-row[title="legacy-chat"]');
       await cloudFolder.click();
-      await expect(hint).toHaveCount(0);
+      await expect(cloudFolder).toHaveAttribute('aria-expanded', 'false');
+      await expect(hint).not.toBeInViewport();
+      expect(await page.locator('.cloud-sign-in button').evaluate(button => {
+        button.focus();
+        return document.activeElement === button;
+      })).toBe(false);
       await expect(local).toBeVisible();
       await localFolder.click();
-      await expect(local).toHaveCount(0);
+      await expect(localFolder).toHaveAttribute('aria-expanded', 'false');
+      await expect(local).not.toBeInViewport();
+      expect(await local.locator('.conversation-open').evaluate(button => {
+        button.focus();
+        return document.activeElement === button;
+      })).toBe(false);
       await expect(cloudFolder).toHaveAttribute('aria-expanded', 'false');
       await localFolder.click();
       await cloudFolder.click();
