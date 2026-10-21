@@ -43,6 +43,7 @@ test: test-moon test-cram test-app-server test-turn-finish test-subagents test-w
 # Run the offline CLI documentation tests (Git Bash on Windows).
 test-cram:
     moon cram test tests/cram --shell '{{ CRAM_SHELL }}'
+    moon cram test openseek_tui/tests/cram --shell '{{ CRAM_SHELL }}'
 
 # Verify direct service startup and sibling engine resolution after changing workspace.
 test-app-server:

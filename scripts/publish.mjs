@@ -14,6 +14,9 @@ const modules = {
   // fresh release frontend bundle, so `moonx moonbitlang/inspect` needs no
   // files beside the wasm binary (see prepareInspect).
   inspect: { directory: "inspect", name: "moonbitlang/inspect", prepare: prepareInspect },
+  // The interactive terminal UI. It runs the moonbitlang/openseek release its
+  // moon.mod imports, so publish the root module first when it bumps that.
+  openseek_tui: { directory: "openseek_tui", name: "moonbitlang/openseek_tui" },
 };
 
 const vizBundle = "_build/js/release/build/moonbitlang/openseek-viz-app/openseek-viz-app.js";
@@ -39,7 +42,7 @@ async function prepareInspect(repository, staged) {
 // These exclusions belong to the root module only. A repository-level
 // .moonignore would also exclude the members when publishing them separately.
 const rootExclusions = [
-  "desktop", "editor", "protocol", "tools_sdk", "cmd/viz_app", "inspect",
+  "desktop", "editor", "protocol", "tools_sdk", "cmd/viz_app", "inspect", "openseek_tui",
   "tests", "eval", "docs/plans", ".github", ".agents", ".codex",
   "moon.work", "justfile", "AGENTS.md", "agent-improvement-guide.md",
   "improvement.md", "shrink_package.md", "desktop-dev.html", "web/viz_app.js",
@@ -85,7 +88,7 @@ function moon(args, cwd) {
   });
 }
 
-const usage = "Usage: node scripts/publish.mjs <root|protocol|tools_sdk|inspect> [--stage-only <dir>]";
+const usage = "Usage: node scripts/publish.mjs <root|protocol|tools_sdk|inspect|openseek_tui> [--stage-only <dir>]";
 
 // Stage `target` and publish it. With `stageOnly`, write the staged package to
 // that directory and stop, so CI or a person can build and inspect exactly

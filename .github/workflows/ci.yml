@@ -160,7 +160,9 @@ jobs:
 
       - name: Cram (offline CLI docs)
         if: matrix.target == 'native'
-        run: moon cram test tests/cram
+        run: |
+          moon cram test tests/cram
+          moon cram test openseek_tui/tests/cram
 
       - name: App-server launch, turn lifecycle and subagents (offline CLI)
         if: matrix.target == 'native'
@@ -174,6 +176,48 @@ jobs:
           moon run tests/integration/workers.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
           moon run tests/integration/directory_workers.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
           moon run tests/integration/directory_recovery.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
+
+  # The terminal UI kills the engine's whole process tree, which has its own
+  # Windows implementation. Check and test only the openseek_tui packages:
+  # they build against this checkout's openseek, protocol and editor members
+  # like every other workspace member. Formatting, generated interfaces and
+  # the cram suite (POSIX `sh`) stay on the Linux check job.
+  tui-windows:
+    name: openseek_tui (stable, native, windows)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up MSVC
+        # The native backend compiles its C output with the MSVC toolchain.
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up MoonBit
+        shell: pwsh
+        run: |
+          $env:MOONBIT_INSTALL_VERSION = (Get-Content desktop/.moonbit-version -Raw).Trim()
+          if (-not $env:MOONBIT_INSTALL_VERSION) { throw "desktop/.moonbit-version is empty" }
+          Invoke-RestMethod https://cli.moonbitlang.com/install/powershell.ps1 | Invoke-Expression
+          "$env:USERPROFILE\.moon\bin" >> $env:GITHUB_PATH
+
+      - name: Show MoonBit version
+        run: moon version --all
+
+      - name: Update MoonBit package registry
+        run: moon update
+
+      - name: Check and test the openseek_tui packages
+        shell: pwsh
+        run: |
+          $packages = @(git ls-files -- 'openseek_tui/*moon.pkg' | ForEach-Object { Split-Path -Parent $_ })
+          if ($packages.Count -eq 0) { throw "no openseek_tui packages found" }
+          moon check --target native --deny-warn @packages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          moon test --target native @packages
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # cmd/viz_app is a separate MoonBit module and owns its browser test runner.
   # Keep it out of Desktop's recipe so either application can be tested alone.
