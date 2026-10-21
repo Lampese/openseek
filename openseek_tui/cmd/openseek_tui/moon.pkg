@@ -1,0 +1,14 @@
+import {
+  "moonbitlang/openseek_tui/cmd/tui",
+  "moonbitlang/openseek/cli",
+  "moonbitlang/async",
+  "moonbitlang/async/stdio",
+  "moonbitlang/core/env",
+  "moonbitlang/x/sys",
+}
+
+warnings = "+unnecessary_annotation"
+
+supported_targets = "+native"
+
+pkgtype(kind: "executable")

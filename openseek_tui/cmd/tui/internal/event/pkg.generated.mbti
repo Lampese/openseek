@@ -1,0 +1,54 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/openseek_tui/cmd/tui/internal/event"
+
+// Values
+pub fn decode_event(Json) -> AgentEvent?
+
+// Errors
+
+// Types and methods
+pub(all) enum AgentEvent {
+  AgentStep
+  StreamRetry
+  ReasoningDelta(String)
+  AssistantDelta(String)
+  ReasoningMessage(String)
+  SteerApplied(AppliedSteer)
+  SteerDropped(String, submission_id~ : String?)
+  BackgroundNotice(String)
+  AssistantMessage(String)
+  SessionError(String)
+  Usage(UsageInfo)
+  ToolResult(ToolResultEvent)
+  AgentFinished(String)
+  AgentAborted(String)
+  MaxStepsExhausted
+  AgentError(String)
+  CommandRejected(String)
+  CompactionFinished(String)
+  GoalUpdated(String?)
+  GoalContinue(Int32)
+  GoalBudgetExhausted
+  ContextYield(String)
+  SubrunStarted(kind~ : String, label~ : String)
+  SubrunFinished(status~ : String, steps~ : Int32, unaccounted~ : String?)
+}
+
+pub(all) enum AppliedSteer {
+  Prompt(String, submission_id~ : String?)
+  Notice(String)
+}
+
+pub(all) struct ToolResultEvent {
+  name : String
+  content : String
+  is_error : Bool
+}
+
+pub struct UsageInfo {
+  total_tokens : Int32
+}
+
+// Type aliases
+
+// Traits
