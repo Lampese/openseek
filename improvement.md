@@ -7,9 +7,9 @@ bottom of the matching section.
 
 ## TUI
 
-The TUI now lives in its own repository,
-[`moonbitlang/openseek_tui`](https://github.com/moonbitlang/openseek_tui); its
-checklist moved with it.
+The TUI is the `openseek_tui/` workspace member (its own module,
+`moonbitlang/openseek_tui`); its checklist stayed with the former
+repository, so add new TUI items here.
 
 ## Engine / agent
 

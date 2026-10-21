@@ -1,0 +1,23 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/openseek_tui/tui/internal/render"
+
+import {
+  "moonbitlang/openseek_tui/tui/completion",
+  "moonbitlang/openseek_tui/tui/core",
+  "moonbitlang/openseek_tui/tui/doc",
+  "moonbitlang/openseek_tui/tui/internal/composer",
+  "moonbitlang/openseek_tui/tui/internal/surface",
+}
+
+// Values
+pub fn completion_menu_fits(max_rows~ : Int32) -> Bool
+
+pub fn composer_surface(@composer.Model, activity~ : @doc.Text?, queued_inputs~ : Array[@core.Input], completion? : @completion.Model, status~ : @doc.Text, notice~ : @doc.Text?, cols~ : Int32, max_rows~ : Int32) -> @surface.Surface
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits

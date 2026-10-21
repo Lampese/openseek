@@ -115,7 +115,7 @@ git submodule update --init editor/vscode     # opt-in performance suite
 | `moonbitlang/openseek/agent_review` | Read-only, compiler-grounded code-review engine behind the `review` kind (`openseek run --kind review`). | `agent_review/README.mbt.md` |
 | `moonbitlang/openseek/cmd/openseek` | Deprecated CLI compatibility entry point; use the root package. | `cmd/openseek/README.md` |
 | `moonbitlang/openseek/internal/openseek` | The CLI's dispatcher and implementation: `options` (argparse tree), `setup` (workspace, prompt, session), `execution` (event sink, approvals, tools, review gate), `run`, `serve`, and `commands`. | `internal/openseek/README.md` |
-| `moonbitlang/openseek/cli` | Shared command-main helpers: the agent options (`--api-key`, `--model`, …) and failure-text sanitizer used by `openseek` and the out-of-tree `openseek_tui`. | — |
+| `moonbitlang/openseek/cli` | Shared command-main helpers: the agent options (`--api-key`, `--model`, …) and failure-text sanitizer used by `openseek` and `openseek_tui`. | — |
 | `moonbitlang/openseek/viz` | Browser viewer for durable session logs (JS). | `viz/README.md` |
 | `moonbitlang/inspect` (in `inspect/`, own module) | HTTP server (native or wasm) that serves the visualizer over recorded sessions. | `inspect/README.md` |
 | `moonbitlang/openseek-viz-app` (in `cmd/viz_app/`, own module) | JS entry point compiled into the visualizer bundle. | `viz/README.md` |
@@ -171,8 +171,8 @@ filesystem, and process APIs.
 
 The root package is the headless automation entry point — a subcommand
 tree (`run`/`serve`/`mcp`/`sessions`). The interactive terminal
-UI is the separate `openseek_tui` binary, maintained in its own repository,
-[moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui). `openseek run` parses arguments and
+UI is the separate `openseek_tui` binary, its own module in
+[`openseek_tui/`](openseek_tui/README.md). `openseek run` parses arguments and
 runs the agent package. The agent sends DeepSeek native function tools and
 supports eleven local tools: `mbtx` — both the scripting surface and the
 command runner, spawning processes through the shell-free
@@ -321,10 +321,12 @@ agent reads the file before applying it. See `agent_skill/README.mbt.md`.
 
 ## Terminal UI
 
-The interactive terminal UI is the `openseek_tui` binary, maintained in its own
-repository: [moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui). It depends on this module
-(`moonbitlang/openseek` on mooncakes) for the agent, session, and provider
-packages, and spawns the `openseek` engine built here in `serve` mode. Its
+The interactive terminal UI is the `openseek_tui` binary, the
+`moonbitlang/openseek_tui` module in [`openseek_tui/`](openseek_tui/README.md).
+It is a member of this workspace, so it builds against this checkout's
+`moonbitlang/openseek` (agent, session, and provider packages) and
+`moonbitlang/openseek_protocol`, and drives the `openseek` engine in `serve`
+mode. Its
 sessions are interoperable with the CLI's: `moon run . -- sessions
 list` shows what is resumable from either.
 

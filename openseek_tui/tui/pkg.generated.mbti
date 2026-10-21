@@ -1,0 +1,47 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/openseek_tui/tui"
+
+import {
+  "moonbitlang/openseek_tui/tui/completion",
+  "moonbitlang/openseek_tui/tui/core",
+  "moonbitlang/openseek_tui/tui/doc",
+  "moonbitlang/openseek_tui/tui/slash",
+}
+
+// Values
+pub async fn[T] with_ui(config? : Config, async (Ui) -> T) -> T
+
+// Errors
+
+// Types and methods
+type Config
+pub fn Config::Config(esc_timeout_ms? : Int32, composer_max_rows? : Int32, slash_commands? : Array[@slash.SlashCommandSpec]) -> Self
+
+type Ui
+pub async fn Ui::append_item(Self, @core.TranscriptItem) -> Unit
+pub fn Ui::columns(Self) -> Int32
+pub fn Ui::input_idle(Self) -> Bool
+pub async fn Ui::read_event(Self) -> @core.Event
+#deprecated
+pub async fn Ui::set_activity(Self, @doc.Text?) -> Unit
+pub async fn Ui::set_live_view(Self, status~ : @doc.Text, activity~ : @doc.Text?, queued_inputs~ : Array[@core.Input]) -> Unit
+#deprecated
+pub async fn Ui::set_queued_inputs(Self, Array[@core.Input]) -> Unit
+#deprecated
+pub async fn Ui::set_status(Self, @doc.Text) -> Unit
+pub fn Ui::submission_delivered(Self) -> Unit
+
+// Type aliases
+pub using @completion {type CompletionItem}
+
+pub using @core {type Event}
+
+pub using @core {type Input}
+
+pub using @slash {type SlashCommandSpec}
+
+pub using @core {type ToolStatus}
+
+pub using @core {type TranscriptItem}
+
+// Traits

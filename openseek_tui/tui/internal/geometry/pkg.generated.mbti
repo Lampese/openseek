@@ -1,0 +1,24 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/openseek_tui/tui/internal/geometry"
+
+import {
+  "moonbitlang/openseek_tui/tui/internal/terminal_size",
+}
+
+// Values
+pub fn clamp_height(@terminal_size.TerminalSize, height~ : Int32) -> Int32
+
+pub fn clamp_top(@terminal_size.TerminalSize, height~ : Int32, top~ : Int32) -> Int32
+
+// Errors
+
+// Types and methods
+type Geometry
+pub fn Geometry::Geometry(top~ : Int32, height~ : Int32) -> Self
+pub fn Geometry::bottom(Self) -> Int32
+pub fn Geometry::height(Self) -> Int32
+pub fn Geometry::top(Self) -> Int32
+
+// Type aliases
+
+// Traits

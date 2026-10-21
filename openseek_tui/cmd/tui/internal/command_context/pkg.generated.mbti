@@ -1,0 +1,29 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/openseek_tui/cmd/tui/internal/command_context"
+
+// Values
+pub async fn collect_shell_output(String, cwd? : String, max_output_chars? : Int32) -> ShellOutput
+
+pub fn encode(String, Result[ShellOutput, Error]) -> String
+
+pub fn parse(String) -> ShellCommand?
+
+// Errors
+
+// Types and methods
+pub struct ShellCommand {
+  command : String
+  exit : String
+  output : Array[String]
+  output_limit_reached : Bool
+}
+
+pub(all) struct ShellOutput {
+  exit_code : Int32?
+  text : String
+  output_limit_reached : Bool
+}
+
+// Type aliases
+
+// Traits

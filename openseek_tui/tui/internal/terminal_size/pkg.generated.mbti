@@ -1,0 +1,17 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/openseek_tui/tui/internal/terminal_size"
+
+// Values
+pub let default : TerminalSize
+
+// Errors
+
+// Types and methods
+type TerminalSize
+pub fn TerminalSize::TerminalSize(rows~ : Int32, cols~ : Int32) -> Self
+pub fn TerminalSize::cols(Self) -> Int32
+pub fn TerminalSize::rows(Self) -> Int32
+
+// Type aliases
+
+// Traits

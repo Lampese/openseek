@@ -1,0 +1,36 @@
+import {
+  "moonbitlang/openseek_protocol" @protocol,
+  "moonbitlang/jsonl",
+  "moonbitlang/openseek/agent_session",
+  "moonbitlang/openseek/agent_session/store",
+  "moonbitlang/openseek_tui/cmd/tui/internal/command_context",
+  "moonbitlang/openseek_tui/cmd/tui/internal/event",
+  "moonbitlang/openseek_tui/cmd/tui/internal/process_tree",
+  "moonbitlang/openseek/deepseek",
+  "moonbitlang/openseek/cli",
+  "moonbitlang/openseek_tui/tui" @ui,
+  "moonbitlang/openseek_tui/tui/doc",
+  "moonbitlang/openseek_tui/tui/style",
+  "moonbit-community/displaytext",
+  "moonbit-community/tty",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/os_error",
+  "moonbitlang/async/process",
+  "moonbitlang/async/stdio",
+  "bobzhang/open_in_browser",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/encoding/percent",
+  "moonbitlang/core/env",
+  "moonbitlang/x/sys",
+}
+
+import {
+  "moonbitlang/openseek/testkit/filesystem" @vfs,
+} for "wbtest"
+
+warnings = "+missing_doc+test_unqualified_package+unnecessary_annotation+unnecessary_view_op+ambiguous_range_direction+unqualified_local_using"
+
+supported_targets = "+native"

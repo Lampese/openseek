@@ -1,13 +1,13 @@
 ///|
 /// Shared helpers for the command mains (the root CLI, the `eval` harness
-/// mains, and the out-of-tree `openseek_tui` binary): accessors over
+/// mains, and the `openseek_tui` binary): accessors over
 /// `@argparse.Matches`, the shared agent options, and the sanitizer every
 /// command runs untrusted text through before printing it. Each main used to
 /// carry its own byte-identical copies; keeping one copy here removes the risk
 /// of the copies drifting apart. Error messages are part of each command's
 /// contract and must not change when helpers move. This package is public (not
-/// `internal`) because the terminal UI lives in its own module,
-/// `moonbitlang/openseek_tui`, and imports it.
+/// `internal`) because the terminal UI is its own module,
+/// `moonbitlang/openseek_tui` (in `openseek_tui/`), and imports it.
 
 ///|
 /// Parse `input` as a strictly positive integer; `label` names the offending

@@ -12,15 +12,15 @@ One shared engine, three frontends. The root CLI package is the engine (headless
 automation: `run`/`serve`/`mcp`/`sessions`; the desktop app and the
 viz server are separate executables that spawn or read from it): its `serve`
 mode reads JSONL commands on stdin and streams typed JSONL events
-(`moonbitlang/openseek_protocol`) on stdout. The terminal UI (`openseek_tui`, in
-its own repository, [moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui)), the desktop app,
+(`moonbitlang/openseek_protocol`) on stdout. The terminal UI (`openseek_tui`, its own module in
+[`openseek_tui/`](../openseek_tui/README.md)), the desktop app,
 and headless `run` all drive that same engine and event stream. Durable state lives in append-only session files that
 the visualizer reads directly.
 
 ```mermaid
 flowchart LR
   subgraph frontends [Frontends]
-    TUI["openseek_tui — terminal UI<br/>(separate repo: moonbitlang/openseek_tui)"]
+    TUI["openseek_tui — terminal UI<br/>(own module: openseek_tui/)"]
     DESKTOP["openseek_desktop — desktop app<br/>(CEF shell + JS frontend)"]
     VIZ["inspect + viz —<br/>session visualizer (browser)"]
   end

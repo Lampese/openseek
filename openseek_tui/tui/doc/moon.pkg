@@ -1,0 +1,10 @@
+import {
+  "moonbitlang/openseek_tui/tui/internal/text",
+  "moonbitlang/openseek_tui/tui/internal/surface",
+  "moonbit-community/displaytext",
+  "moonbitlang/openseek_tui/tui/style",
+}
+
+supported_targets = "native"
+
+warnings = "+missing_doc+test_unqualified_package+unnecessary_annotation+unnecessary_view_op+ambiguous_range_direction+unqualified_local_using"
