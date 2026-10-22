@@ -122,7 +122,11 @@ fn focus_channel(
   channel : @interop.ChannelId,
 ) -> (@cmd.Cmd, Model) {
   guard channel != model.focused else { return (@cmd.none, model) }
-  let focus_cmd = if model.device_state(channel) is Some(dev) {
+  let focus_cmd = if channel is Remote(id) &&
+    model.ssh_ui.hosts.any(host => host.id == id) &&
+    !model.ssh_online(id) {
+    @cmd.none
+  } else if model.device_state(channel) is Some(dev) {
     @cmd.batch([
       fetch_host_settings(dispatch, channel, dev.connection_generation),
       fetch_installed_skills(dispatch, channel),
@@ -504,6 +508,11 @@ fn adopt_projects(
   let workspace_settings_request_generation = dev.workspace_settings_request_generation +
     1
   let commands : Array[@cmd.Cmd] = []
+  if model.is_desktop &&
+    channel is Remote(id) &&
+    model.ssh_ui.hosts.any(host => host.id == id) {
+    commands.push(save_ssh_projects(dispatch, id, paths))
+  }
   for path in paths {
     commands.push(
       fetch_worktrees(
@@ -1560,6 +1569,17 @@ fn terminal_ctx(model : Model) -> @terminal.Ctx {
     None => false
   }
   @terminal.Ctx(
+    connection_notice?=match active.owner.channel {
+      Remote(id) if model.ssh_ui.hosts.any(host => host.id == id) =>
+        Some(ssh_connection_status(model, id))
+      _ => None
+    },
+    host_name?=model.ssh_ui.hosts
+      .iter()
+      .find_first(host => {
+        @interop.ChannelId::Remote(host.id) == active.owner.channel
+      })
+      .map(host => host.display_label()),
     channel=active.owner.channel,
     session=active.owner.session,
     placement=active.placement,
@@ -1600,6 +1620,8 @@ fn sync_file_panel(
 fn covering_overlay(model : Model) -> Bool {
   (model.narrow && model.sidebar_open) ||
   model.project_picker is Some(_) ||
+  model.ssh_ui.editor_open ||
+  model.ssh_ui.details is Some(_) ||
   model.export_dialog.is_open() ||
   model.session_import_dialog.is_open() ||
   model.workspace_settings_dialog is Some(_) ||
@@ -1798,6 +1820,7 @@ fn update(
     | CodexOpenThread(_)
     | OpenCodex
     | OpenSetup
+    | OpenLocalApiSettings
     | OpenSkills
     | OpenSchedules
     | Navigation(Back | Forward)
@@ -2232,6 +2255,15 @@ fn update_msg(
   msg : Msg,
   model : Model,
 ) -> (@cmd.Cmd, Model) {
+  if ssh_open_target(msg, model) is Some(pending) {
+    let (focus, model) = focus_channel(dispatch, model, Remote(pending.host))
+    let (connect, model) = update_ssh(dispatch, Connect(pending.host), {
+      ..model,
+      screen: Chat,
+      ssh_ui: { ..model.ssh_ui, pending_open: Some(pending), },
+    })
+    return (@cmd.batch([focus, connect]), model)
+  }
   match msg {
     Init => {
       // Both pages boot the same console; they differ only in where its
@@ -4378,6 +4410,18 @@ fn update_msg(
       (cmd, { ..next, update_ux, })
     }
     UpdateApplied => (close_window(), model)
+    OpenLocalApiSettings => {
+      let (cmd, focused) = focus_channel(dispatch, model, Local)
+      (
+        cmd,
+        {
+          ..focused,
+          screen: Settings,
+          setup_api_key: "",
+          api_setup_open: false,
+        },
+      )
+    }
     OpenSetup =>
       (
         @cmd.none,
@@ -5303,6 +5347,7 @@ fn update_msg(
         },
       )
     }
+    Ssh(msg) => update_ssh(dispatch, msg, model)
     PickProject(channel) => {
       // Focus moves for the surrounding UI, while the picker itself keeps
       // `channel` as its owner through every later navigation and confirm.
@@ -5341,7 +5386,27 @@ fn update_msg(
       } else {
         update(dispatch, PickProject(model.focused), model)
       }
-    ProjectPicker(msg) =>
+    ProjectPicker(msg) => {
+      // A suspended picker still owns its outstanding browse reply. Retain
+      // that reply so cancelling SSH returns to a usable directory listing.
+      if model.project_picker is None &&
+        model.ssh_ui.return_picker is Some(picker) {
+        let (cmd, next, _) = @project_picker.State::handle(
+          locale=model.locale,
+          picker,
+          dispatch.map(msg => ProjectPicker(msg)),
+          msg,
+        )
+        return (
+          cmd,
+          { ..model, ssh_ui: { ..model.ssh_ui, return_picker: next, }, },
+        )
+      }
+      let model = if msg is @project_picker.Close {
+        { ..model, ssh_ui: { ..model.ssh_ui, pick_after_connect: None, }, }
+      } else {
+        model
+      }
       match model.project_picker {
         Some(picker) => {
           let (cmd, next, outcome) = @project_picker.State::handle(
@@ -5350,7 +5415,18 @@ fn update_msg(
             dispatch.map(msg => ProjectPicker(msg)),
             msg,
           )
-          let model = { ..model, project_picker: next, }
+          let model = {
+            ..model,
+            project_picker: next,
+            ssh_ui: {
+              ..model.ssh_ui,
+              pick_after_connect: if next is None {
+                None
+              } else {
+                model.ssh_ui.pick_after_connect
+              },
+            },
+          }
           match outcome {
             None => (cmd, model)
             // A failed browse or create leaves the previous listing usable.
@@ -5372,6 +5448,7 @@ fn update_msg(
         }
         None => (@cmd.none, model)
       }
+    }
     RemoveProject(channel, path) =>
       // The row itself leaves with the registry commit broadcast; its open
       // "…" menu is component state and leaves with the keyed row.
@@ -7252,6 +7329,9 @@ fn update_device_msg(
           dispatch, channel, connection_generation, projects_request_generation,
         ),
       ]
+      if channel == Local && model.is_desktop {
+        commands.push(ssh_load(dispatch))
+      }
       // The focused-scoped half: the host-settings mirror and installed
       // skills (they feed the composer's `$` completion, so
       // they load on connect rather than when the Skills page opens) follow
@@ -7413,9 +7493,10 @@ fn update_device_msg(
     }
     BridgeUnavailable(message) =>
       (@cmd.none, model.replace_device({ ..dev, bridge: BridgeLost(message), }))
-    // The desktop window and its host ship as one build and are never gated.
+    // Only the desktop window's local host ships with its frontend. SSH hosts
+    // can use an explicitly selected executable from a different build.
     HostMismatched =>
-      if model.is_desktop {
+      if model.is_desktop && channel is Local {
         update_device_msg(dispatch, channel, BridgeReady, model)
       } else {
         (@cmd.none, model.replace_device({ ..dev, bridge: HostIncompatible, }))
