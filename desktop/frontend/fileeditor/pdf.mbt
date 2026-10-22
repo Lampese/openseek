@@ -64,10 +64,10 @@ fn active_pdf_document(
 ///|
 /// Validate asynchronous PDF callbacks before consuming state or a selection.
 /// A reload, placement change, closed tab, or conversation switch retires them.
-pub fn State::accepts_pdf_callback(
+fn State::accepts_pdf_runtime(
   self : State,
   ctx : Ctx,
-  owner : @interop.ConversationKey,
+  owner : @interop.ConversationIdentity,
   epoch : Int32,
   path : @common.Uri,
   sig : String,
@@ -75,16 +75,30 @@ pub fn State::accepts_pdf_callback(
 ) -> Bool {
   self.owner == Some(owner) &&
   ctx.owner == owner &&
-  self.request_epoch == epoch &&
+  self.accepts_surface_epoch(ctx, owner, epoch) &&
   ctx.active_history_diff is None &&
   ctx.active_file == Some(path) &&
   (match self.docs.get(path) {
-    Some({ state: TabPdf(document~, sig=current), stale: false, .. }) =>
+    Some({ state: TabPdf(document~, sig=current), .. }) =>
       current == sig &&
       document.generation == generation &&
       !(document.status is PdfFailed(_))
     _ => false
   })
+}
+
+///|
+pub fn State::accepts_pdf_callback(
+  self : State,
+  ctx : Ctx,
+  owner : @interop.ConversationIdentity,
+  epoch : Int32,
+  path : @common.Uri,
+  sig : String,
+  generation : Int32,
+) -> Bool {
+  self.accepts_pdf_runtime(ctx, owner, epoch, path, sig, generation) &&
+  self.docs.get(path) is Some({ stale: false, .. })
 }
 
 ///|
@@ -120,7 +134,7 @@ fn show_pdf_document(
       dispatch(
         PdfSelectionChanged(
           owner=ctx.owner,
-          epoch=state.request_epoch,
+          epoch=state.surface_epoch(ctx.owner),
           path~,
           sig~,
           generation=document.generation,
@@ -132,7 +146,7 @@ fn show_pdf_document(
       dispatch(
         PdfStateChanged(
           owner=ctx.owner,
-          epoch=state.request_epoch,
+          epoch=state.surface_epoch(ctx.owner),
           path~,
           sig~,
           generation=document.generation,
@@ -140,6 +154,8 @@ fn show_pdf_document(
         ),
       )
     },
+    // Root-absolute: the page route never moves the shared resources.
+    runtime_url="/assets/pdf-runtime.js",
   )
   @cmd.batch([load, office_pinch_command(dispatch, config)])
 }
@@ -217,6 +233,7 @@ fn apply_pdf_event(
       command = @cmd.batch([
         @office_viewer.pdf_page_command(OfficeSurfaceId, page),
         @office_viewer.pdf_rotation_command(OfficeSurfaceId, document.rotation),
+        office_pages_command(state, pdf_surface_config(state, path)),
       ])
       { ..document, status: PdfReady, pages: Some(pages), page, password: "", }
     }
@@ -287,9 +304,13 @@ fn update_pdf(state : State, ctx : Ctx, msg : Msg) -> (@cmd.Cmd, State) {
   }
   match msg {
     PdfStateChanged(owner~, epoch~, path=event_path, sig~, generation~, event~) => {
-      guard state.accepts_pdf_callback(
-        ctx, owner, epoch, event_path, sig, generation,
-      ) else {
+      // An unchanged Cloud document keeps its PDF runtime across read-epoch
+      // invalidation. Its version and render generation still fence events;
+      // interaction callbacks additionally wait for successful validation.
+      guard state.accepts_pdf_runtime(
+          ctx, owner, epoch, event_path, sig, generation,
+        ) &&
+        (owner is @interop.Cloud(..) || !state.docs[path].stale) else {
         return (@cmd.none, state)
       }
       apply_pdf_event(locale=ctx.locale, state, path, document, event)

@@ -37,12 +37,28 @@ inspect *args:
     moon build cmd/viz_app --target js
     moon run inspect -- {{ args }}
 
+# Run the terminal UI on this checkout's engine instead of the pinned release
+# `moonx` would download; flags pass through to the UI
+# (e.g. just tui --continue, just tui -C ../other-project). It runs in the
+# invoking directory, so a relative -C resolves against it like any other
+# command's, with absolute paths to this checkout.
+[no-cd]
+tui *args:
+    moon -C {{ justfile_directory() }} build . openseek_tui/cmd/openseek_tui --target native
+    {{ justfile_directory() }}/_build/native/debug/build/moonbitlang/openseek_tui/cmd/openseek_tui/openseek_tui.exe --engine {{ justfile_directory() }}/_build/native/debug/build/moonbitlang/openseek/openseek.exe {{ args }}
+
 # Run workspace MoonBit tests plus the offline OpenSeek CLI documentation tests.
-test: test-moon test-cram test-turn-finish test-subagents test-workflows
+test: test-moon test-cram test-app-server test-turn-finish test-subagents test-workflows
 
 # Run the offline CLI documentation tests (Git Bash on Windows).
 test-cram:
     moon cram test tests/cram --shell '{{ CRAM_SHELL }}'
+    moon cram test openseek_tui/tests/cram --shell '{{ CRAM_SHELL }}'
+
+# Verify direct service startup and sibling engine resolution after changing workspace.
+test-app-server:
+    moon build desktop/backend/server --target native
+    moon run tests/integration/app_server.mbtx _build/native/debug/build/openseek_desktop/backend/server/server.exe
 
 # Real CLI lifecycle regression with an offline scripted model.
 test-turn-finish:
@@ -56,6 +72,8 @@ test-subagents:
     moon run tests/integration/review_workflow.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
     moon run tests/integration/subagent_send.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
     moon run tests/integration/workers.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
+    moon run tests/integration/directory_workers.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
+    moon run tests/integration/directory_recovery.mbtx _build/native/debug/build/moonbitlang/openseek/openseek.exe
 
 test-moon:
     moon test --target native
@@ -64,9 +82,11 @@ test-moon:
 # Refresh filesystem-derived prompt content even when only share/ changed.
 prompt:
     moon run scripts/md_to_mbt_string -- prompt/default_prompt.mbt.md prompt/generated_default_prompt.mbt
+    moon run scripts/md_to_mbt_string -- prompt/moonbit_syntax_and_api.mbt.md prompt/generated_moonbit_syntax_and_api.mbt
 
 check-prompt:
     moon run scripts/md_to_mbt_string -- --check prompt/default_prompt.mbt.md prompt/generated_default_prompt.mbt
+    moon run scripts/md_to_mbt_string -- --check prompt/moonbit_syntax_and_api.mbt.md prompt/generated_moonbit_syntax_and_api.mbt
 
 # Import the latest markdown build (or a specified commit) and regenerate the prompt.
 update-docs commit="latest":
@@ -87,6 +107,14 @@ editor-test-browser:
 # Run Desktop's Rabbita views in Chromium through the browser-console bundle.
 desktop-test-browser:
     just --justfile desktop/justfile test-browser
+
+# Check the Proton window host, which builds in its own desktop/app/moon.work.
+desktop-app-check:
+    just --justfile desktop/justfile app-check
+
+# Run the Proton window host's tests in its own workspace.
+desktop-app-test:
+    just --justfile desktop/justfile app-test
 
 # Parse Desktop's checked-in build scripts.
 desktop-build-scripts-check:

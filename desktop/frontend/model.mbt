@@ -265,6 +265,10 @@ const FpsOverlayStorageKey : String = "openseek.fps_overlay"
 const MinimalTranscriptStorageKey : String = "openseek.minimal_transcript"
 
 ///|
+/// Whether the conversation overview is on screen, kept across launches.
+const OverviewStorageKey : String = "openseek.overview_open"
+
+///|
 /// The page-local type scale shared by the app chrome, editor, and terminal.
 const AppFontSizeStorageKey : String = "openseek.font_size"
 
@@ -311,6 +315,15 @@ const SidebarModeStorageKey : String = "openseek.sidebar_mode"
 /// window and a browser console remember separately, and the host never sees
 /// this. Rows are newest first.
 const ConversationModelsStorageKey : String = "openseek.conversation_models"
+
+///|
+/// Every conversation switched to Approve for me, so reopening one keeps its
+/// reviewer. Only that choice is stored: a conversation missing here asks,
+/// which is also what a new conversation does — the reviewer is opted into
+/// per conversation, never inherited from an unrelated one. Rows are keys
+/// (`conversation_model_key`), newest first, capped at
+/// `ConversationModelsLimit`.
+const ConversationApprovalsStorageKey : String = "openseek.conversation_approvals"
 
 ///|
 /// How many conversations remember their tier. Conversations are unbounded
@@ -787,7 +800,7 @@ priv struct Conversation {
   // Only empty/non-empty transitions update this flag; the text itself stays
   // outside the root Model. It keeps a fresh conversation reachable when the
   // user switches away without putting every keystroke through root update.
-  // Once retained in navigation history, clearing its content keeps its identity.
+  // Once exposed in a draft URL, clearing its content keeps its identity.
   draft_addressed : Bool
   composer_draft_present : Bool
   // Where this conversation's run stands; see `RunPhase`. Replaces the old
@@ -1149,6 +1162,9 @@ priv enum BridgeState {
   Connecting
   Connected
   BridgeLost(String)
+  // A browser reached a host built for another `HostProtocolRevision`. Its
+  // socket is closed and not retried; reloading the page connects again.
+  HostIncompatible
 } derive(Eq)
 
 ///|
@@ -1399,13 +1415,14 @@ priv struct ConversationLoadFailure {
 priv enum ChatSelection {
   HostSelection(ConversationSelection)
   CloudSelection(account~ : String, session~ : String)
+  CloudDraftSelection(account~ : String, id~ : String)
 } derive(Eq)
 
 ///|
 priv struct Model {
   cloud : @cloud.State
   chat_navigation_generation : Int32
-
+  ssh_ui : SshUi
   // Connected device channels in stable order: the desktop window's one
   // Local host, or a browser console's roster devices — empty there until
   // the roster loads (`apply_roster`).
@@ -1435,6 +1452,9 @@ priv struct Model {
   // default an unrelated chat has moved to since. Reopening recovers from
   // here; `default_model` is only for conversations this list has never held.
   conversation_models : Array[StoredConversationModel]
+  // The conversations whose permission questions a reviewer answers (see
+  // `ConversationApprovalsStorageKey`); every other conversation asks.
+  reviewed_conversations : Array[String]
   // The DeepSeek (and non-GLM custom-model) reasoning choice sent on the next
   // OpenSeek operation. GLM keeps a separate preference below because its
   // forced-thinking low mode is the useful default for ordinary tasks.
@@ -1470,6 +1490,7 @@ priv struct Model {
   // and it closes the moment a usable endpoint arrives.
   api_setup_open : Bool
   session_search : @session_search.Model
+  session_import_dialog : @session_import.Model
   export_dialog : @export_dialog.Model
   workspace_settings_dialog : WorkspaceSettingsDialog?
   // The user answered "Not now" to the setup modal. Held until a usable
@@ -1537,11 +1558,24 @@ priv struct Model {
   right_panel_menu_open : Bool
   // Reported by the tab-menu component so native views yield to its surface.
   dock_tab_menu_open : Bool
+  conversation_transfer_menu_open : Bool
   right_panel_expanded : Bool
   // Terminal tabs and their connection snapshots affect both the component
   // view and root layout. The root owns the opaque state once so neither side
   // reports a second visibility copy back to the other.
   jobs : @jobs.State
+  // The overview's connectors card data: what a conversation's engine last
+  // said it holds of its MCP servers.
+  mcp : @mcp.State
+  // The overview's changes card data: the pull requests and branches the
+  // agent attached to a conversation.
+  changes : @session_changes.State
+  // Whether the conversation overview is on screen. A window preference, like
+  // the detailed transcript: it stays across conversation switches and
+  // launches. The stylesheet decides whether it is a rail or a panel.
+  overview_open : Bool
+  // Which overview cards are folded.
+  overview : @conversation_overview.State
   github : @github.State
   terminal : @terminal.State
   // The archive-discard confirmation, staged when the host refused an
@@ -1550,12 +1584,19 @@ priv struct Model {
   archive_confirm : ArchiveConfirm?
   // Permanent chat deletion has its own explicit confirmation. It never
   // shares the worktree-discard dialog because the data at risk differs.
-  delete_confirm : DeleteConfirm?
+  delete_confirm : DeletePrompt?
   // The live chat whose delete question is out with the host. Only the
   // answer about this chat may open the confirmation, and only once: an
   // answer overtaken by a later click must not put another chat's dialog
   // under the user's pointer.
   delete_pending : (@interop.ChannelId, ArchiveRecordKey)?
+  // Confirmed live and archived deletes still out with the host, one entry
+  // per request, keyed by the conversation the user chose. They outlive later
+  // clicks, so a deletion the host announces for that conversation or one of
+  // its sub-run descendants is known to be this page's own. The host
+  // announces every deleted record, so the chosen one's announcement settles
+  // its entry; a refusal or a stop settles it otherwise.
+  deletes_in_flight : Array[ConfirmedDelete]
   // Controlled sidebar editor for one live conversation title.
   conversation_rename : ConversationRename?
   conversation_fork : ConversationFork?
@@ -1601,6 +1642,7 @@ priv struct Model {
   management_return : WorkScreen?
   // Destination identities and history; page data stays in its owning state.
   navigation : AppNavigation
+  navigation_initial : String?
   // Codex app-server has an independent durable thread/turn/item model. Keep
   // its page state beside the screen selector instead of folding it into an
   // OpenSeek Conversation, whose persistence and event protocol are different.
@@ -1646,11 +1688,9 @@ priv struct Model {
   // would describe the wrong checkout — which `update` fences, since a
   // keyboard switch produces no click for the dismissal listener to see.
   git_details_open : Bool
-  // The right panel's dock: the mixed tab strip's membership, order, active
-  // tab, and per-conversation parked strips. Owned by the `dock` package;
-  // the projection (open files, active file, panel visibility) feeds
-  // `file_ctx` every dispatch.
-  dock : @dock.State
+  // Every conversation's dock has one state. Selecting a conversation reads
+  // its entry without parking or restoring a separate live copy.
+  docks : Map[@interop.ConversationIdentity, @dock.DockState]
   // The file subsystem behind the dock's file tabs: the active
   // conversation's file tree and the document table the embedded viewer
   // shows from. Rooted at `conversation_root`; rebuilt when the active
@@ -1795,6 +1835,7 @@ priv enum Msg {
     minimal_transcript~ : Bool,
     model~ : String?,
     conversation_models~ : String?,
+    conversation_approvals~ : String?,
     agent~ : String?,
     codex_model~ : String?,
     codex_effort~ : String?,
@@ -1909,6 +1950,7 @@ priv enum Msg {
   // The host swapped the bundle; close the window so `main` can relaunch.
   UpdateApplied
   OpenSetup
+  OpenLocalApiSettings
   Navigation(NavigationMsg)
   // The API-setup modal's "Not now" button and its backdrop click.
   DismissApiSetup
@@ -1938,6 +1980,9 @@ priv enum Msg {
   // startup.
   SidebarModeSelected(@sidebar.Mode)
   SidebarModeLoaded(@sidebar.Mode)
+  // The sidebar's device selector chose a device by id. A page owns its
+  // device for its lifetime, so the choice loads that device's page.
+  DeviceChosen(String)
   // A Settings selection fixes the page to Light or Dark and persists it.
   ThemeChanged(String)
   LanguageLoaded(@i18n.Preference?, Array[String])
@@ -2031,9 +2076,10 @@ priv enum Msg {
   // The export is already durable, but its default system application could
   // not be opened. The saved path remains useful in the transient toast.
   SessionSearch(@session_search.Msg)
-  OpenSessionSearch
   OpenExport(@interop.ChannelId, @protocol.SessionExportPayload)
   OpenCloudExport
+  OpenSessionImport
+  SessionImport(@session_import.Msg)
   ExportDialog(@export_dialog.Msg)
   // A safe external anchor was clicked in the Proton page. The document-level
   // capture listener emits this for both Rabbita transcript links and the
@@ -2041,6 +2087,7 @@ priv enum Msg {
   ExternalLinkClicked(String)
   // Open the in-app folder picker against one device's host (browsing starts
   // at that host's home directory), selecting its channel first if needed.
+  Ssh(SshMsg)
   PickProject(@interop.ChannelId)
   // The Cmd/Ctrl+O chord: open the folder picker for the focused device. A
   // no-op while the picker is already open, so a repeat chord cannot yank
@@ -2096,6 +2143,7 @@ priv enum Msg {
   // confirmation's display title comes from the listed record itself.
   DeleteSession(@interop.ChannelId, ArchiveRecordKey, ConversationRecord)
   ConfirmDeleteSession
+  DeleteCloudSession(account~ : String, session~ : String)
   CancelDeleteSession
   ConversationRenameRequested(id~ : @conversation.Id, label~ : String)
   ConversationRenameEdited(
@@ -2120,6 +2168,11 @@ priv enum Msg {
   OpenPathResolved(FileOpenContext, @protocol.OpenPathReply)
   // Open or close the composer git chip's details popover.
   ToggleGitDetails
+  // Show or hide the conversation overview, and the stored choice read back
+  // at startup.
+  ToggleOverview
+  OverviewLoaded(Bool)
+  Overview(@conversation_overview.Msg)
   // Clicks away from a transient menu, one per menu. Each is separate from
   // its toggle on purpose: a dismissal must never reopen what it closed.
   CloseGitDetails
@@ -2138,6 +2191,7 @@ priv enum Msg {
   ToggleRightPanelExpanded
   CloseRightPanelMenu
   DockTabMenuChanged(Bool)
+  ConversationTransferMenuChanged(Bool)
   // Close a selection through ordinary teardown; All keeps the launcher open.
   CloseDockTabs(@dock.CloseSelection)
   // The composer's goal-editing mode over the active conversation: open
@@ -2175,6 +2229,8 @@ priv enum Msg {
   GithubRequested
   Github(@github.Msg)
   Jobs(@jobs.Msg)
+  Mcp(@mcp.Msg)
+  Changes(@session_changes.Msg)
   // The browser toolbar, acting on whatever Browser tab is active — the
   // messages carry no id so a stale click cannot outlive a tab switch.
   BrowserAddressEdited(String)
@@ -2250,6 +2306,8 @@ priv enum DeviceMsg {
   ApprovalsChanged(ApprovalMirror)
   BridgeReady
   BridgeUnavailable(String)
+  // `agent.connected` named another `HostProtocolRevision`, or none.
+  HostMismatched
   // The channel's WebSocket closed (or failed to open). The handler counts
   // the loss and schedules `ReconnectDue`, making the model's device list
   // the single authority over which reconnect loops keep running. The epoch
@@ -2325,7 +2383,11 @@ priv enum DeviceMsg {
     connection_generation~ : Int32,
     request_generation~ : Int32
   )
-  SessionsFailed(String)
+  SessionsFailed(
+    message~ : String,
+    connection_generation~ : Int32,
+    request_generation~ : Int32
+  )
   // The host's identity-bearing `session.changed` broadcast. Archive changes
   // invalidate that exact live target immediately; rename and every placement
   // change re-read both sidebar lists for their durable contents.
@@ -2475,6 +2537,9 @@ priv enum DeviceMsg {
   // delete that stopped because more would go than its request agreed to.
   // Either way it stages the confirmation that states exactly that.
   DeleteChecked(key~ : ArchiveRecordKey, checkout~ : @protocol.CheckoutRemoval?)
+  // A confirmed delete the host stopped because more would go than it agreed
+  // to. That request is over; the checkout it names stages the next dialog.
+  DeleteStopped(key~ : ArchiveRecordKey, checkout~ : @protocol.CheckoutRemoval)
   // The archived conversations — the reply to `archived_sessions` and to a
   // successful `archive_session`/`unarchive_session` alike.
   ArchivedLoaded(
@@ -2500,7 +2565,9 @@ priv enum DeviceMsg {
     fresh_session~ : String
   )
   ArchiveFailed(String)
-  DeleteFailed(String)
+  // A refused delete. `deleting` names the confirmed delete it ends; a
+  // refused check ends none.
+  DeleteFailed(String, deleting~ : ArchiveRecordKey?)
   // A rebuild of a missing worktree failed. The canonical rows still arrive
   // as `worktree.changed`, so this only reports the refusal.
   WorktreeFailed(String)
@@ -2572,6 +2639,11 @@ priv enum DeviceMsg {
   // by it, because a conversation compacted before its first prompt of this
   // app-lifetime has no run id to match.
   JobsChanged(String)
+  // The engine of this session reported what it holds of its MCP servers.
+  McpChanged(String)
+  // The host saved a new list of this session's attached pull requests and
+  // branches.
+  ArtifactsChanged(String)
   Engine(String?, @transcript.EngineEvent, session~ : String?)
   // The exact local start request returned its run result. `accepted` is the
   // prompt's ownership receipt and can recover a Started notification lost on
@@ -2722,12 +2794,14 @@ fn initial_model(desktop~ : Bool) -> Model {
     Some(width) => width <= NarrowBreakpoint
     None => false
   }
-  // Every page has one page-lifetime device. The desktop window's is its own
-  // host, `local`; a browser console requires `?device=` (minted by the
-  // relay's redirect off retired `/d/<id>/` routes). An optional
-  // `?workspace=` places that device's first conversation.
+  // A Connect page has one page-lifetime device. The desktop window's is its
+  // own host, `local`; a browser page names it with `/device/<id>/` (or a
+  // legacy `?device=`). Without one, the page serves Cloud Chat. An
+  // optional `?workspace=` places that device's first conversation.
   let page_device = if desktop {
     Some(@interop.LocalDeviceId)
+  } else if navigation_device_from_location() is Some(device) {
+    Some(device)
   } else {
     @interop.page_query_param("device")
   }
@@ -2774,11 +2848,13 @@ fn initial_model(desktop~ : Bool) -> Model {
     } else {
       []
     },
+    ssh_ui: SshUi::empty(),
     websocket_epoch: 0,
     focused: @interop.ChannelId::Local,
     default_model: DsFlash,
     default_agent: OpenSeekAgent,
     conversation_models: [],
+    reviewed_conversations: [],
     openseek_reasoning: ReasoningHigh,
     glm_reasoning: ReasoningOff,
     max_steps: DefaultMaxSteps,
@@ -2797,9 +2873,9 @@ fn initial_model(desktop~ : Bool) -> Model {
     app_version: "development",
     console_url: None,
     // Every page is the console. A browser page signs in against the relay
-    // and verifies its required query-selected device before that channel
-    // opens; the desktop window starts where that ends, signed in to its own
-    // host with its one device already listed.
+    // and verifies its selected device, if any, before that channel opens;
+    // the desktop window starts where that ends, signed in to its own host
+    // with its one device already listed.
     console: if desktop {
       local_console_state(login_return_to~)
     } else {
@@ -2819,8 +2895,13 @@ fn initial_model(desktop~ : Bool) -> Model {
     right_panel_open: false,
     right_panel_menu_open: false,
     dock_tab_menu_open: false,
+    conversation_transfer_menu_open: false,
     right_panel_expanded: false,
     jobs: @jobs.State::empty(),
+    mcp: @mcp.State::initial(),
+    changes: @session_changes.State::initial(),
+    overview_open: false,
+    overview: @conversation_overview.State::initial(),
     github: @github.State::empty(),
     terminal: @terminal.State::empty(),
     active_session: "",
@@ -2835,6 +2916,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     archive_confirm: None,
     delete_confirm: None,
     delete_pending: None,
+    deletes_in_flight: [],
     conversation_rename: None,
     conversation_fork: None,
     fork_focus: None,
@@ -2843,6 +2925,11 @@ fn initial_model(desktop~ : Bool) -> Model {
     screen: Chat,
     management_return: None,
     navigation: AppNavigation::empty(),
+    navigation_initial: if desktop {
+      None
+    } else {
+      Some(navigation_initial_path(login_return_to, page_device))
+    },
     codex: @codex.State(),
     schedules: SchedulePage::empty(),
     skills: @skills.State::empty(),
@@ -2854,7 +2941,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     quick_open: @quick_open.State::empty(),
     git_request_generation: 0,
     git_details_open: false,
-    dock: @dock.State::empty(),
+    docks: Map([]),
     file_panel: @fileeditor.State::empty(),
     pending_review_context: None,
     preview: @preview.State::empty(),
@@ -2868,6 +2955,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     update_ux: UpdateUnknown,
     api_setup_open: false,
     session_search: @session_search.Model(),
+    session_import_dialog: @session_import.Model(),
     export_dialog: @export_dialog.Model(),
     workspace_settings_dialog: None,
     api_setup_dismissed: false,
@@ -2956,6 +3044,19 @@ fn Model::focused_device_name(self : Model) -> String {
     }
   }
   "SeekMoon"
+}
+
+///|
+/// A remote device's roster name, or its id until the roster lists it.
+/// `None` for the computer this window runs on.
+fn Model::device_name(self : Model, channel : @interop.ChannelId) -> String? {
+  guard channel is Remote(id) else { return None }
+  for meta in self.console.roster {
+    if meta.id == id {
+      return Some(meta.name)
+    }
+  }
+  Some(id)
 }
 
 ///|
@@ -3183,9 +3284,27 @@ fn Model::settings_status(self : Model) -> Status {
 /// the settings-derived readiness. Purely derived, so update handlers never
 /// have to keep a stored status in sync with settings changes.
 fn Model::display_status(self : Model) -> Status {
+  // A remote outage has one persistent composer notice; keep the topbar
+  // compact even after several retries instead of repeating a full error.
+  if !self.is_desktop &&
+    self.focused_device() is Some(device) &&
+    device.reconnect_failures > 0 {
+    return Reconnecting
+  }
   match self.bridge_state() {
     Connecting => WaitingBridge
     BridgeLost(message) => Unavailable(message)
+    HostIncompatible => {
+      let message = match self.focused {
+        Remote(id) => self.ssh_ui.host_errors.get(id)
+        Local => None
+      }
+      Unavailable(
+        message.unwrap_or_else(() => {
+          shell_text(self.locale, HostIncompatibleNotice)
+        }),
+      )
+    }
     // Onboarding has no conversation and therefore no run of its own; the
     // settings-derived readiness is the whole of what can be reported.
     Connected =>
@@ -3502,6 +3621,61 @@ fn Model::remember_model(
 }
 
 ///|
+/// Who answers this conversation's permission questions.
+fn Model::approval_for(
+  self : Model,
+  channel : @interop.ChannelId,
+  session : String,
+) -> @protocol.OpenSeekApproval {
+  let key = conversation_model_key(channel, session)
+  if self.reviewed_conversations.contains(key) {
+    ApprovalReview
+  } else {
+    ApprovalAsk
+  }
+}
+
+///|
+/// Record who answers this conversation's permission questions.
+fn Model::with_approval(
+  self : Model,
+  channel : @interop.ChannelId,
+  session : String,
+  approval : @protocol.OpenSeekApproval,
+) -> Model {
+  {
+    ..self,
+    reviewed_conversations: approvals_with(
+      self.reviewed_conversations,
+      conversation_model_key(channel, session),
+      approval,
+    ),
+  }
+}
+
+///|
+/// Fold one conversation's approval choice into the reviewed list: a review
+/// moves the key to the front (dropping the oldest past the cap), an ask
+/// removes it. Free-standing for the same reason as `remembered_with`.
+fn approvals_with(
+  keys : Array[String],
+  key : String,
+  approval : @protocol.OpenSeekApproval,
+) -> Array[String] {
+  let merged : Array[String] = if approval is ApprovalReview {
+    [key]
+  } else {
+    []
+  }
+  for existing in keys {
+    if existing != key && merged.length() < ConversationModelsLimit {
+      merged.push(existing)
+    }
+  }
+  merged
+}
+
+///|
 /// Move one conversation to the front of a remembered list, dropping the
 /// least recently chosen once the cap is reached. Free-standing because the
 /// durable store folds the same way: a write merges into the rows already
@@ -3530,6 +3704,18 @@ fn remembered_with(
 fn Model::active_conversation(self : Model) -> Conversation? {
   guard !self.cloud_selected() else { return None }
   self.find_conversation(self.focused, self.active_session)
+}
+
+///|
+/// The conversation the overview describes: the OpenSeek conversation on
+/// screen, while the overview is shown.
+fn Model::overview_conversation(self : Model) -> @interop.ConversationKey? {
+  guard self.overview_open &&
+    self.screen is Chat &&
+    self.chat_column() is Transcript(conversation~, ..) else {
+    return None
+  }
+  Some({ channel: conversation.device, session: conversation.session_id, })
 }
 
 ///|
@@ -3709,7 +3895,7 @@ fn Model::conversation_by_pending_steer(
 /// the current task supplies the identity and checkout needed by the host.
 /// Rendering and read acknowledgment must agree on whether it covers a chat.
 fn Model::file_panel_visible(self : Model) -> Bool {
-  !self.cloud_selected() &&
+  (!self.cloud_selected() || file_ctx(self).cloud_files is Some(_)) &&
   self.right_panel_open &&
   (
     self.screen is Chat ||
@@ -4636,7 +4822,10 @@ fn RunOutcome::label(
 /// its severity cannot drift from the state they describe.
 priv enum Status {
   WaitingBridge
+  Reconnecting
   Ready
+  Loading
+  ReadOnly
   SetupRequired
   ApiKeyRequired
   Starting
@@ -4653,96 +4842,21 @@ priv enum Status {
 
 ///|
 fn Status::label(self : Status, locale~ : @i18n.Locale = English) -> String {
-  match locale {
-    SimplifiedChinese =>
-      return match self {
-        WaitingBridge => "正在等待连接桥"
-        Ready => "就绪"
-        SetupRequired => "需要设置"
-        ApiKeyRequired => "需要 API 密钥"
-        Starting => "正在启动"
-        Running => "运行中"
-        Cancelling => "正在取消"
-        Step(step) =>
-          if step is Some(step) {
-            "第 \{step} 步"
-          } else {
-            "执行步骤"
-          }
-        Failed => "失败"
-        Errored => "错误"
-        Finished(outcome) => outcome.label(locale~)
-        Unavailable(message) => message
-      }
-    TraditionalChinese =>
-      return match self {
-        WaitingBridge => "正在等待連線橋"
-        Ready => "就緒"
-        SetupRequired => "需要設定"
-        ApiKeyRequired => "需要 API 金鑰"
-        Starting => "正在啟動"
-        Running => "執行中"
-        Cancelling => "正在取消"
-        Step(step) =>
-          if step is Some(step) {
-            "第 \{step} 步"
-          } else {
-            "執行步驟"
-          }
-        Failed => "失敗"
-        Errored => "錯誤"
-        Finished(outcome) => outcome.label(locale~)
-        Unavailable(message) => message
-      }
-    Japanese =>
-      return match self {
-        WaitingBridge => "ブリッジ接続を待機中"
-        Ready => "準備完了"
-        SetupRequired => "設定が必要です"
-        ApiKeyRequired => "API キーが必要です"
-        Starting => "起動中"
-        Running => "実行中"
-        Cancelling => "キャンセル中"
-        Step(step) =>
-          if step is Some(step) {
-            "ステップ \{step}"
-          } else {
-            "実行ステップ"
-          }
-        Failed => "失敗"
-        Errored => "エラー"
-        Finished(outcome) => outcome.label(locale~)
-        Unavailable(message) => message
-      }
-    English => ()
-    Spanish =>
-      return match self {
-        WaitingBridge => "Esperando conexión con el puente"
-        Ready => "Listo"
-        SetupRequired => "Se requiere configuración"
-        ApiKeyRequired => "Se requiere una clave de API"
-        Starting => "Iniciando"
-        Running => "En ejecución"
-        Cancelling => "Cancelando"
-        Step(step) => if step is Some(step) { "Paso \{step}" } else { "Paso" }
-        Failed => "Falló"
-        Errored => "Error"
-        Finished(outcome) => outcome.label(locale~)
-        Unavailable(message) => message
-      }
-  }
   match self {
-    WaitingBridge => "Waiting for bridge"
-    Ready => "Ready"
-    SetupRequired => "Setup required"
-    ApiKeyRequired => "API key required"
-    Starting => "Starting"
-    Running => "Running"
-    Cancelling => "Cancelling"
-    Step(step) => if step is Some(step) { "Step \{step}" } else { "Step" }
-    Failed => "Failed"
-    Errored => "Error"
-    Finished(outcome) => outcome.label()
+    WaitingBridge => shell_text(locale, StatusWaitingBridge)
+    Reconnecting => shell_text(locale, StatusReconnecting)
+    Ready => shell_text(locale, StatusReady)
+    Loading => shell_text(locale, LoadingConversation)
+    ReadOnly => shell_text(locale, ArchivedReadOnly)
+    SetupRequired => shell_text(locale, StatusSetupRequired)
+    ApiKeyRequired => shell_text(locale, StatusApiKeyRequired)
+    Starting => shell_text(locale, StatusStarting)
+    Running => shell_text(locale, StatusRunning)
+    Cancelling => shell_text(locale, StatusCancelling)
+    Step(step) => shell_text(locale, StatusStep(step))
+    Failed => shell_text(locale, StatusFailed)
+    Errored => shell_text(locale, StatusErrored)
+    Finished(outcome) => outcome.label(locale~)
     Unavailable(message) => message
   }
 }
@@ -4750,7 +4864,7 @@ fn Status::label(self : Status, locale~ : @i18n.Locale = English) -> String {
 ///|
 fn Status::kind(self : Status) -> StatusKind {
   match self {
-    WaitingBridge => Neutral
+    WaitingBridge | Reconnecting | Loading | ReadOnly => Neutral
     Ready => Ok
     SetupRequired
     | ApiKeyRequired

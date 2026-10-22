@@ -27,6 +27,7 @@ pub(all) enum FileContent {
   // contract cannot carry ZIP bytes in a String. The renderer consumes them
   // for `.docx`, `.xlsx`, and `.pdf` files.
   Office(data_base64~ : String, media_type~ : String, sig~ : String)
+  Raster(url~ : String, sig~ : String)
   // `sig` is the file's mtime signature, stat'ed by the host from the same
   // handle it read — the baseline `stat_files` results are compared against.
   Content(content~ : String, sig~ : String)
@@ -52,6 +53,7 @@ pub(all) enum TabState {
   // bytes and the runtime state on this tab; other tabs never receive events
   // from its asynchronous loader.
   TabPdf(document~ : PdfDocument, sig~ : String)
+  TabImage(url~ : String, sig~ : String)
   TabBinary
   TabOversized
   // The host could not read this file. Unlike `TabDeleted`, this keeps the
@@ -182,6 +184,18 @@ pub(all) struct Doc {
 } derive(Eq)
 
 ///|
+/// Successful content stays visible during a refresh. Ordinary notices have
+/// no content to keep; reviews retain their independent baseline lifecycle.
+fn Doc::prepare_read(self : Doc) -> Doc {
+  if self.review is None &&
+    self.state is (TabBinary | TabOversized | TabReadFailed(_)) {
+    { ..self, state: TabLoading, stale: false, }
+  } else {
+    self
+  }
+}
+
+///|
 /// One file's decoded `fs.stat_files` result: its current mtime signature,
 /// or why the host has none — the file is missing, or it could not be
 /// inspected at all.
@@ -208,6 +222,7 @@ pub fn Ctx::observed_files(self : Ctx) -> Array[@common.Uri] {
 /// workspace watcher also falls back here; native previews remain observable
 /// even when the current conversation has no checkout or is on another host.
 pub fn State::polled_files(self : State, ctx : Ctx) -> Array[@common.Uri] {
+  guard ctx.owner is @interop.Host(_) else { return [] }
   ctx
   .observed_files()
   .filter(path => {
@@ -245,8 +260,8 @@ pub(all) struct WatchedPaths {
 } derive(Eq)
 
 ///|
-/// A lazily requested snapshot of one concrete workspace root. The Host walks
-/// the root recursively, pruning churn directories and capping the result;
+/// A lazily requested snapshot of one concrete workspace root. Host and Cloud
+/// file indexes provide workspace-relative paths;
 /// owner/root transitions reset it with the rest of the file-panel cache.
 pub enum FileIndex {
   // No consumer has requested this workspace root yet.
@@ -442,13 +457,17 @@ pub fn ReconciledPlacement::reconcile(
 /// conversation's workspace and the document table behind the dock's open
 /// file tabs. Documents use absolute resource URIs; tree entries remain
 /// workspace-relative. `owner` records
-/// which channel's conversation the cached tree and documents belong to, so
-/// switching either channel or session swaps them rather than showing
-/// another host's files. Strip membership, order, the active tab, and the
-/// parked per-conversation strips all live in the dock package — the open
-/// file list arrives through `Ctx`.
+/// which conversation the cached tree and documents belong to, so switching
+/// Host channels, Cloud accounts or sessions never shares file contents.
+/// Strip membership, order, and the active tab live in
+/// the root model's per-conversation dock states — the open file list arrives
+/// through `Ctx`.
 pub(all) struct State {
-  owner : @interop.ConversationKey?
+  owner : @interop.ConversationIdentity?
+  cloud_epoch : Int32?
+  // Settled documents for Cloud strips parked by conversation switches.
+  // Resource URIs bind origin/account/session/path; no credentials or renderers.
+  cloud_documents : Map[@interop.ConversationIdentity, Map[@common.Uri, Doc]]
   // The placement incarnation last reconciled for `owner`, including whether
   // it is currently parked. A conversation can move from its project root into
   // a newly-created worktree without changing owner; retaining the complete
@@ -459,16 +478,21 @@ pub(all) struct State {
   // is shown. A panel preference, not per-conversation state, so it
   // survives conversation switches.
   tree_open : Bool
-  // Office surface preferences are panel-level settings. They apply to both
-  // DOCX and XLSX tabs and survive switching conversations, just like the
-  // file-tree preference.
+  // Keep the PDF zoom fallback and each Office file's fit/manual zoom choice
+  // across conversation switches. Search and font preferences remain shared.
   office_zoom : Int32
+  office_zoom_preferences : Map[@common.Uri, OfficeZoomPreference]
+  office_pages_open : Bool
   office_query : String
   office_prefer_system_fonts : Bool
+  office_navigation : OfficeCitationNavigation?
   // Browser selection is provisional until the user accepts its preview.
   office_selection : OfficeSelectionPreview?
   // None when no draft exists; Some("") is an open, empty draft.
   office_selection_comment : String?
+  excel_copy_generation : Int32
+  excel_copy_selection : OfficeSelectionPreview?
+  excel_copy_feedback : ExcelCopyFeedback?
   office_region_request : OfficeRegionRequest?
   office_region : OfficeRegionDraft?
   office_region_id : Int64
@@ -566,6 +590,9 @@ pub(all) struct State {
   // Advancing this value on either boundary rejects reads, listings, and
   // stats that outlived the checkout they addressed.
   request_epoch : Int32
+  // Cached Cloud surfaces outlive content revalidation, but never an owner
+  // or credential switch. Their callbacks use this separate incarnation.
+  cloud_surface_epoch : Int32
   // Page-lifetime navigation token. Transcript file-link clicks capture it;
   // every competing editor navigation advances it, so a slower older click
   // cannot move the viewer after a newer user action has taken precedence.
@@ -633,6 +660,8 @@ pub(all) struct State {
   // mirrors the dock strip's file tabs (`Ctx.open_files`): the root update
   // adds an entry when it opens a tab and drops it when the tab closes.
   docs : Map[@common.Uri, Doc]
+  download : @common.Uri?
+  download_generation : Int32
   // Per-tab MBTI presentation. Absence is the normal default (`MbtiSource`),
   // so a closed and later reopened interface starts as source again. A
   // positioned open records `MbtiSource` over an explicit diagram selection.
@@ -659,13 +688,21 @@ pub(all) struct State {
 pub fn State::empty() -> State {
   {
     owner: None,
+    cloud_epoch: None,
+    cloud_documents: Map([]),
     placement: PlacementUnknown,
     tree_open: false,
     office_zoom: 100,
+    office_zoom_preferences: Map([]),
+    office_pages_open: false,
     office_query: "",
     office_prefer_system_fonts: false,
+    office_navigation: None,
     office_selection: None,
     office_selection_comment: None,
+    excel_copy_generation: 0,
+    excel_copy_selection: None,
+    excel_copy_feedback: None,
     office_region_request: None,
     office_region: None,
     office_region_id: 0L,
@@ -713,6 +750,7 @@ pub fn State::empty() -> State {
     review_navigation_display: None,
     changes_generation: 0,
     request_epoch: 0,
+    cloud_surface_epoch: 0,
     file_link_generation: 0,
     changes_head: None,
     changes_head_known: false,
@@ -731,6 +769,8 @@ pub fn State::empty() -> State {
     removed_directory_reads: Map([]),
     children: Map([]),
     directory_errors: Map([]),
+    download: None,
+    download_generation: 0,
     docs: Map([]),
     mbti_view_modes: Map([]),
     moon_mod_view_modes: Map([]),
@@ -761,29 +801,26 @@ fn State::moon_mod_view_mode(
 
 ///|
 /// Prepare the file subsystem for a shell-driven open that must happen before
-/// the ordinary post-dispatch `sync` pass. Checkout-derived inventories and
-/// documents are reset here, inside their owner, while panel preferences and
-/// page-lifetime request fences survive an A -> B -> A conversation switch.
+/// the ordinary post-dispatch `sync` pass. Host documents and inventories
+/// reset here; settled Cloud documents follow the open bookmarks. Panel
+/// preferences and request fences survive an A -> B -> A conversation switch.
 pub fn State::prepare_owner(
   self : State,
-  owner : @interop.ConversationKey,
+  owner : @interop.ConversationIdentity,
   open_files : Array[@common.Uri],
+  cloud_epoch? : Int32,
 ) -> State {
   guard self.owner != Some(owner) else { return self }
-  let docs : Map[@common.Uri, Doc] = Map([])
-  for path in open_files {
-    docs[path] = {
-      name: @resource.label(path),
-      state: TabLoading,
-      review: None,
-      stale: false,
-    }
-  }
+  let (docs, cloud_documents) = self.switch_documents(owner, open_files)
   {
     ..State::empty(),
     owner: Some(owner),
+    cloud_epoch,
+    cloud_documents,
     tree_open: self.tree_open,
     office_zoom: self.office_zoom,
+    office_zoom_preferences: self.office_zoom_preferences,
+    office_pages_open: self.office_pages_open,
     office_query: self.office_query,
     office_prefer_system_fonts: self.office_prefer_system_fonts,
     pdf_generation: self.pdf_generation,
@@ -846,7 +883,8 @@ pub(all) struct Ctx {
   locale : @i18n.Locale
   model : String
   thinking : @protocol.OpenSeekThinking?
-  owner : @interop.ConversationKey
+  owner : @interop.ConversationIdentity
+  cloud_files : CloudFiles?
   // The current placement incarnation for filesystem request/reply fencing.
   request_epoch : Int32
   // Page-unique prefix for watcher identities. The native watcher outlives a
@@ -881,18 +919,40 @@ pub(all) struct Ctx {
 
 ///|
 /// The concrete root used by file and language-service requests.
-fn Ctx::root(self : Ctx) -> @common.Uri? {
-  self.placement.bind(value => value.checkout_root())
+pub fn Ctx::root(self : Ctx) -> @common.Uri? {
+  match self.owner {
+    Host(_) => self.placement.bind(value => value.checkout_root())
+    Cloud(account~, session~) =>
+      self.cloud_files.bind(_ => {
+        @resource.cloud_root(@cloud.CloudOrigin, account, session)
+      })
+  }
 }
 
 ///|
-fn Ctx::search_input(self : Ctx) -> @grep_search.Input {
-  @grep_search.Input(
-    owner=self.owner,
-    root=self.root(),
-    model=self.model,
-    thinking=self.thinking,
-  )
+fn Ctx::search_input(self : Ctx) -> @grep_search.Input? {
+  match self.owner {
+    Host(owner) =>
+      Some(
+        @grep_search.Input(
+          owner~,
+          root=self.root(),
+          model=self.model,
+          thinking=self.thinking,
+        ),
+      )
+    Cloud(..) => {
+      guard self.root() is Some(root) && self.cloud_files is Some(files) else {
+        return None
+      }
+      Some(
+        @grep_search.Input::cloud(owner=self.owner, root~, access={
+          token: files.token,
+          epoch: files.epoch,
+        }),
+      )
+    }
+  }
 }
 
 ///|
@@ -904,11 +964,31 @@ fn Ctx::workspace(self : Ctx) -> @common.Uri? {
 ///|
 /// Whether this context currently names a concrete checkout directory.
 fn Ctx::checkout_ready(self : Ctx) -> Bool {
-  self.placement is Some(value) && value.is_ready()
+  match self.owner {
+    Host(_) => self.placement is Some(value) && value.is_ready()
+    Cloud(..) => self.cloud_files is Some(_)
+  }
 }
 
 ///|
 pub(all) enum Msg {
+  DownloadFile(desktop~ : Bool)
+  FileDownloadReady(
+    owner~ : @interop.ConversationIdentity,
+    auth_epoch~ : Int32,
+    generation~ : Int32,
+    path~ : @common.Uri,
+    bytes~ : Bytes
+  )
+  FileDownloaded(
+    owner~ : @interop.ConversationIdentity,
+    auth_epoch~ : Int32,
+    generation~ : Int32,
+    path~ : @common.Uri,
+    result~ : Result[Unit, String]
+  )
+  OfficeCitationLocated(OfficeCitationNavigation, Bool)
+  OfficeCitationLaidOut(OfficeCitationNavigation)
   ReviewContextRevealFinished(
     source~ : @mention_context.ReviewSource,
     found~ : Bool
@@ -946,7 +1026,7 @@ pub(all) enum Msg {
   // a native Word text or Excel range selection. The root prepares a preview;
   // only a subsequent confirmation attaches it to the composer.
   OfficeSelectionChanged(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     sig~ : String,
@@ -956,13 +1036,20 @@ pub(all) enum Msg {
   OfficeFeedbackChanged(OfficeSelectionPreview, String)
   OfficeFeedbackSubmitted(OfficeSelectionPreview, String, apply~ : Bool)
   OfficeSelectionDismissed(OfficeSelectionPreview)
+  ExcelSelectionCopyRequested(OfficeSelectionPreview, ExcelCopyFormat)
+  ExcelSelectionCopyFinished(OfficeSelectionPreview, Int32, Bool)
+  ExcelSelectionCopyExpired(OfficeSelectionPreview, Int32)
+  ExcelSelectionCleared(OfficeSelectionPreview)
   // Office surface controls are kept in the file panel so standalone viewer
   // behavior remains reusable while embedded hosts own their chrome.
   OfficeZoomChanged(String)
+  OfficeFitWidth
+  OfficePagesToggled
+  OfficeWidthFitted(@interop.ConversationIdentity, Int32, @common.Uri, Int32)
   OfficeSearchChanged(String)
   OfficeSystemFontsToggled
   PdfStateChanged(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     sig~ : String,
@@ -970,7 +1057,7 @@ pub(all) enum Msg {
     event~ : String
   )
   PdfSelectionChanged(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     sig~ : String,
@@ -988,7 +1075,7 @@ pub(all) enum Msg {
   OfficeRegionDismissed(OfficeRegionPreview)
   PdfCaptureRequested
   PdfCaptureFinished(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     sig~ : String,
@@ -1022,13 +1109,13 @@ pub(all) enum Msg {
   // A `read_directory` reply: `owner`/`path` say which request it answers so a
   // reply that lost a conversation switch can be dropped.
   DirLoaded(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @pathx.Relative,
     entries~ : Array[FileEntry]
   )
   DirFailed(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @pathx.Relative,
     message~ : String
@@ -1036,14 +1123,14 @@ pub(all) enum Msg {
   // A workspace snapshot reply. The owner/epoch pair rejects a result that
   // outlived a conversation or concrete-root transition.
   FilesIndexed(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     files~ : Array[@pathx.Relative],
     truncated~ : Bool
   )
   // A request failed or was cancelled. A failed background refresh keeps the
   // previously ready snapshot; only an initial fetch becomes IndexFailed.
-  FileIndexFailed(owner~ : @interop.ConversationKey, epoch~ : Int32)
+  FileIndexFailed(owner~ : @interop.ConversationIdentity, epoch~ : Int32)
   // A `git.changes` reply. `head` carries the immutable comparison when the
   // host can identify one: a task or branch baseline when present, otherwise
   // resolved HEAD. `None` means no commit exists or a legacy host omitted the
@@ -1106,6 +1193,12 @@ pub(all) enum Msg {
   // A file row was clicked: read it and show it in the viewer. `name` is the
   // entry's display name, kept for the viewer's title and language guess.
   FileSelected(path~ : @pathx.Relative, name~ : String)
+  // One explicit size-limit override, scoped to the notice the user clicked.
+  PreviewLargeFile(
+    owner~ : @interop.ConversationIdentity,
+    epoch~ : Int32,
+    path~ : @common.Uri
+  )
   // A Changes row was clicked. The full decoded row carries the original path
   // needed by renames/copies and whether a working-tree read is possible.
   ChangedFileSelected(ChangedFile)
@@ -1241,7 +1334,7 @@ pub(all) enum Msg {
   // `review_generation` is present only for the working-tree half of a
   // changed-row open.
   FileLoaded(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     name~ : String,
@@ -1256,7 +1349,7 @@ pub(all) enum Msg {
   // error, and a stale review read cannot replace its successor. Background
   // reads leave both generation fields `None`.
   FileFailed(
-    owner~ : @interop.ConversationKey,
+    owner~ : @interop.ConversationIdentity,
     epoch~ : Int32,
     path~ : @common.Uri,
     file_link_generation~ : Int32?,
@@ -1284,7 +1377,18 @@ pub(all) enum Msg {
   // routinely writes files the panel never shows — the finish boundary is
   // the one cheap signal that covers them. `owner` fences a background
   // conversation's finish.
-  RunSettled(owner~ : @interop.ConversationKey)
+  RunSettled(owner~ : @interop.ConversationIdentity)
+  WorkspaceInvalidated(
+    owner~ : @interop.ConversationIdentity,
+    auth_epoch~ : Int32
+  )
+  FileVersionChecked(
+    owner~ : @interop.ConversationIdentity,
+    epoch~ : Int32,
+    path~ : @common.Uri,
+    sig~ : String,
+    unchanged~ : Bool
+  )
   // Files outside the checkout, or whose watcher failed, share one stat tick.
   RefreshExternalFiles
   // A `stat_files` reply: each open tab's current mtime signature, or that

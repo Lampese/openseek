@@ -1,4 +1,18 @@
 ///|
+/// One stable composer slot shared by both conversation providers.
+fn Model::connection_banner(self : Model) -> @composer.ContextComponent {
+  @composer.ConnectionBanner(
+    device_name=if !self.is_desktop &&
+      self.focused_device() is Some(device) &&
+      device.reconnect_failures > 0 {
+      Some(self.focused_device_name())
+    } else {
+      None
+    },
+  )
+}
+
+///|
 /// Project the root application state into the composer's fixed package
 /// boundary. This method is the only place where composer availability and
 /// surrounding root-owned presentation are derived from `Model`.
@@ -61,6 +75,12 @@ fn Model::composer_input(self : Model) -> @composer.Input {
   if self.openseek_reasoning_chip(conv) is Some(control) {
     status.push(@composer.ReasoningStatus(control))
   }
+  status.push(
+    @composer.ApprovalStatus({
+      on: self.approval_for(conv.device, conv.session_id) is ApprovalReview,
+      enabled: !conv.is_running(),
+    }),
+  )
   if conv.git_presentation() is Some(presentation) {
     status.push(
       @composer.GitStatus({ presentation, open: self.git_details_open, }),
@@ -73,15 +93,7 @@ fn Model::composer_input(self : Model) -> @composer.Input {
   // projects only typed state, so no caller-owned DOM or command can alter
   // the component's child ordering.
   let context : Array[@composer.ContextComponent] = [
-    @composer.ConnectionBanner(
-      // A browser console names the remote device it lost; the desktop
-      // window's own host needs no name.
-      device_name=if !self.is_desktop && self.bridge_state() is BridgeLost(_) {
-        Some(self.focused_device_name())
-      } else {
-        None
-      },
-    ),
+    self.connection_banner(),
     // Sub-runs dock here rather than at the transcript's tail: a child turn's
     // progress is live run status that no durable event describes, and the
     // scroller shows only what the record can place. The plan is the mirror
@@ -218,17 +230,27 @@ fn Model::composer_input(self : Model) -> @composer.Input {
         label: "/compact",
         detail: shell_text(self.locale, CompactContext),
         command: "compact",
+        prompt: None,
       },
       {
         label: "/goal",
         detail: shell_text(self.locale, SetGoal),
         command: "goal",
+        prompt: None,
+      },
+      {
+        label: "/ultrareview",
+        detail: shell_text(self.locale, UltraReview),
+        command: "ultrareview",
+        prompt: Some(UltrareviewPrompt),
       },
     ],
     // Editing a queued message rewrites that message; it never runs one.
     shell_available: conv.queue_edit is None,
     history: conv.sent_prompts(shell=conv.queue_edit is None),
     root: self.conversation_root(conv),
+    cloud_access: None,
+    staged_attachments: [],
     installed_skills: self.installed_skills,
     context_generation: self.composer_context_generation,
     turn_id: match conv.run {
@@ -348,6 +370,27 @@ fn Model::codex_composer_input(self : Model) -> @composer.Input {
       @composer.FileIndexEmpty(epoch=self.file_panel.request_epoch)
     },
   })
+  let input = {
+    ..input,
+    presentation: {
+      ..input.presentation,
+      context: [self.connection_banner(), ..input.presentation.context],
+      primary_action: if self.bridge_state() is Connected {
+        input.presentation.primary_action
+      } else {
+        match input.presentation.primary_action {
+          Send(..) => @composer.Send(available=false)
+          Running(submit~, ..) =>
+            @composer.Running(
+              submit~,
+              steer_available=false,
+              can_stop=false,
+              queue_available=false,
+            )
+        }
+      },
+    },
+  }
   if self.codex_project_adoption_pending() {
     {
       ..input,
@@ -381,6 +424,8 @@ fn Model::dormant_composer_input(self : Model) -> @composer.Input {
     shell_available: false,
     history: [],
     root: None,
+    cloud_access: None,
+    staged_attachments: [],
     installed_skills: self.installed_skills,
     context_generation: self.composer_context_generation,
     turn_id: None,
@@ -437,3 +482,15 @@ fn Conversation::sent_prompts(
   }
   prompts
 }
+
+///|
+/// What `/ultrareview [focus]` sends. It ends on `Focus:`, which the text typed
+/// after the command completes.
+const UltrareviewPrompt : String =
+  #|Review the changes on this branch with the bundled review swarm.
+  #|
+  #|1. Use git to find the merge base of HEAD with the default branch.
+  #|2. Call the `mbtx` tool with `filename: "@builtin/review.mbtx"` and `args: ["--swarm", "--sha", <merge base>, "--", <criteria>]`. The criteria are the Focus text below or, when it is empty, "The changes since that base are correct, well-structured and tested."
+  #|3. Wait for the job with `job_wait` and read it with `job_output`; a job that failed on a blocker still has its findings there. Report the merged findings: verified ones first, then unverified ones, then the refuted list.
+  #|
+  #|Focus:

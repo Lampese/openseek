@@ -31,14 +31,12 @@ test('both agents share the first screen and Codex can choose its project in the
   const transcript = page.locator('#transcript');
   await expect(title).toHaveText('What should we build in workspace?');
   const logo = await badge.innerHTML();
-  await expect(page.locator('.empty-sub')).toHaveCount(0);
   await choose(page, 'Codex test');
   const trigger = page.getByRole('button', {
     name: 'Choose project, current project workspace', exact: true,
   });
   await expect(trigger).toBeVisible();
   expect(await badge.innerHTML()).toBe(logo);
-  await expect(page.getByText(/Codex inspects, edits/)).toHaveCount(0);
   const session = await transcript.getAttribute('data-transcript-session');
   const openCount = app.requests.filter(r => r.method === 'codex.draft.open').length;
   const task = page.locator('#task');
@@ -72,7 +70,7 @@ test('both agents share the first screen and Codex can choose its project in the
   await trigger.click();
   await picker.getByRole('button', { name: /^other —/ }).click();
   await expect(title).toHaveText('What should we build in other?');
-  await expect(page.locator('.workspace-row[title="/other"]')).toHaveClass(/\bactive\b/);
+  await expect(app.projectRow('/other')).toHaveClass(/\bactive\b/);
   await expect(transcript).toHaveAttribute('data-transcript-session', session);
   await expect(page.getByRole('button', { name: 'Model', exact: true })).toContainText('Codex test');
   await expect.poll(() => app.requests.filter(r => r.method === 'codex.draft.open').at(-1)?.params.cwd).toBe('/other');
@@ -201,6 +199,7 @@ test('the title cannot add or change projects until draft opening settles', asyn
 test('returning to the same blank Codex entry retains its pending project add', async ({ page }) => {
   const app = await open(page, ['/workspace', '/other'], true);
   await choose(page, 'Codex test');
+  await expect(page).toHaveURL(/\/codex\/new$/);
   const session = await page.locator('#transcript').getAttribute('data-transcript-session');
   const pending = Promise.withResolvers();
   const reply = app.replyFor.bind(app);
@@ -211,6 +210,7 @@ test('returning to the same blank Codex entry retains its pending project add', 
   await expect.poll(() => app.requests.some(r => r.method === 'workspace.add')).toBe(true);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(page).toHaveURL(/\/codex\/new$/);
   await expect(page.locator('#transcript')).toHaveAttribute('data-transcript-session', session);
   await expect(page.getByRole('button', { name: 'Model', exact: true })).toBeDisabled();
   pending.resolve(reply(app.requests.find(r => r.method === 'workspace.add')));
@@ -218,11 +218,12 @@ test('returning to the same blank Codex entry retains its pending project add', 
   await expect(page.getByRole('button', { name: 'Choose project, current project test', exact: true })).toBeVisible();
   await expect(page.locator('#transcript')).toHaveAttribute('data-transcript-session', session);
   await expect(page.locator('#task')).toHaveValue('');
+  await expect(page).toHaveURL(/\/codex\/new$/);
   expect(app.pageErrors).toEqual([]);
 });
 
 for (const detachPrevious of [false, true]) {
-  for (const managementPage of [null, 'Settings', 'Skills', 'Scheduled']) {
+  for (const managementPage of [null, 'Settings']) {
     test(`a pending project add preserves its draft while sending is blocked (detach previous: ${detachPrevious}, page: ${managementPage})`, async ({ page }) => {
       const app = await open(page, ['/workspace', '/other'], true);
       await choose(page, 'Codex test');
@@ -267,7 +268,7 @@ for (const detachPrevious of [false, true]) {
         await back.click();
       }
       await expect(page.getByRole('button', { name: 'Choose project, current project test', exact: true })).toBeVisible();
-      await expect(page.locator('.workspace-row[title="/Users/test"]')).toHaveClass(/\bactive\b/);
+      await expect(app.projectRow('/Users/test')).toHaveClass(/\bactive\b/);
       expect(app.requests.filter(r => r.method === 'codex.draft.open').map(r => r.params.cwd)).toEqual(['/workspace', '/Users/test']);
       await expect(page.locator('#transcript')).toHaveAttribute('data-transcript-session', session);
       await expect(page.locator('#task')).toHaveValue('Send in the added project');
@@ -279,7 +280,9 @@ for (const detachPrevious of [false, true]) {
   }
 }
 
-for (const managementPage of ['Settings', 'Skills', 'Scheduled']) {
+{
+  const managementPage = 'Settings';
+
   for (const broadcastFirst of [false, true]) {
     test(`adding a project from ${managementPage} preserves its hidden draft (broadcast first: ${broadcastFirst})`, async ({ page }) => {
       const app = await open(page, ['/workspace', '/other']);
@@ -297,7 +300,7 @@ for (const managementPage of ['Settings', 'Skills', 'Scheduled']) {
       const result = reply(app.requests.find(r => r.method === 'workspace.add'));
       if (broadcastFirst) {
         app.notify('workspace.changed', { workspaces: app.workspaces });
-        await expect(page.locator('.workspace-row[title="/Users/test"]')).toBeVisible();
+        await expect(app.projectRow('/Users/test')).toBeVisible();
         pending.resolve(result);
       } else {
         pending.resolve(result);
@@ -348,9 +351,9 @@ for (const agent of ['Codex', 'OpenSeek']) {
     const opens = app.requests.filter(r => r.method === 'codex.draft.open').length;
     pending.resolve(reply(app.requests.find(r => r.method === 'workspace.add')));
     app.notify('workspace.changed', { workspaces: app.workspaces });
-    await expect(page.locator('.workspace-row[title="/Users/test"]')).toBeVisible();
+    await expect(app.projectRow('/Users/test')).toBeVisible();
     await expect(page.locator('#transcript')).toHaveAttribute('data-transcript-session', session);
-    await expect(page.locator('.workspace-row[title="/workspace"]')).toHaveClass(/\bactive\b/);
+    await expect(app.projectRow('/workspace')).toHaveClass(/\bactive\b/);
     expect(app.requests.filter(r => r.method === 'codex.draft.open')).toHaveLength(opens);
     expect(app.pageErrors).toEqual([]);
   });

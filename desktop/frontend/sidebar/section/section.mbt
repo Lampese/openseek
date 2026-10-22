@@ -182,6 +182,7 @@ fn Actions::entry_component(
   _key : String,
   input : @rabbita.Val[Entry],
   locale : @rabbita.Val[@i18n.Locale],
+  search : @rabbita.Val[@conversation.Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
   input.switch_by(
     entry => {
@@ -193,7 +194,7 @@ fn Actions::entry_component(
               _ => initial
             }
           })
-          @project.component(project_input, self.project, locale)
+          @project.component(project_input, self.project, locale, search)
         }
         Conversation(initial) => {
           let conversation_input = input.map(entry => {
@@ -202,7 +203,12 @@ fn Actions::entry_component(
               _ => initial
             }
           })
-          @conversation.component(locale, conversation_input, self.conversation)
+          @conversation.component(
+            locale,
+            conversation_input,
+            self.conversation,
+            search,
+          )
         }
         Placeholder(initial) => {
           let placeholder_input = input.map(entry => {
@@ -222,11 +228,12 @@ fn Actions::entry_component(
 ///|
 /// A Section is a keyed Rabbita component, not an array fragment rebuilt by
 /// the root view. Its disclosure state survives entry insertion and reorder.
-/// Rows are (key, node) pairs for the sidebar's one keyed container.
+/// Its keyed content stays mounted while the section animates closed.
 pub fn component(
   input : @rabbita.Val[Input],
   actions : Actions,
   locale : @rabbita.Val[@i18n.Locale],
+  search : @rabbita.Val[@conversation.Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
   let (state, emit) = @rabbita.create_state_with_input(
     input~,
@@ -263,8 +270,8 @@ pub fn component(
       }
     },
   )
-  let entry_inputs = input.map2(locale, (input, locale) => {
-    @vector.from_array(input.entries.map(entry => (locale, entry)))
+  let entry_inputs = input.map3(locale, search, (input, locale, search) => {
+    @vector.from_array(input.entries.map(entry => (locale, entry, search)))
   })
   let entry_rows = entry_inputs.assoc_by(
     (key, entry) => {
@@ -272,12 +279,13 @@ pub fn component(
         key,
         entry.map(pair => pair.1),
         entry.map(pair => pair.0),
+        entry.map(parts => parts.2),
       )
     },
     by=entry => entry.1.key(),
   )
-  state.map3(input, entry_rows, (state, input, entry_rows) => {
-    let collapsed = state.folded(input)
+  state.map4(input, entry_rows, search, (state, input, entry_rows, search) => {
+    let collapsed = search.query.is_blank() && state.folded(input)
     let mut class = if collapsed {
       "sidebar-heading section-heading collapsible collapsed"
     } else {
@@ -291,7 +299,9 @@ pub fn component(
         class="section-disclosure",
         type_="button",
         on_click=emit(Toggle),
-        attrs=@html.Attrs::build().aria_expanded((!collapsed).to_string()),
+        attrs=@html.Attrs::build()
+          .aria_expanded((!collapsed).to_string())
+          .aria_controls(input.id.key() + ":content"),
         [
           @html.span(class="sidebar-label", input.label),
           @html.span(
@@ -314,17 +324,35 @@ pub fn component(
         ),
       )
     }
-    let rows : Array[(String, @html.Html)] = [
-      (input.id.key(), @html.div(class~, heading)),
-    ]
-    if !collapsed {
-      for group in entry_rows {
-        for row in group {
-          rows.push(row)
-        }
+    let rows : Map[String, @html.Html] = Map([])
+    for group in entry_rows {
+      for row in group {
+        rows[row.0] = row.1
       }
     }
-    rows
+    [
+      (
+        input.id.key(),
+        @html.div(
+          class=if collapsed {
+            "sidebar-group collapsed"
+          } else {
+            "sidebar-group"
+          },
+          [
+            @html.div(class~, heading),
+            @html.div(
+              id=input.id.key() + ":content",
+              class="sidebar-group-content",
+              attrs=@html.Attrs::build()
+                .aria_hidden(collapsed.to_string())
+                .inert(collapsed),
+              rows,
+            ),
+          ],
+        ),
+      ),
+    ]
   })
 }
 

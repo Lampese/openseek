@@ -340,6 +340,9 @@ pub fn endpoints(
     Endpoint(@commands.skills_uninstall, payload => {
       uninstall_skill_op(payload, on_skills_changed)
     }),
+    Endpoint(@commands.skills_set_enabled, payload => {
+      set_skill_enabled_op(payload, on_skills_changed)
+    }),
     Endpoint(@commands.update_check, _ => state.updates.check()),
     @endpoint.Endpoint::sync(@commands.update_download, _ => {
       state.updates.start_download()
@@ -357,6 +360,9 @@ pub fn endpoints(
     }),
     Endpoint(@commands.github_pull_request, payload => {
       github_pull_request_op(payload)
+    }),
+    Endpoint(@commands.github_pull_request_summary, payload => {
+      github_pull_request_summary_op(payload)
     }),
     Endpoint(@commands.github_checkout, payload => github_checkout_op(payload)),
     Endpoint(@commands.github_checkout_status, payload => {

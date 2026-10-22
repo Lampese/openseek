@@ -19,11 +19,19 @@ export default defineConfig({
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
   // Run independent test files in parallel while preserving in-file ordering.
-  workers: 2,
+  workers: 4,
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
+    { name: 'webkit-mobile', testMatch: '**/mobile_browser.spec.js', use: { browserName: 'webkit' } },
     // Safari's grid sizing can hide question cards even when Chromium passes.
-    { name: 'webkit-questions', testMatch: '**/user_questions.spec.js', use: { browserName: 'webkit' } },
+    {
+      name: 'webkit-questions',
+      testMatch: '**/user_questions.spec.js',
+      // Keep WebKit coverage at the engine-specific layout boundary. Shared
+      // question state and protocol behavior are covered in Chromium and model tests.
+      grep: /@webkit-layout/,
+      use: { browserName: 'webkit' },
+    },
   ],
   reporter: [
     ['list'],
@@ -36,12 +44,12 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    // Serve Desktop's own tree so the suite exercises the browser artifacts
-    // staged by the real Desktop packager, not a test-only copy of the UI.
+    // Mount the real packaged browser directory at the origin root, matching
+    // the Desktop host and local console resource layout.
     // The large frontend bundle makes the Wasm script's transfer cost visible
     // on every fresh page. Compile the same static server for native release.
-    command: `moon run --target native --release ../../scripts/serve-static.mbtx .. ${serverPort}`,
-    url: `${baseURL}/dist/browser/index.html`,
+    command: `moon run --target native --release ../../scripts/serve-static.mbtx ../dist/browser ${serverPort}`,
+    url: `${baseURL}/index.html`,
     reuseExistingServer: Boolean(configuredBaseURL) || !isCI,
     // A fresh checkout also compiles the native server and its dependencies.
     timeout: 120_000,

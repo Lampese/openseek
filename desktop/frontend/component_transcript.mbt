@@ -31,12 +31,19 @@ fn TranscriptSlot::key(self : TranscriptSlot) -> String {
 ///|
 /// A page is gated on both its account session and its page device. Until
 /// both exist the view shows the gate instead of the console frame, so no
-/// transcript is on screen either. The desktop window has both from the
-/// first render and is never gated.
+/// transcript is on screen either. A host built for another protocol
+/// revision gates every page the same way. The desktop window has both from
+/// the first render and is never gated.
 fn Model::is_console_gated(self : Model) -> Bool {
   self.console.page_device is None ||
   !(self.console.auth is AuthSignedIn(..)) ||
-  self.focused_device() is None
+  self.focused_device() is None ||
+  self.host_incompatible()
+}
+
+///|
+fn Model::host_incompatible(self : Model) -> Bool {
+  self.focused_device() is Some(dev) && dev.bridge is HostIncompatible
 }
 
 ///|
@@ -47,22 +54,23 @@ fn Model::is_console_gated(self : Model) -> Bool {
 /// and the transcript component's lifetime follows it, so the fork is decided
 /// once.
 priv enum ChatColumn {
-  LoadFailed(message~ : String)
+  LoadFailed(message~ : String, retry~ : Bool)
   Loading
   Onboarding
+  CloudHome
   Transcript(slot~ : TranscriptSlot, conversation~ : Conversation)
   CloudTranscript(slot~ : TranscriptSlot)
 }
 
 ///|
 fn Model::chat_column(self : Model) -> ChatColumn {
-  if self.cloud.creating_at(self.chat_navigation_generation) {
-    return Loading
+  if self.cloud_draft_identity() is Some(owner) {
+    return CloudTranscript(slot=CloudTranscriptSlot(owner))
   }
   if self.cloud_identity() is Some(owner) {
     guard self.cloud_conversation() is Some(conversation) else {
       return if self.cloud.notice is Some(message) {
-        LoadFailed(message~)
+        LoadFailed(message~, retry=true)
       } else {
         Loading
       }
@@ -71,14 +79,17 @@ fn Model::chat_column(self : Model) -> ChatColumn {
       return Loading
     }
     if conversation.history_required && conversation.notice is Some(message) {
-      return LoadFailed(message~)
+      return LoadFailed(message~, retry=true)
     }
     return CloudTranscript(slot=CloudTranscriptSlot(owner))
+  }
+  if self.cloud_selected() {
+    return CloudHome
   }
   if self.conversation_load_failure is Some(failure) &&
     self.host_selection() is Some(selected) &&
     selected == failure.target {
-    return LoadFailed(message=failure.message)
+    return LoadFailed(message=failure.message, retry=true)
   }
   if !self.selected_conversation_loaded() {
     return Loading
@@ -112,7 +123,7 @@ fn Model::transcript_slot(self : Model) -> TranscriptSlot? {
     Chat =>
       match self.chat_column() {
         Transcript(slot~, ..) | CloudTranscript(slot~) => Some(slot)
-        LoadFailed(..) | Loading | Onboarding => None
+        LoadFailed(..) | Loading | Onboarding | CloudHome => None
       }
     Skills | Schedules | Settings => None
   }
@@ -215,6 +226,26 @@ fn Model::transcript_content(self : Model) -> TranscriptContent {
 
 ///|
 fn Model::transcript_input(self : Model) -> @transcript_component.Input {
+  if self.cloud_draft_identity() is Some(owner) {
+    return @transcript_component.Input(
+      locale=self.locale,
+      dark_mode=self.theme.is_dark(self.system_dark),
+      minimal=self.minimal_transcript_effective(),
+      source=OpenSeek,
+      identity=owner.key(),
+      active_session=owner.session(),
+      scroll=self.remembered_scroll(),
+      current_project=None,
+      projects=[],
+      can_choose_project=false,
+      project_menu_open=false,
+      project_query="",
+      root=None,
+      items=[],
+      streaming_response=None,
+      streaming_identity="idle",
+    )
+  }
   if self.screen is Chat &&
     self.cloud_identity() is Some(owner) &&
     self.cloud_conversation() is Some(conversation) {
@@ -234,6 +265,8 @@ fn Model::transcript_input(self : Model) -> @transcript_component.Input {
       root=None,
       items=@transcript_component.VisibleRow::history(conversation.items()),
       streaming_response=conversation.streaming_response,
+      streaming_reasoning?=conversation.streaming_reasoning,
+      reasoning_complete=conversation.reasoning_complete,
       // Deltas do not change the committed-event count, so the live bubble
       // keeps one identity until a semantic response/step boundary.
       streaming_identity=conversation.task.unwrap_or("idle") +

@@ -115,6 +115,10 @@ fn duration_label(milliseconds : Int32) -> String {
 /// `approval` is where a request to run OUTSIDE the sandbox goes. Its presence
 /// is what advertises the `escalated` argument at all: a build with nobody to
 /// ask does not offer an argument whose every use would come back refused.
+///
+/// `mcp_service` is the session's MCP host. Every sandboxed snippet gets its
+/// `OPENSEEK_MCP` handoff, with or without PTC; an escalated run inherits the
+/// agent's environment and gets neither handoff.
 pub fn definition(
   workspace_root~ : String,
   read_only~ : Bool = false,
@@ -132,6 +136,7 @@ pub fn definition(
   program_service? : @ptc.Service,
   on_program_trace? : (Json) -> Unit,
   on_program_output? : (@bgjobs.ImageOutput) -> Unit,
+  mcp_service? : @mcphost.Service,
 ) -> @agent_tool.AgentToolDefinition {
   // Per cache key, the generation a stopped build retired (see
   // `open_generation`). Session memory, deliberately: see there.
@@ -166,7 +171,7 @@ pub fn definition(
             is_error=true,
           )
       }
-      let compatible = input.target == "wasm" && !input.escalated
+      let compatible = !input.escalated
       let enabled = input.ptc.unwrap_or(
         compatible && program_service is Some(_),
       )
@@ -188,12 +193,13 @@ pub fn definition(
           generations~,
           approval?,
           program?,
+          mcp_service?,
         )
       }
       let action = if enabled {
         guard compatible else {
           return @agent_tool.respond(
-            "PTC requires the default wasm target and cannot combine with escalated",
+            "PTC cannot combine with escalated",
             is_error=true,
           )
         }
@@ -280,6 +286,23 @@ fn described(
 const DescriptionBriefLimit : Int32 = 72
 
 ///|
+/// The program an escalation asks about, headed by the working directory and
+/// arguments it would run with.
+fn escalation_body(
+  source : String,
+  cwd : String,
+  args : Array[String],
+) -> String {
+  let body = StringBuilder()
+  body <+ "// cwd: \{cwd}\n"
+  if !args.is_empty() {
+    body <+ "// args: \{Json(args).stringify()}\n"
+  }
+  body.write_string(source)
+  body.to_string()
+}
+
+///|
 /// What the model is told when an escalation did not become a run.
 ///
 /// One text per outcome, and they are deliberately different sentences rather
@@ -317,7 +340,7 @@ async fn execute(
   scratch_dir? : String,
   worker_sandbox? : WorkerSandbox,
   // Independent injectable bounds: a runtime-backed run hands off at the
-  // first; a runtime-less run is cancelled at the second; a wasm target's
+  // first; a runtime-less run is cancelled at the second; the snippet's
   // synchronous build phase is cancelled at the third.
   auto_background_after_ms~ : Int32,
   foreground_timeout_ms~ : Int32,
@@ -325,6 +348,7 @@ async fn execute(
   generations~ : Map[String, Int32],
   approval? : @agent_runtime.ApprovalChannel,
   program? : @ptc.Program,
+  mcp_service? : @mcphost.Service,
 ) -> @agent_tool.ToolAction {
   if scratch_dir is Some(dir) {
     @fs.mkdir(dir, recursive=true, permission=0o700) catch {
@@ -404,18 +428,13 @@ async fn execute(
       }
     }
   }
-  // Refuse FFI (`extern`), the one construct no mbtx target runs sandboxed.
-  // The wasm family needs no scan — the compiler refuses `extern "c"` and
-  // `extern "js"` on those backends outright — but the js target's host is
-  // bare node, where `extern "js"` reaches host globals, and llvm is
-  // unsandboxed native codegen. Match the FFI syntax (`extern "c"`/`extern
-  // "js"`), not the bare word: `extern` alone appears in prose and string
-  // literals (a snippet quoting a commit message was refused once), the quote
-  // that follows it does not. A substring scan is NOT a real boundary; it is
-  // what keeps the non-wasm targets' "compute-only" promise true.
+  // Keep the early diagnostic for unsupported FFI. The wasm compiler also
+  // rejects `extern "c"` and `extern "js"`; this scan only explains the
+  // refusal before building. Match the quoted syntax, not the bare word,
+  // which may appear in prose and string literals.
   if source.contains("extern \"") {
     return @agent_tool.respond(
-      "mbtx refuses this program: it uses native FFI (extern), which no mbtx target can run sandboxed — the wasm family refuses to compile it, and the js/llvm targets have no policy to contain it.",
+      "mbtx refuses this program: it uses native FFI (extern), which the wasm backend cannot compile or run sandboxed.",
       is_error=true,
     )
   }
@@ -448,16 +467,6 @@ async fn execute(
   // a possibly-large output log when a turn is cancelled mid-run. The timeout
   // wraps only the process body; output is redirected to a file (not buffered in
   // memory) and read back capped, so a flood cannot exhaust memory.
-  // Escalation only means something on the backend the policy binds. The other
-  // targets never had `--wasm-policy` passed to them in the first place — they
-  // cannot spawn or touch files at all — so asking here would spend a person's
-  // attention on a grant that changes nothing about the run.
-  if input.escalated && input.target != "wasm" {
-    return @agent_tool.respond(
-      "mbtx: `escalated` applies to the wasm target, which is the one the sandbox policy binds; `\{input.target}` runs no policy to lift and cannot spawn or touch files anyway. Drop `escalated`, or drop `target` to use wasm.",
-      is_error=true,
-    )
-  }
   // Resolve the escalation request before anything is created or spawned, and
   // after every cheap check above: a snippet with a typo'd `cwd` must fail on
   // the typo rather than spend a person's attention on a prompt for a call
@@ -469,14 +478,23 @@ async fn execute(
   let escalated = if input.escalated {
     let outcome = match approval {
       Some(channel) =>
-        // The program goes with the question. It is what the user is actually
-        // deciding about, and `detail` — which is a constant — describes only
-        // the permission. This is the resolved snapshot, so what is approved
-        // and what runs cannot differ even if the saved file changes.
+        // The program goes with the question, headed by the working
+        // directory and arguments it would run with: together they are what
+        // the user is actually deciding about, and `detail` — which is a
+        // constant — describes only the permission. The header is MoonBit
+        // comments, so the body still reads (and highlights) as the source.
+        // This is the resolved snapshot, so what is approved and what runs
+        // cannot differ even if the saved file changes.
         channel.ask({
           tool_name: "mbtx",
           detail: "run this snippet with no sandbox policy: no spawn allowlist, and writes anywhere",
-          body: Some(source),
+          body: Some(
+            escalation_body(
+              source,
+              run_cwd.unwrap_or(workspace_root),
+              input.args,
+            ),
+          ),
         })
       // The argument was not advertised in this build's schema, so reaching
       // here means the model asked for a field it was never offered.
@@ -491,9 +509,9 @@ async fn execute(
   }
   // One source of truth for whether moonrun's policy actually governs this
   // execution. The launch argv, adopted-job metadata, and foreground refusal
-  // classifier must not drift: ordinary output from a non-wasm or escalated run
-  // is never evidence of a policy that was not active.
-  let policy_active = input.target == "wasm" && !escalated
+  // classifier must not drift: ordinary output from an escalated run is never
+  // evidence of a policy that was not active.
+  let policy_active = !escalated
   let handoff_dir_has_owner = job_dir is Some(_) || scratch_dir is Some(_)
   // A directory that an automatic handoff may give to a job must outlive this
   // call, so it gets a name of its own inside a caller-owned job dir or scratch
@@ -573,14 +591,12 @@ async fn execute(
   // build lands in a directory keyed by the program (see `cache_key`) that
   // outlives this call, so its compiled dependencies are there for the next
   // one; the staged source is rewritten only when it changed, because moon
-  // rebuilds on modification time. Without a cache — no owner, or a non-wasm
-  // target, which keeps the single-shot `moon run` — the program builds in
-  // this call's own directory as before. A cache directory that cannot be
+  // rebuilds on modification time. Without a cache owner, the program builds
+  // in this call's own directory. A cache directory that cannot be
   // created costs this call the cache, not the run.
   let key_dir = match build_cache_root(job_dir?, scratch_dir?) {
-    Some(root) if input.target == "wasm" =>
-      Some("\{root}/\{cache_key(script_path)}")
-    _ => None
+    Some(root) => Some("\{root}/\{cache_key(script_path)}")
+    None => None
   }
   let stage_dir = match key_dir {
     Some(keyed) =>
@@ -622,10 +638,8 @@ async fn execute(
   // canonical path anchors the diagnostic path rewrite below.
   let real = @fs.realpath(build_dir) catch { _ => build_dir }
   let stage_real = @fs.realpath(stage_dir) catch { _ => stage_dir }
-  // The wasm backend is where moonrun's policy applies, so the policy file is
-  // written for every run and passed alongside. `--wasm-policy` is silently
-  // IGNORED on other backends, which is why `target` is not the model's choice
-  // to make freely — see `decode`.
+  // Every snippet runs on wasm, the backend moonrun's policy governs. Write
+  // the policy for every run; only an approved escalation omits it at launch.
   let policy_path = "\{build_dir}/policy.json"
   // Scratch space for the snippet's own `@fs.tmpdir()`, kept beside the build
   // output rather than inside it so temp directories do not appear among moon's
@@ -639,6 +653,11 @@ async fn execute(
   // not also grant writing there, and reads are open, so a snippet can still
   // work in a directory it may not modify.
   let injected : Map[String, String] = Map([])
+  if mcp_service is Some(service) {
+    for key, value in service.env() {
+      injected[key] = value
+    }
+  }
   if program is Some(program) {
     for key, value in program.env() {
       injected[key] = value
@@ -687,7 +706,8 @@ async fn execute(
           Exec(program, command_argv),
           deny_roots=scope.deny_roots,
           worker_root=scope.worker_root,
-          worker_admin_dir=scope.worker_admin_dir,
+          worker_admin_dir?=scope.worker_admin_dir,
+          git_index?=scope.git_index,
         )
       // The read-only roles (explore/review/audit) hold no editing tool, so
       // "may not write source" is the guarantee that defines them and it stays
@@ -704,7 +724,6 @@ async fn execute(
           workspace_root,
           Exec(program, command_argv),
           // Per-call storage outlives both compilation and any background run.
-          // Never put the repository-sized SBPL profile in the spawn argv.
           profile_path="\{build_dir}/source-write.sb",
           writable_subtree~,
         )
@@ -737,95 +756,60 @@ async fn execute(
   // reported — the same process `moon run` would exec, with `--policy` being
   // moonrun's spelling of `--wasm-policy` (confirmed against moon's own
   // `--dry-run` plan).
-  //
-  // The other targets keep the single-shot `moon run`: they are compute-only
-  // (no policy to stage around), their runners are not moonrun, and they are
-  // rare enough that a second execution shape is not worth carrying.
-  let staged_run = if input.target == "wasm" {
-    match
-      build_snippet(
-        build_dir~,
-        stage_dir~,
-        retire=if cached { retire } else { None },
-        run_cwd~,
-        warning=input.warning,
-        build_timeout_ms~,
-        empty_stdin~,
-        rewrite_bases=[real, build_dir, stage_real, stage_dir],
-        source_name~,
-        confine~,
-      ) {
-      NotBuilt(action) => return action
-      Built(artifact=built, notes~) => {
-        // A cached artifact is a shared file: the next build of the same key
-        // rewrites it in place. This call runs a private copy, so neither a
-        // later call nor a detached job's cleanup can touch the file a
-        // running program was started from. moonrun reads the whole program
-        // at startup, so the copy also decouples job lifetime from the cache.
-        let artifact = if cached {
-          let copy = "\{build_dir}/snippet.wasm"
-          @fs.write_file(
-            copy,
-            @fs.read_file(built),
-            create_mode=CreateOrTruncate,
-          ) catch {
-            error =>
-              return @agent_tool.respond(
-                "mbtx: the build succeeded but its artifact could not be copied out of the session cache (\{error}) — a filesystem fault, not a problem in `source`.",
-                is_error=true,
-                brief="mbtx build",
-              )
-          }
-          copy
-        } else {
-          built
-        }
-        // An approved escalation is exactly this: the policy file is still
-        // written, and simply not passed. Widening the document instead was
-        // not available — its `fs.write` roots are canonicalized existing
-        // paths with no wildcard, and "any program" has no spelling in
-        // `process.allow` short of enumerating one — so "no policy" is both
-        // the honest description of what was approved and the only one the
-        // runtime can express.
-        let run_argv : Array[String] = [
-          ..if policy_active {
-            ["--policy", policy_path]
-          },
-          artifact,
-          "--",
-          ..input.args,
-        ]
-        Some(("moonrun", run_argv, notes))
-      }
-    }
-  } else {
-    None
+  let (built, build_notes) = match
+    build_snippet(
+      build_dir~,
+      stage_dir~,
+      retire=if cached { retire } else { None },
+      run_cwd~,
+      warning=input.warning,
+      build_timeout_ms~,
+      empty_stdin~,
+      rewrite_bases=[real, build_dir, stage_real, stage_dir],
+      source_name~,
+      confine~,
+    ) {
+    NotBuilt(action) => return action
+    Built(artifact~, notes~) => (artifact, notes)
   }
-  let (spawn_program, spawn_argv, build_notes) = staged_run.unwrap_or(
-    (
-      "moon",
-      [
-        "run",
-        "-q",
-        "\{build_dir}/snippet.mbtx",
-        "--target",
-        input.target,
-        "--target-dir",
-        "\{build_dir}/_build",
-        ..if !input.warning {
-          ["--warn-list", WarnOffList]
-        },
-        "--",
-        ..input.args,
-      ],
-      "",
-    ),
-  )
-  let staged = staged_run is Some(_)
-  let sandboxed_command = confine(spawn_program, spawn_argv)
+  // A cached artifact is a shared file: the next build of the same key
+  // rewrites it in place. This call runs a private copy, so neither a
+  // later call nor a detached job's cleanup can touch the file a
+  // running program was started from. moonrun reads the whole program
+  // at startup, so the copy also decouples job lifetime from the cache.
+  let artifact = if cached {
+    let copy = "\{build_dir}/snippet.wasm"
+    @fs.write_file(copy, @fs.read_file(built), create_mode=CreateOrTruncate) catch {
+      error =>
+        return @agent_tool.respond(
+          "mbtx: the build succeeded but its artifact could not be copied out of the session cache (\{error}) — a filesystem fault, not a problem in `source`.",
+          is_error=true,
+          brief="mbtx build",
+        )
+    }
+    copy
+  } else {
+    built
+  }
+  // An approved escalation is exactly this: the policy file is still
+  // written, and simply not passed. Widening the document instead was
+  // not available — its `fs.write` roots are canonicalized existing
+  // paths with no wildcard, and "any program" has no spelling in
+  // `process.allow` short of enumerating one — so "no policy" is both
+  // the honest description of what was approved and the only one the
+  // runtime can express.
+  let run_argv : Array[String] = [
+    ..if policy_active {
+      ["--policy", policy_path]
+    },
+    artifact,
+    "--",
+    ..input.args,
+  ]
+  let sandboxed_command = confine("moonrun", run_argv)
   let (prog, argv) = match sandboxed_command {
     Some(command) => (command.program(), command.args())
-    None => (spawn_program, spawn_argv)
+    None => ("moonrun", run_argv)
   }
   // With a job runtime wired the foreground run happens ON it, so the
   // deadline can DETACH the still-running program as a background job rather
@@ -896,11 +880,7 @@ async fn execute(
       let id = runtime.adopt(
         exec,
         description?=input.description,
-        command=if staged {
-          "mbtx run (build ok): \{@agent_tool.brief_line(source, limit=64)}"
-        } else {
-          "mbtx: \{@agent_tool.brief_line(source, limit=64)}"
-        },
+        command="mbtx run (build ok): \{@agent_tool.brief_line(source, limit=64)}",
         sandboxed_command?,
         output_rewrites=temp_path_rewrites([real, build_dir], source_name~),
         moonrun_policy_active=policy_active,
@@ -920,11 +900,7 @@ async fn execute(
         // reads the final trace through the supplier).
         program.republish()
       }
-      let handoff = if staged {
-        "mbtx: the build succeeded and the RUNNING PROGRAM was still going after \{duration_label(auto_background_after_ms)}, so it moved to the background as job \{id} (nothing was lost; any later nonzero exit is the program's own). Read its output with job_output (job_id=\"\{id}\") and stop it with job_stop (job_id=\"\{id}\")."
-      } else {
-        "mbtx: still running after \{duration_label(auto_background_after_ms)}, so it moved to the background as job \{id} (nothing was lost). Read its output with job_output (job_id=\"\{id}\") and stop it with job_stop (job_id=\"\{id}\")."
-      }
+      let handoff = "mbtx: the build succeeded and the RUNNING PROGRAM was still going after \{duration_label(auto_background_after_ms)}, so it moved to the background as job \{id} (nothing was lost; any later nonzero exit is the program's own). Read its output with job_output (job_id=\"\{id}\") and stop it with job_stop (job_id=\"\{id}\")."
       let handoff = match exec.spill_path() {
         Some(path) => "\{handoff}\nOutput file: \{path}"
         None => "\{handoff}\nOutput retention: memory only."
@@ -948,7 +924,7 @@ async fn execute(
       return @agent_tool.respond("mbtx: \{error}", is_error=true)
     }
     let raw = exec.head()
-    let exit_code = exec.exit_code().unwrap_or(-1)
+    let exit_code = exec.exit_code()
     // The retained execution is KILLED once output passes the inline cap, so a
     // clipped head means a stopped program, not a quiet one — say which.
     let output_limit_reached = exec.over_inline_cap() || exec.output_truncated()
@@ -961,16 +937,13 @@ async fn execute(
       sandboxed_command,
       denial_scan_source,
       raw,
-      exit_code=exec.exit_code(),
+      exit_code~,
       escalation=approval is Some(_),
       policy_active~,
     )
     exec.discard()
     let text = rewrite_temp_paths(raw, [real, build_dir], source_name~)
-    let body = with_build_notes(
-      build_notes,
-      finished_body(text, exit_code, staged~),
-    )
+    let body = with_build_notes(build_notes, finished_body(text, exit_code))
     let body = if output_limit_reached {
       "\{body}\n[mbtx: output passed the fixed \{OutputCapBytes}-byte inline limit, so the program was STOPPED and this is only what it printed first. Retrying the same call will hit the same limit. Redirect bulky child output with `stdout=ToFile(path)` where `path` is under `@fs.tmpdir()`, then have that same snippet read the file and print only the needed excerpt before it exits.]"
     } else {
@@ -982,13 +955,13 @@ async fn execute(
       body
     }
     let body = with_denial_guidance(body, sandbox_denied)
-    let is_error = exit_code != 0 ||
+    let is_error = exit_code != Some(0) ||
       sandbox_denied is Some(_) ||
       output_limit_reached
     return @agent_tool.respond(
       body,
       is_error~,
-      brief?=if staged && is_error { Some("mbtx run") } else { None },
+      brief?=if is_error { Some("mbtx run") } else { None },
     )
   }
   let result = @async.with_timeout_opt(foreground_timeout_ms, () => {
@@ -1041,14 +1014,14 @@ async fn execute(
       // both the status line and the body are retained.
       let body = with_build_notes(
         build_notes,
-        finished_body(text, exit_code, staged~),
+        finished_body(text, Some(exit_code)),
       )
       let body = with_denial_guidance(body, sandbox_denied)
       let is_error = exit_code != 0 || sandbox_denied is Some(_)
       @agent_tool.respond(
         body,
         is_error~,
-        brief?=if staged && is_error { Some("mbtx run") } else { None },
+        brief?=if is_error { Some("mbtx run") } else { None },
       )
     }
     None => {
@@ -1061,7 +1034,7 @@ async fn execute(
         [real, build_dir],
         source_name~,
       )
-      let head = timeout_head(foreground_timeout_ms, staged~)
+      let head = timeout_head(foreground_timeout_ms)
       let body = if partial.is_blank() {
         head
       } else {
@@ -1073,7 +1046,7 @@ async fn execute(
       @agent_tool.respond(
         with_build_notes(build_notes, body),
         is_error=true,
-        brief?=if staged { Some("mbtx run") } else { None },
+        brief="mbtx run",
       )
     }
   }
@@ -1118,6 +1091,8 @@ async fn build_snippet(
     "run",
     "-q",
     "\{stage_dir}/snippet.mbtx",
+    "--target",
+    "wasm",
     "--build-only",
     "--target-dir",
     "\{stage_dir}/_build",
@@ -1179,9 +1154,9 @@ async fn build_snippet(
     return NotBuilt(
       @agent_tool.respond(
         if text.is_blank() {
-          "mbtx: the BUILD failed (exit \{exit_code}) with no output — the program never ran"
+          "mbtx: the BUILD failed (\{exit_status(exit_code)}) with no output — the program never ran"
         } else {
-          "[mbtx: BUILD failed (exit \{exit_code}) — the program never ran; the output below is the build's]\n\{text}"
+          "[mbtx: BUILD failed (\{exit_status(exit_code)}) — the program never ran; the output below is the build's]\n\{text}"
         },
         is_error=true,
         brief="mbtx build",
@@ -1269,44 +1244,51 @@ fn strip_artifact_report(text : String) -> String {
 }
 
 ///|
-/// The status framing for a finished run. `staged` is the wasm two-phase
-/// path, where the build already succeeded synchronously before this process
-/// started — so a failure here is from the RUN by construction, and saying so
-/// is what keeps the model from re-reading a runtime trap as a compile error.
-/// The single-shot targets keep the plain framing: their one exit code covers
-/// both stages and claims neither.
-fn finished_body(text : String, exit_code : Int32, staged~ : Bool) -> String {
-  if exit_code == 0 {
-    return if text.is_blank() {
-      "mbtx: program exited 0 with no output"
-    } else {
-      text
-    }
+/// The build already succeeded synchronously before this process started, so
+/// a failure here is from the RUN by construction. Say so to keep a runtime
+/// trap from being read as a compile error.
+///
+/// `exit_code` is `None` when the program has no exit of its own because mbtx
+/// stopped it (the inline output cap); that is reported as such, never as a
+/// made-up code or signal.
+fn finished_body(text : String, exit_code : Int32?) -> String {
+  let status = match exit_code {
+    Some(0) =>
+      return if text.is_blank() {
+        "mbtx: program exited 0 with no output"
+      } else {
+        text
+      }
+    Some(code) => exit_status(code)
+    None => "stopped by mbtx before it exited"
   }
-  if staged {
-    if text.is_blank() {
-      "mbtx: the build succeeded, then the run exited \{exit_code} with no output"
-    } else {
-      "[mbtx: exited \{exit_code} at RUNTIME — the build succeeded; this failure is from the run, not the build]\n\{text}"
-    }
-  } else if text.is_blank() {
-    "mbtx: program exited \{exit_code} with no output"
+  if text.is_blank() {
+    "mbtx: the build succeeded, then the run failed (\{status}) with no output"
   } else {
-    "[mbtx: exited \{exit_code}]\n\{text}"
+    "[mbtx: run failed (\{status}) at RUNTIME — the build succeeded; this failure is from the run, not the build]\n\{text}"
   }
 }
 
 ///|
-/// The first line of a foreground timeout report. On the staged wasm path the
-/// build had already succeeded, so only the program can be what never
-/// finished; a single-shot target keeps the two-sided hedge.
-fn timeout_head(foreground_timeout_ms : Int32, staged~ : Bool) -> String {
-  let bound = duration_label(foreground_timeout_ms)
-  if staged {
-    "mbtx: timed out after \{bound} and was cancelled — the build had already succeeded, so it is the PROGRAM that did not finish (an infinite loop, or waiting on something that never arrived)."
+/// A process's exit as a report names it. On POSIX `@process` reports a
+/// process killed by a signal as `-signal_number`; printed as a bare exit code,
+/// a crash reads like the compiler rejecting `source`. On Windows a negative
+/// code is the process's own status (an NTSTATUS such as `0xC0000005`), so it
+/// stays a code.
+fn exit_status(exit_code : Int32) -> String {
+  if exit_code < 0 && !(@async.platform is Windows) {
+    "killed by signal \{-exit_code}"
   } else {
-    "mbtx: timed out after \{bound} and was cancelled — the program did not finish (an infinite loop, or a build that never completed)."
+    "exit \{exit_code}"
   }
+}
+
+///|
+/// The first line of a foreground timeout report. The build already succeeded,
+/// so only the program can be what never finished.
+fn timeout_head(foreground_timeout_ms : Int32) -> String {
+  let bound = duration_label(foreground_timeout_ms)
+  "mbtx: timed out after \{bound} and was cancelled — the build had already succeeded, so it is the PROGRAM that did not finish (an infinite loop, or waiting on something that never arrived)."
 }
 
 ///|
@@ -1376,7 +1358,7 @@ async fn refusal_guidance(
     }
   }
 
-  // A non-wasm or escalated run was given no moonrun policy, so nothing it
+  // An escalated run was given no moonrun policy, so nothing it
   // prints can be that policy refusing something. The marker is ordinary guest
   // text in that case; classifying it would turn a successful run into an error.
   if policy_active && shows(@sandbox.output_reports_policy_refusal) {
@@ -1605,21 +1587,13 @@ fn schema(escalation~ : Bool, programmatic~ : Bool) -> Json {
                 "ptc",
                 Json({
                   "type": "boolean",
-                  "description": "Enable @tools.call(name, arguments) for edit, multi_edit, write, remove, and web_search through an explicit \"moonbitlang/openseek_tools@0.2.0\" import. Each arguments value is the same JSON object as for the direct tool. Uses registered host tools and structured results. Defaults to true for supported wasm runs; false opts out. Normal foreground/background timing is unchanged. Explicit true cannot combine with other targets or escalated.",
+                  "description": "Enable @tools.call(name, arguments) for edit, multi_edit, write, remove, and web_search through an explicit \"moonbitlang/openseek_tools@0.2.0\" import. Each arguments value is the same JSON object as for the direct tool. Uses registered host tools and structured results. Defaults to true for runs without escalated; false opts out. Normal foreground/background timing is unchanged. Explicit true cannot combine with escalated.",
                 }),
               ),
             ]
           } else {
             []
           },
-          (
-            "target",
-            {
-              "type": "string",
-              "enum": ["wasm", "wasm-gc", "js", "llvm"],
-              "description": "Backend to run on; defaults to wasm, which is the sandboxed one. The alternatives run pure computation only — they cannot spawn commands or touch files.",
-            },
-          ),
           (
             "cwd",
             {
@@ -1783,7 +1757,7 @@ fn description(
     #|Existing scripts are read once; each run executes its selected snapshot
     #|with the same sandbox and isolated imports as inline source.
     #|Diagnostics cite `source:LINE:COL` or the supplied filename and line/column.
-    #|`target` defaults to wasm, the sandboxed backend.
+    #|The tool always compiles to wasm and runs with moonrun.
   // Rendered from `spawnable_commands`, the table that also builds the
   // moonrun policy: the list the model reads and the list moonrun enforces
   // cannot disagree, because there is only one.
@@ -1855,7 +1829,7 @@ fn description(
   // the build/run split and its failure labels hold with or without a job
   // runtime; only what happens to a long RUN differs.
   let staging =
-    $|On the default wasm target the snippet is BUILT first, synchronously (up to
+    $|The snippet is BUILT first, synchronously (up to
     $|\{build_bound}): a failed build returns immediately, labeled `BUILD failed`, and the
     $|program never starts — so a failure labeled `at RUNTIME` really is from the
     $|run. Build time does not count against the run's own allowance below.

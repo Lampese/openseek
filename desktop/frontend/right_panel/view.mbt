@@ -72,9 +72,11 @@ fn panel_view(
       }
     }
   })
+  let host_tools = input.file_ctx.owner.host() is Some(_)
   let launcher : @dock.LauncherActions = {
+    host_tools,
     // Browser tabs need this window's native views; a remote console has none.
-    browser: if input.is_desktop {
+    browser: if input.is_desktop && host_tools {
       Some(@cmd.batch([actions.browser_tab, actions.close_menu]))
     } else {
       None
@@ -128,6 +130,7 @@ fn panel_view(
     [
       @fileeditor.resize_handle_view(),
       @dock.tabs_bar(
+        owner=input.file_ctx.owner,
         locale~,
         actions.dock,
         input.dock,
@@ -141,6 +144,7 @@ fn panel_view(
         toggle_expanded=actions.toggle_expanded,
       ),
       @fileeditor.breadcrumb_view(
+        desktop=input.is_desktop,
         locale~,
         actions.file_editor,
         input.file_panel,

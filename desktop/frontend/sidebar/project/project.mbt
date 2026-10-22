@@ -29,17 +29,24 @@ pub fn Id::root(self : Id) -> String {
 }
 
 ///|
-/// The DOM child key for this project's folder row inside the sidebar's one
-/// keyed container.
+/// The DOM child key for this project's branch.
 pub fn Id::key(self : Id) -> String {
   "project:\{self.source}:\{self.channel}:\{self.root}"
 }
+
+///|
+pub(all) struct Host {
+  name : String
+  online : Bool
+  details : Bool
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct Input {
   id : Id
   title : String
   label : String
+  host : Host?
   // The active conversation's session id while this project holds the
   // focused chat; `None` otherwise. The value identifies the activation: a
   // fold made during one activation holds until a different one arrives.
@@ -59,6 +66,7 @@ pub(all) struct Actions {
   new_conversation : (Id) -> @cmd.Cmd
   open_settings : (Id) -> @cmd.Cmd
   detach : (Id) -> @cmd.Cmd
+  host_details : (Id) -> @cmd.Cmd
   conversation : @conversation.Actions
 }
 
@@ -74,7 +82,7 @@ priv enum Msg {
 /// different from the stamped one forces the branch open.
 priv enum Fold {
   Open
-  Folded(during~ : String?)
+  Folded(during~ : String?, preview_limit~ : Int32)
 } derive(Eq)
 
 ///|
@@ -98,10 +106,15 @@ fn State::update(self : State, input : Input, msg : Msg) -> State {
       if self.folded(input) {
         { ..self, fold: Open, }
       } else {
-        // Folding ends the current preview session. Opening the project again
-        // starts from the compact five-chat view, even after several Show
-        // more clicks.
-        { fold: Folded(during=input.activation), preview_limit: PreviewLimit, }
+        // Keep the outgoing preview intact throughout the closing animation.
+        // The next opening, including an activation reveal, starts at five.
+        {
+          fold: Folded(
+            during=input.activation,
+            preview_limit=self.presented_preview_limit(input),
+          ),
+          preview_limit: PreviewLimit,
+        }
       }
     ShowMore => { ..self, preview_limit: self.next_preview_limit(input), }
   }
@@ -113,7 +126,7 @@ fn State::update(self : State, input : Input, msg : Msg) -> State {
 /// the active project — and only a new activation reveals the branch:
 /// jumping into a folded project opens it to show where you are.
 fn State::folded(self : State, input : Input) -> Bool {
-  guard self.fold is Folded(during~) else { return false }
+  guard self.fold is Folded(during~, ..) else { return false }
   input.activation is None || input.activation == during
 }
 
@@ -128,10 +141,20 @@ fn stays_visible(row : @conversation.Input) -> Bool {
 ///|
 fn State::conversation_visible(
   self : State,
+  input : Input,
   index : Int32,
   stays_visible : Bool,
 ) -> Bool {
-  index < self.preview_limit || stays_visible
+  index < self.presented_preview_limit(input) || stays_visible
+}
+
+///|
+fn State::presented_preview_limit(self : State, input : Input) -> Int32 {
+  if self.folded(input) && self.fold is Folded(preview_limit~, ..) {
+    preview_limit
+  } else {
+    self.preview_limit
+  }
 }
 
 ///|
@@ -152,7 +175,7 @@ fn State::next_preview_limit(self : State, input : Input) -> Int32 {
 
 ///|
 fn State::has_hidden_conversation(self : State, input : Input) -> Bool {
-  for index = self.preview_limit
+  for index = self.presented_preview_limit(input)
       index < input.conversations.length()
       index = index + 1 {
     if !stays_visible(input.conversations[index]) {
@@ -177,6 +200,20 @@ pub fn Input::menu_entries(
       destructive: false,
       command: (actions.open_settings)(self.id),
     }),
+    ..if self.host is Some({ details: true, .. }) {
+      [
+        @action_menu.Action({
+          label: "Connection details",
+          title: "Connection details",
+          icon: Some(@icons.icon(@icons.icon_server)),
+          enabled: true,
+          destructive: false,
+          command: (actions.host_details)(self.id),
+        }),
+      ]
+    } else {
+      []
+    },
     Separator,
     Action({
       label: @messages.text(locale, DetachProject),
@@ -195,8 +232,9 @@ fn Actions::conversation_component(
   locale : @rabbita.Val[@i18n.Locale],
   _id : @conversation.Id,
   input : @rabbita.Val[@conversation.Input],
+  search : @rabbita.Val[@conversation.Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
-  @conversation.component(locale, input, self.conversation)
+  @conversation.component(locale, input, self.conversation, search)
 }
 
 ///|
@@ -204,19 +242,20 @@ fn Actions::conversation_component(
 /// Those values therefore cannot leak to an equal path rendered by a
 /// different sidebar source. The shared action-menu component owns the one
 /// menu overlay.
-/// Rows are (key, node) pairs for the sidebar's one keyed container.
+/// Conversations stay mounted inside the branch while it animates closed.
 pub fn component(
   input : @rabbita.Val[Input],
   actions : Actions,
   locale : @rabbita.Val[@i18n.Locale],
+  search : @rabbita.Val[@conversation.Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
   let (state, emit) = @rabbita.create_state_with_input(
     input~,
     init=(_, _) => ({ fold: Open, preview_limit: PreviewLimit, }, @cmd.none),
     update=(state, input, msg, _) => (state.update(input, msg), @cmd.none),
   )
-  let conversation_inputs = input.map2(locale, (input, locale) => {
-    @vector.from_array(input.conversations.map(row => (locale, row)))
+  let conversation_inputs = input.map3(locale, search, (input, locale, search) => {
+    @vector.from_array(input.conversations.map(row => (locale, row, search)))
   })
   let conversation_rows = conversation_inputs.assoc_by(
     (id, conversation) => {
@@ -224,17 +263,20 @@ pub fn component(
         conversation.map(pair => pair.0),
         id,
         conversation.map(pair => pair.1),
+        conversation.map(parts => parts.2),
       )
     },
     by=conversation => conversation.1.id(),
   )
-  state.map4(input, conversation_rows, locale, (
+  state.map5(input, conversation_rows, locale, search, (
     state,
     input,
     conversation_rows,
     locale,
+    search,
   ) => {
-    let collapsed = state.folded(input)
+    let searching = !search.query.is_blank()
+    let collapsed = !searching && state.folded(input)
     let mut class = if collapsed {
       "workspace-row collapsible collapsed"
     } else {
@@ -249,7 +291,25 @@ pub fn component(
         type_="button",
         title=input.title,
         on_click=emit(ToggleDisclosure),
-        attrs=@html.Attrs::build().aria_expanded((!collapsed).to_string()),
+        attrs=@html.Attrs::build()
+          .aria_expanded((!collapsed).to_string())
+          .aria_controls(input.id.key() + ":content")
+          // Pointer disclosure should not pin the hover controls open.
+          // Keyboard focus still reveals them for Tab navigation.
+          .on_mousedown(event => {
+            if event.get_button() == 0 {
+              event.prevent_default()
+              // Preserve click-away saving before folding makes the row inert.
+              if @dom.document()
+                .get_element_by_id(@conversation.RenameFieldId)
+                .to_option()
+                is Some(field) &&
+                field.to_html_element() is Some(field) {
+                field.blur()
+              }
+            }
+            @cmd.none
+          }),
         [
           @html.span(
             class="sidebar-icon",
@@ -265,9 +325,28 @@ pub fn component(
         ],
       ),
     ]
+    let trailing : Array[@html.Html] = []
+    if input.host is Some(host) {
+      let status = if host.online { "Connected" } else { "Disconnected" }
+      trailing.push(
+        @html.span(class="workspace-host", title=host.name + " · " + status, [
+          @html.span(class="workspace-host-name", host.name),
+          @html.span(
+            class=if host.online {
+              "workspace-host-status online"
+            } else {
+              "workspace-host-status offline"
+            },
+            attrs=@html.Attrs::build().aria_label(status),
+            "",
+          ),
+        ]),
+      )
+    }
+    let controls : Array[@html.Html] = []
     // Keep the action order aligned with the sidebar: menu first, new chat last.
     if input.managed {
-      row_children.push(
+      controls.push(
         @html.button(
           class="row-archive workspace-menu-button",
           type_="button",
@@ -280,7 +359,7 @@ pub fn component(
       )
     }
     if input.can_start {
-      row_children.push(
+      controls.push(
         @html.button(
           class="row-archive",
           type_="button",
@@ -295,46 +374,59 @@ pub fn component(
         ),
       )
     }
+    trailing.push(@html.div(class="workspace-actions", controls))
+    row_children.push(@html.div(class="workspace-trailing", trailing))
     let row_attrs = if input.managed {
       @action_menu.context_attrs(input.id.key())
     } else {
       @html.Attrs::build()
     }
-    let rows : Array[(String, @html.Html)] = [
-      (
-        input.id.key(),
-        @html.div(class~, title=input.title, attrs=row_attrs, row_children),
-      ),
-    ]
-    if collapsed {
-      return rows
-    }
+    let rows : Map[String, @html.Html] = Map([])
     for index = 0; index < conversation_rows.length(); index = index + 1 {
       let group = conversation_rows[index]
-      if state.conversation_visible(
+      if searching ||
+        state.conversation_visible(
+          input,
           index,
           stays_visible(input.conversations[index]),
         ) {
         for row in group {
-          rows.push(row)
+          rows[row.0] = row.1
         }
       }
     }
-    if state.has_hidden_conversation(input) {
-      rows.push(
-        (
-          "\{input.id.key()}:more",
-          @html.button(
-            class="project-show-more",
-            type_="button",
-            title=@messages.text(locale, ShowMoreChats),
-            on_click=emit(ShowMore),
-            @messages.text(locale, ShowMore),
-          ),
-        ),
+    if !searching && state.has_hidden_conversation(input) {
+      rows["\{input.id.key()}:more"] = @html.button(
+        class="project-show-more",
+        type_="button",
+        title=@messages.text(locale, ShowMoreChats),
+        on_click=emit(ShowMore),
+        @messages.text(locale, ShowMore),
       )
     }
-    rows
+    [
+      (
+        input.id.key(),
+        @html.div(
+          class=if collapsed {
+            "sidebar-project sidebar-branch collapsed"
+          } else {
+            "sidebar-project sidebar-branch"
+          },
+          [
+            @html.div(class~, title=input.title, attrs=row_attrs, row_children),
+            @html.div(
+              id=input.id.key() + ":content",
+              class="project-conversations sidebar-branch-content",
+              attrs=@html.Attrs::build()
+                .aria_hidden(collapsed.to_string())
+                .inert(collapsed),
+              rows,
+            ),
+          ],
+        ),
+      ),
+    ]
   })
 }
 
@@ -352,3 +444,9 @@ pub extend Input with Debug::{to_repr}
 
 ///|
 pub extend Input with Eq::{equal, not_equal}
+
+///|
+pub extend Host with Debug::{to_repr}
+
+///|
+pub extend Host with Eq::{equal, not_equal}

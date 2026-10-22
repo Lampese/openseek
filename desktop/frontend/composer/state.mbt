@@ -14,6 +14,7 @@ priv struct CompletionItem {
   detail : String
   command : String
   insert : String
+  prompt : String?
   path : String?
   range : @common.Range?
 } derive(Eq)
@@ -49,6 +50,7 @@ fn CompletionItem::slash_commands(
     detail: command.detail,
     command: command.command,
     insert: "",
+    prompt: command.prompt,
     path: None,
     range: None,
   })
@@ -90,6 +92,7 @@ fn CompletionItem::from_symbol(symbol : @symbols.Symbol) -> CompletionItem {
     } else {
       "`\{symbol.name}` — \{location} "
     },
+    prompt: None,
     path: if symbol.path.is_empty() {
       None
     } else {
@@ -137,6 +140,23 @@ fn Input::shell_command(self : Input, draft : Draft) -> String? {
 }
 
 ///|
+/// The draft as sent: one that is a prompt command's label, optionally
+/// followed by text, becomes that command's prompt followed by the text.
+fn Input::expanded(self : Input, draft : Draft) -> Draft {
+  for command in self.slash_commands {
+    guard command.prompt is Some(prompt) &&
+      draft.task.strip_prefix(command.label) is Some(rest) &&
+      rest is ("" | [' ' | '\n', ..]) else {
+      continue
+    }
+    let rest = rest.trim()
+    let task = if rest.is_empty() { prompt } else { "\{prompt} \{rest}" }
+    return { ..draft, task, }
+  }
+  draft
+}
+
+///|
 /// Encode the typed text and chips into the durable prompt sent to the engine.
 pub fn Draft::prompt(self : Draft) -> String {
   @mention_context.encode(self.mentions.map(mention => mention.ref_), self.task)
@@ -171,7 +191,11 @@ fn Draft::reconciled(self : Draft, source~ : Draft, incoming~ : Draft) -> Draft 
       ..self,
       task,
       mentions: self.mentions.filter(mention => {
-        !(mention.ref_ is @mention_context.ReviewChanges(_))
+        !(mention.ref_ is @mention_context.ReviewChanges(_)) &&
+        (
+          !source.mentions.contains(mention) ||
+          incoming.mentions.contains(mention)
+        )
       }),
     }
     for mention in incoming.mentions {
@@ -194,8 +218,21 @@ fn Draft::reconciled(self : Draft, source~ : Draft, incoming~ : Draft) -> Draft 
   } else if self.images == source.images {
     incoming.images
   } else {
+    let images = self.images.copy()
+    let retained = incoming.images.copy()
+    for image in source.images {
+      // Remove each acknowledged occurrence once: adding the same image
+      // again while its first copy is sending still creates a new draft.
+      match retained.search_by(existing => existing == image) {
+        Some(index) => ignore(retained.remove(index))
+        None =>
+          if images.search_by(existing => existing == image) is Some(index) {
+            ignore(images.remove(index))
+          }
+      }
+    }
     [
-      ..self.images,
+      ..images,
       ..incoming.images.filter(image => {
         !source.images.contains(image) && !self.images.contains(image)
       }),
@@ -267,15 +304,14 @@ fn Input::completion(
         })
       } else {
         [
-          for skill in self.installed_skills if trigger.matches([
-            skill.name,
-            skill.description,
-          ]) => {
+          for skill in self.installed_skills if skill.enabled &&
+          trigger.matches([skill.name, skill.description]) => {
             CompletionItem::{
               label: "$\{skill.name}",
               detail: skill.description,
               command: "",
               insert: "\{skill.name} ",
+              prompt: None,
               path: None,
               range: None,
             }
@@ -312,12 +348,13 @@ fn Input::completion(
       })
     }
     Files => {
-      guard owner.host() is Some(_) && self.root is Some(_) else { return None }
+      guard self.root is Some(_) else { return None }
       let items = files.map(file => CompletionItem::{
         label: file.name,
         detail: file.path.0,
         command: "",
         insert: file.path.0,
+        prompt: None,
         path: Some(file.path.0),
         range: None,
       })

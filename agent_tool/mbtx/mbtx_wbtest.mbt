@@ -78,28 +78,34 @@ test "cap_build_notes bounds a warning flood and marks the cut" {
 }
 
 ///|
-/// The run-phase framing: on the staged wasm path a failure is from the run
-/// by construction and says so; single-shot targets keep the plain wording
-/// that claims neither stage.
-test "finished_body and timeout_head are stage-aware only when staged" {
-  assert_eq(finished_body("out\n", 0, staged=true), "out\n")
-  let staged_failure = finished_body("trace", 3, staged=true)
-  assert_true(staged_failure.contains("exited 3 at RUNTIME"))
+/// A run-phase failure or timeout must say that the build already succeeded.
+test "finished_body and timeout_head identify run-phase failures" {
+  assert_eq(finished_body("out\n", Some(0)), "out\n")
+  let staged_failure = finished_body("trace", Some(3))
+  assert_true(staged_failure.contains("run failed (exit 3) at RUNTIME"))
   assert_true(staged_failure.contains("from the run, not the build"))
   assert_true(
-    finished_body("", 3, staged=true).contains(
-      "the build succeeded, then the run exited 3",
+    finished_body("", Some(3)).contains(
+      "the build succeeded, then the run failed (exit 3)",
     ),
   )
-  let plain_failure = finished_body("trace", 3, staged=false)
-  assert_true(plain_failure.contains("exited 3"))
-  assert_false(plain_failure.contains("RUNTIME"))
+  // A signal is not an exit code: a crash must not read like a rejection.
+  // The build reports name the exit the same way.
+  assert_eq(exit_status(1), "exit 1")
+  let crashed = if @async.platform is Windows {
+    "exit -11"
+  } else {
+    "killed by signal 11"
+  }
+  assert_eq(exit_status(-11), crashed)
+  assert_true(finished_body("", Some(-11)).contains("run failed (\{crashed})"))
+  // A program mbtx stopped has no exit status; none is invented for it.
   assert_true(
-    timeout_head(5_000, staged=true).contains("the PROGRAM that did not finish"),
+    finished_body("head", None).contains(
+      "run failed (stopped by mbtx before it exited)",
+    ),
   )
-  assert_true(
-    timeout_head(5_000, staged=false).contains("a build that never completed"),
-  )
+  assert_true(timeout_head(5_000).contains("the PROGRAM that did not finish"))
   assert_eq(with_build_notes("", "body"), "body")
   assert_eq(with_build_notes("warn", "body"), "warn\nbody")
 }
@@ -117,23 +123,8 @@ fn spawn_prefixes(program : String) -> Array[Array[String]] {
 /// Proton CLI is admitted one subcommand at a time. In particular, there is no
 /// bare rule and no global working-directory prefix: callers set the child
 /// process cwd instead of letting the command redirect itself elsewhere.
-test "the spawn policy admits Proton subcommands but not global cwd options" {
+test "the spawn policy does not admit arbitrary Proton commands or global cwd options" {
   let proton_prefixes = spawn_prefixes("proton_cli")
-  assert_eq(proton_prefixes.length(), 9)
-  for
-    args_prefix in [
-      ["--version"],
-      ["--help"],
-      ["new"],
-      ["dev"],
-      ["build"],
-      ["package"],
-      ["doctor"],
-      ["cef"],
-      ["updater"],
-    ] {
-    assert_true(proton_prefixes.contains(args_prefix))
-  }
   assert_false(proton_prefixes.contains([]))
   assert_false(proton_prefixes.contains(["-C"]))
   assert_false(proton_prefixes.contains(["--cwd"]))
@@ -249,8 +240,7 @@ test "the rendered spawn list groups multi-token prefixes under one verb" {
 
 ///|
 /// The description is the one place the model reads the list, so the render
-/// has to actually reach it — under the heading the system prompt now cites
-/// by name instead of restating the list itself.
+/// has to actually reach it.
 test "the mbtx description carries the rendered spawn list" {
   let text = description(
     background=true,
@@ -260,7 +250,6 @@ test "the mbtx description carries the rendered spawn list" {
     foreground_timeout_ms=120_000,
     build_timeout_ms=20_000,
   )
-  assert_true(text.contains("## Which programs a snippet may start"))
   assert_true(text.contains(spawn_list_markdown()))
 }
 

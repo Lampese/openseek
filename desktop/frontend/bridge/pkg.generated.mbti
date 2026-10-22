@@ -11,16 +11,17 @@ import {
 // Values
 pub fn local_connection(@cmd.Emit[Event]) -> @sub.Sub
 
-pub fn remote_connection(device_id~ : String, websocket_epoch~ : Int, reconnect_attempt~ : Int, dispatch~ : @cmd.Emit[Event], account~ : @protocol.AccountSession?) -> @sub.Sub
+pub fn remote_connection(device_id~ : String, websocket_epoch~ : Int32, reconnect_attempt~ : Int32, dispatch~ : @cmd.Emit[Event], account~ : @protocol.AccountSession?) -> @sub.Sub
 
 // Errors
 
 // Types and methods
 pub enum Event {
+  Ssh(Json)
   Notification(channel~ : @interop.ChannelId, notification~ : @protocol.Notification)
   Unavailable(channel~ : @interop.ChannelId, message~ : String)
-  ChannelDown(channel~ : @interop.ChannelId, websocket_epoch~ : Int)
-  AccountUnauthorized(channel~ : @interop.ChannelId, websocket_epoch~ : Int, token~ : String)
+  ChannelDown(channel~ : @interop.ChannelId, websocket_epoch~ : Int32)
+  AccountUnauthorized(channel~ : @interop.ChannelId, websocket_epoch~ : Int32, token~ : String)
   SystemAppearanceChanged
   BrowserEvent(payload~ : Map[String, Json])
   MenuCommand(command_id~ : String)

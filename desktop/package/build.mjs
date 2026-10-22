@@ -189,8 +189,7 @@ class Build {
   }
 
   officeViewerSource() {
-    return process.env.OPENSEEK_OFFICE_VIEWER_SOURCE ||
-      join(this.repo, ".mooncakes", "Lampese", "office-viewer");
+    return join(this.repo, ".mooncakes", "Lampese", "office-viewer");
   }
 
   officeFontSource() {
@@ -290,25 +289,7 @@ class Build {
       // WebSocket or as the window against a stubbed proton bridge.
       const output = join(this.desktop, "dist/browser");
       await rm(output, { recursive: true, force: true });
-      await mkdir(output, { recursive: true });
-      await cp(join(this.desktop, "index.html"), join(output, "index.html"));
-      // A release console bundle is minified with the pinned esbuild; a debug
-      // one is copied verbatim, so local runs and the e2e suite read the MoonBit
-      // output as written. --format stays iife to match the package's link
-      // option, and there is no --bundle, so the bundle is only minified, never
-      // re-scoped or tree-shaken.
-      if (profile === "release") {
-        await this.commandRun(this.esbuildBinary, [
-          this.frontendBundle(profile), "--minify", "--format=iife", "--platform=browser",
-          `--outfile=${join(output, "frontend.js")}`,
-        ]);
-      } else {
-        await cp(this.frontendBundle(profile), join(output, "frontend.js"));
-      }
-      await this.sharedWeb(output);
-      await mkdir(join(output, "viz"), { recursive: true });
-      await cp(join(this.repo, "web/index.html"), join(output, "viz/index.html"));
-      await cp(join(this.repo, `_build/js/${profile}/build/moonbitlang/openseek-viz-app/openseek-viz-app.js`), join(output, "viz/viz_app.js"));
+      await this.stageFrontend(output, profile, profile === "release");
       return;
     }
   }
@@ -316,6 +297,28 @@ class Build {
   // The unminified MoonBit output of the frontend executable.
   frontendBundle(profile) {
     return join(this.repo, `_build/js/${profile}/build/openseek_desktop/frontend/frontend.js`);
+  }
+
+  // Every host serves one frontend: the document at its page routes and its
+  // resources under the fixed /assets/ prefix that index.html names.
+  async stageFrontend(output, profile, minify = false) {
+    const assets = join(output, "assets");
+    await mkdir(assets, { recursive: true });
+    await cp(join(this.desktop, "index.html"), join(output, "index.html"));
+    if (minify) {
+      // Keep the compiler's IIFE scope; only minify, never bundle/tree-shake.
+      await this.commandRun(this.esbuildBinary, [
+        this.frontendBundle(profile), "--minify", "--format=iife", "--platform=browser",
+        `--outfile=${join(assets, "frontend.js")}`,
+      ]);
+    } else {
+      await cp(this.frontendBundle(profile), join(assets, "frontend.js"));
+    }
+    await this.sharedWeb(assets);
+    // Cloud snapshot export reads the standalone renderer from /assets/viz/.
+    await mkdir(join(assets, "viz"), { recursive: true });
+    await cp(join(this.repo, "web/index.html"), join(assets, "viz/index.html"));
+    await cp(join(this.repo, `_build/js/${profile}/build/moonbitlang/openseek-viz-app/openseek-viz-app.js`), join(assets, "viz/viz_app.js"));
   }
 
   async sharedWeb(output) {
@@ -340,10 +343,12 @@ class Build {
     const env = this.command === "macos" ? { MACOSX_DEPLOYMENT_TARGET: "12.0" } : {};
     await this.proton(["cef", "setup"], env);
     if (this.command === "macos") {
-      await this.commandRun("moon", ["build", ".", "--target", "native", "--target-dir", join(this.desktop, "target/moonbuild/macos-12.0"), ...release], { cwd: this.app, env });
+      // The window host has its own workspace (desktop/app/moon.work), so it
+      // gets its own target directory rather than sharing the engine's.
+      await this.commandRun("moon", ["build", ".", "--target", "native", "--target-dir", join(this.desktop, "target/moonbuild/macos-12.0-app"), ...release], { cwd: this.app, env });
       await this.commandRun("moon", ["build", ".", "--target", "native", "--target-dir", "desktop/target/moonbuild/macos-12.0", ...release], { cwd: this.repo, env });
-      const host = join(this.desktop, `target/moonbuild/macos-12.0/native/${profile}/build/openseek_desktop/app/app.exe`);
-      const expected = join(this.repo, `_build/native/${profile}/build/openseek_desktop/app/app.exe`);
+      const host = join(this.desktop, `target/moonbuild/macos-12.0-app/native/${profile}/build/openseek_desktop/app/app.exe`);
+      const expected = join(this.app, `_build/native/${profile}/build/openseek_desktop/app/app.exe`);
       await mkdir(dirname(expected), { recursive: true });
       await cp(host, expected);
       return join(this.desktop, `target/moonbuild/macos-12.0/native/${profile}/build/moonbitlang/openseek/openseek.exe`);
@@ -402,11 +407,9 @@ class Build {
     await mkdir(join(root, "web/viz"), { recursive: true });
     await mkdir(join(root, "bin"), { recursive: true });
     await mkdir(join(root, "licenses/ripgrep"), { recursive: true });
-    await cp(join(this.desktop, "index.html"), join(root, "web/index.html"));
-    await cp(this.frontendBundle(profile), join(root, "web/frontend.js"));
+    await this.stageFrontend(join(root, "web"), profile);
     await cp(join(this.repo, "web/index.html"), join(root, "web/viz/index.html"));
     await cp(join(this.repo, `_build/js/${profile}/build/moonbitlang/openseek-viz-app/openseek-viz-app.js`), join(root, "web/viz/viz_app.js"));
-    await this.sharedWeb(join(root, "web"));
     const suffix = this.command === "windows" ? ".exe" : "";
     await cp(engine, join(root, `bin/openseek${suffix}`));
     // OpenSeek locates resources relative to its own executable.

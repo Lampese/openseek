@@ -126,10 +126,16 @@ fn dispatch_open(open : Open) -> @cmd.Cmd {
 ///|
 /// Build an ellipsis trigger for a stable target. The menu component owns
 /// toggle state, positioning, and focus.
-pub fn button_attrs(target : String) -> @html.Attrs {
+pub fn button_attrs(
+  target : String,
+  align_right~ : Bool = true,
+  open_upward~ : Bool = false,
+) -> @html.Attrs {
   @html.Attrs::build()
   .id(trigger_id(target))
   .data_set("action-menu-owner", target)
+  .data_set("action-menu-align", if align_right { "end" } else { "start" })
+  .data_set("action-menu-side", if open_upward { "top" } else { "bottom" })
   .aria_haspopup("menu")
   .aria_controls(menu_id(target))
   .on_click(event => {
@@ -296,12 +302,27 @@ fn position(target : String, anchor : Anchor) -> @cmd.Cmd {
           let trigger_rect = trigger.get_bounding_client_rect()
           let below = viewport_top + viewport_height - trigger_rect.get_bottom()
           let above = trigger_rect.get_top() - viewport_top
-          let top = if below >= menu_height || below >= above {
+          // The preferred side wins while the menu fits there or that side
+          // still has more room; otherwise the menu flips.
+          let open_upward = trigger.get_attribute("data-action-menu-side")
+            is Some("top")
+          let opens_below = if open_upward {
+            !(above >= menu_height || above >= below)
+          } else {
+            below >= menu_height || below >= above
+          }
+          let top = if opens_below {
             trigger_rect.get_bottom() + gap
           } else {
             trigger_rect.get_top() - menu_height - gap
           }
-          (trigger_rect.get_right() - menu_width, top)
+          let left = if trigger.get_attribute("data-action-menu-align")
+            is Some("start") {
+            trigger_rect.get_left()
+          } else {
+            trigger_rect.get_right() - menu_width
+          }
+          (left, top)
         }
       }
       let margin = 4.0
@@ -330,6 +351,11 @@ fn Definition::enabled_indices(self : Definition) -> Array[Int32] {
     }
   }
   result
+}
+
+///|
+fn Definition::has_actions(self : Definition) -> Bool {
+  self.entries.any(entry => entry is Action(_))
 }
 
 ///|
@@ -480,9 +506,15 @@ fn render_menu(
           focused_id == menu_id(open.target) else {
           return @cmd.none
         }
+        if enabled.is_empty() &&
+          event.key()
+          is ("ArrowDown" | "ArrowUp" | "Home" | "End" | "Enter" | " ") {
+          event.prevent_default()
+          return @cmd.none
+        }
         let destination = match event.key() {
-          "ArrowDown" | "Home" => Some(enabled[0])
-          "ArrowUp" | "End" => Some(enabled[enabled.length() - 1])
+          "ArrowDown" | "Home" => enabled.get(0)
+          "ArrowUp" | "End" => enabled.get(enabled.length() - 1)
           _ => None
         }
         if destination is Some(destination) {
@@ -640,9 +672,9 @@ priv suberror FocusSubscription {
 }
 
 ///|
-/// Close when the open target is no longer actionable. Otherwise, if current
+/// Close when the open target disappears. Otherwise, if current
 /// input disables the focused entry, move to the next enabled entry and fall
-/// back to the previous one.
+/// back to the previous one, or the menu itself when all entries are disabled.
 fn focus_subscription(
   target : String,
   enabled : Array[Int32]?,
@@ -658,7 +690,7 @@ fn focus_subscription(
       }
       let mut previous = enabled.unwrap_or([])
       let mut close = close
-      if enabled is None || previous.is_empty() {
+      if enabled is None {
         scheduler.add(close(()))
       }
       Some({
@@ -670,9 +702,16 @@ fn focus_subscription(
             return
           }
           close = next_close
-          guard next_enabled is Some(next) && !next.is_empty() else {
+          guard next_enabled is Some(next) else {
             scheduler.add(close(()))
             previous = []
+            return
+          }
+          if next.is_empty() {
+            if !previous.is_empty() {
+              scheduler.add(focus_element(menu_id(target), true))
+            }
+            previous = next
             return
           }
           guard focused_element_id() is Some(focused) else {
@@ -728,7 +767,7 @@ pub fn[Input : Eq] component(
             )
           }
           guard resolve(input, next.target) is Some(definition) &&
-            definition.enabled_indices() is [_, ..] else {
+            definition.has_actions() else {
             // Another component may own this target. Only one shared menu
             // surface should remain open across the sidebar and dock.
             let command = match state.menu {
@@ -765,17 +804,19 @@ pub fn[Input : Eq] component(
     subscriptions=(state, input, emit) => {
       let open = open_subscription(emit.map(open => Msg::Open(open)))
       guard state.menu is Some(menu) else { return open }
-      let enabled = resolve(input, menu.target).map(definition => {
-        definition.enabled_indices()
+      let enabled = resolve(input, menu.target).bind(definition => {
+        if definition.has_actions() {
+          Some(definition.enabled_indices())
+        } else {
+          None
+        }
       })
       let focus = focus_subscription(
         menu.target,
         enabled,
         emit.map((_ : Unit) => Msg::Close),
       )
-      guard enabled is Some(enabled) && !enabled.is_empty() else {
-        return @sub.batch([open, focus])
-      }
+      guard enabled is Some(_) else { return @sub.batch([open, focus]) }
       @sub.batch([
         open,
         dismiss_subscription(menu.target, emit.map((_ : Unit) => Msg::Close)),
@@ -786,7 +827,7 @@ pub fn[Input : Eq] component(
   state.map2(input, (state, input) => {
     guard state.menu is Some(open) &&
       resolve(input, open.target) is Some(definition) &&
-      !definition.enabled_indices().is_empty() else {
+      definition.has_actions() else {
       return @html.nothing
     }
     render_menu(open, definition, emit(Close))

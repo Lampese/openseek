@@ -27,6 +27,15 @@ export class CloudHarness {
     this.createStatus = 201;
     this.sendStatus = 200;
     this.shareStatus = 200;
+    this.exportStatus = 200;
+    this.exportSnapshots = new Map();
+    this.exportOffline = false;
+    this.deleteStatus = 204;
+    this.patchStatus = 204;
+    this.patchOffline = false;
+    this.pausePatch = null;
+    this.deleteOffline = false;
+    this.pauseDelete = null;
     this.disconnectShare = false;
     this.logoutStatus = 204;
     this.apiOffline = false;
@@ -34,11 +43,15 @@ export class CloudHarness {
     this.disconnectSend = false;
     this.rejectStreamCancel = false;
     this.streamCancellations = 0;
+    this.fileStreamCancellations = 0;
+    this.fileEventStatus = 200;
     this.pauseCreate = null;
     this.pauseSend = null;
     this.pauseHistory = null;
     this.pauseStream = null;
     this.sessionIds = [sessionA, sessionB];
+    this.generating = new Set();
+    this.archived = new Set();
     this.histories = new Map();
     this.titles = new Map([[sessionA, 'Cloud fixture A'], [sessionB, 'Cloud fixture B']]);
     this.postCount = 0;
@@ -51,7 +64,8 @@ export class CloudHarness {
     await this.page.exposeFunction('cloudWaitForStream', () => this.pauseStream);
     await this.page.exposeFunction('cloudWaitForEvent', index => this.eventPauses?.get(index));
     await this.page.exposeFunction('cloudStreamCancelled', () => this.streamCancellations++);
-    await this.page.addInitScript(({ cached, authOrigin, cloudOrigin, rejectStreamCancel }) => {
+    await this.page.exposeFunction('cloudFileStreamCancelled', () => this.fileStreamCancellations++);
+    await this.page.addInitScript(({ cached, authOrigin, cloudOrigin, rejectStreamCancel, streamChunkSize }) => {
       window.cloudUnhandledRejections = [];
       window.addEventListener('unhandledrejection', event => window.cloudUnhandledRejections.push(String(event.reason)));
       const key = 'seekmoon.cloud.token.v1';
@@ -61,22 +75,53 @@ export class CloudHarness {
         localStorage.setItem('seekmoon.account.v1', JSON.stringify({ token: 'ts_fixture-123', user: { user_id: '123', login: 'octocat', avatar_url: '' } }));
       }
       const original = window.fetch;
+      window.cloudFileStreams = new Map();
+      window.cloudInvalidateFiles = session => {
+        for (const controller of window.cloudFileStreams.get(session) || []) {
+          controller.enqueue(new TextEncoder().encode('event: workspace_invalidated\ndata: {}\n\n'));
+        }
+      };
+      window.cloudCloseFileEvents = session => {
+        for (const controller of window.cloudFileStreams.get(session) || []) controller.close();
+        window.cloudFileStreams.delete(session);
+      };
       window.fetch = async (...args) => {
         const response = await original(...args);
+        const fileEvents = String(args[0]).match(/\/v1\/sessions\/([^/]+)\/files\/events$/);
+        if (String(args[0]).startsWith(cloudOrigin) && fileEvents && response.ok) {
+          const initial = new TextEncoder().encode(await response.text());
+          const session = decodeURIComponent(fileEvents[1]);
+          let current;
+          return new Response(new ReadableStream({ start(controller) {
+            current = controller;
+            const streams = window.cloudFileStreams.get(session) || new Set();
+            streams.add(controller);
+            window.cloudFileStreams.set(session, streams);
+            controller.enqueue(initial);
+          }, cancel() {
+            window.cloudFileStreams.get(session)?.delete(current);
+            window.cloudFileStreamCancelled();
+          } }), { status: response.status, headers: response.headers });
+        }
         if (String(args[0]).startsWith(cloudOrigin) && response.headers.get('content-type')?.startsWith('text/event-stream')) {
           const bytes = new TextEncoder().encode(await response.text());
           let cancelled = false;
           return new Response(new ReadableStream({ async start(controller) {
-            // Every byte is a separate chunk, splitting UTF-8 and SSE fields.
+            // Default to byte-sized chunks to split UTF-8 and SSE fields.
+            // Large fixtures can use normal network-sized chunks.
             const boundary = response.headers.get('x-fixture-admission-bytes');
             const boundaries = JSON.parse(response.headers.get('x-fixture-event-boundaries') || '[]');
             const disconnectAfter = response.headers.get('x-fixture-disconnect-after');
             let eventIndex = 0;
-            for (let i = 0; i < bytes.length; i++) {
+            for (let i = 0; i < bytes.length;) {
               if (cancelled) return;
-              controller.enqueue(new Uint8Array([bytes[i]]));
-              if (i + 1 === Number(boundary)) await window.cloudWaitForStream();
-              if (i + 1 === boundaries[eventIndex]) {
+              const end = [Number(boundary), boundaries[eventIndex]]
+                .filter(value => value > i)
+                .reduce((end, value) => Math.min(end, value), Math.min(bytes.length, i + streamChunkSize));
+              controller.enqueue(bytes.slice(i, end));
+              i = end;
+              if (i === Number(boundary)) await window.cloudWaitForStream();
+              if (i === boundaries[eventIndex]) {
                 await window.cloudWaitForEvent(eventIndex);
                 if (disconnectAfter !== null && eventIndex === Number(disconnectAfter)) {
                   controller.error(new Error('Fixture stream disconnected'));
@@ -94,11 +139,21 @@ export class CloudHarness {
         }
         return response;
       };
-    }, { cached: this.cached, authOrigin, cloudOrigin, rejectStreamCancel: this.rejectStreamCancel });
+    }, { cached: this.cached, authOrigin, cloudOrigin, rejectStreamCancel: this.rejectStreamCancel, streamChunkSize: this.streamChunkSize ?? 1 });
     await this.page.route(`${authOrigin}/console/**`, async route => {
       const path = new URL(route.request().url()).pathname.replace(/^\/console\/(?:releases\/v[^/]+\/)?/, '') || 'index.html';
       const contentType = path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.html') ? 'text/html' : 'application/octet-stream';
       await route.fulfill({ contentType, body: await readFile(new URL(path, bundle)) });
+    });
+    await this.page.route(`${authOrigin}/assets/**`, async route => {
+      const path = new URL(route.request().url()).pathname.slice(1);
+      const contentType = path.endsWith('.js') || path.endsWith('.mjs') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.html') ? 'text/html' : 'application/octet-stream';
+      await route.fulfill({ contentType, body: await readFile(new URL(path, bundle)) });
+    });
+    await this.page.route(url => url.origin === authOrigin && (url.pathname.startsWith('/device/') || url.pathname === '/cloud' || url.pathname.startsWith('/cloud/')), async route => {
+      if (!route.request().isNavigationRequest()) return route.continue();
+      const html = await readFile(new URL('index.html', bundle), 'utf8');
+      await route.fulfill({ contentType: 'text/html', body: html });
     });
     // Intercept legacy requests too, so accidental downgrades fail locally.
     await this.page.route(`${authOrigin}/{v1,v2}/auth/**`, async route => {
@@ -162,7 +217,7 @@ export class CloudHarness {
       };
       window.__MoonBit__ = { getTitlebarArea: async () => null, app: events, events,
         openseek: new Proxy({}, { get: (_, method) => async params => {
-          if (method === 'host.connect') for (const callback of listeners.get('openseek.agent.connected') || []) callback({ payload: { stage: 'serving' } });
+          if (method === 'host.connect') for (const callback of listeners.get('openseek.agent.connected') || []) callback({ payload: { protocol: 1 } });
           return window.cloudHostRequest({ method, params });
         } }),
       };
@@ -172,10 +227,13 @@ export class CloudHarness {
   async cloudRequest(route) {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    const headers = { 'Access-Control-Allow-Origin': authOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Expose-Headers': 'x-fixture-admission-bytes, x-fixture-event-boundaries, x-fixture-disconnect-after' };
+    const headers = { 'Access-Control-Allow-Origin': authOrigin, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Expose-Headers': 'x-fixture-admission-bytes, x-fixture-event-boundaries, x-fixture-disconnect-after' };
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
     this.requests.push({ side: 'cloud', path, method: request.method(), body: request.postData(), headers: await request.allHeaders() });
     const json = (data, status = 200) => route.fulfill({ status, headers, contentType: 'application/json', body: JSON.stringify(data) });
+    if (/^\/v1\/sessions\/[^/]+\/files\/events$/.test(path)) {
+      return route.fulfill({ status: this.fileEventStatus, headers, contentType: 'text/event-stream', body: 'event: workspace_invalidated\ndata: {}\n\n' });
+    }
     if (path === '/v1/sessions') {
       if (request.method() === 'POST') {
         const finish = this.pauseCreate;
@@ -185,9 +243,35 @@ export class CloudHarness {
         return json({ id: sessionC }, 201);
       }
       if (this.listOffline) return route.abort('failed');
+      if (this.pauseList) await this.pauseList;
       const status = this.listStatus;
       if (status === 401) this.listStatus = 200;
-      return json({ sessions: this.sessionIds.map(id => ({ id, title: this.titles.get(id) ?? null, updated_at: 1000, generating: false })) }, status);
+      return json({ sessions: this.sessionIds.map(id => ({ id, title: this.titles.get(id) ?? null, updated_at: 1000, generating: this.generating.has(id), archived: this.archived.has(id) })) }, status);
+    }
+    if (request.method() === 'PATCH' && /^\/v1\/sessions\/[^/]+$/.test(path)) {
+      const body = request.postDataJSON();
+      const session = decodeURIComponent(path.split('/').pop());
+      if (this.pausePatch) await this.pausePatch;
+      if (this.patchOffline) return route.abort('failed');
+      if (this.patchStatus !== 204) return json({}, this.patchStatus);
+      if (body.title !== undefined) this.titles.set(session, body.title);
+      if (body.archived === true) this.archived.add(session);
+      if (body.archived === false) this.archived.delete(session);
+      return route.fulfill({ status: 204, headers });
+    }
+    if (request.method() === 'DELETE' && /^\/v1\/sessions\/[^/]+$/.test(path)) {
+      if (this.pauseDelete) await this.pauseDelete;
+      if (this.deleteOffline) return route.abort('failed');
+      if (![204, 404].includes(this.deleteStatus)) return json({}, this.deleteStatus);
+      const session = decodeURIComponent(path.split('/').pop());
+      this.sessionIds = this.sessionIds.filter(id => id !== session);
+      this.histories.delete(session);
+      return route.fulfill({ status: this.deleteStatus, headers });
+    }
+    if (/^\/v1\/sessions\/[^/]+\/export$/.test(path)) {
+      if (this.exportOffline) return route.abort('failed');
+      const session = decodeURIComponent(path.split('/')[3]);
+      return json(this.exportSnapshots.get(session), this.exportStatus);
     }
     if (/^\/v1\/sessions\/[^/]+\/share$/.test(path)) {
       const body = request.postDataJSON();
@@ -207,7 +291,8 @@ export class CloudHarness {
     const body = request.postDataJSON();
     if (Object.keys(body).join(',') !== 'content') throw new Error('Cloud must send content without a model key');
     if (this.sendStatus !== 200) return this.sendErrorBody ? route.fulfill({ status: this.sendStatus, headers, contentType: 'text/plain', body: this.sendErrorBody }) : json({}, this.sendStatus);
-    if (!this.titles.get(session)) this.titles.set(session, body.content.trim().split('\n')[0].trim());
+    const text = typeof body.content === 'string' ? body.content : body.content.filter(part => part.type === 'text').map(part => part.text).join('');
+    if (!this.titles.get(session) && text.trim()) this.titles.set(session, text.trim().split('\n')[0].trim());
     const task = `fixture-task-${++this.taskCount}`;
     const data = this.streamEvents || [
       ['task_started', {}],
@@ -218,7 +303,7 @@ export class CloudHarness {
     ];
     const previous = this.histories.get(session)?.messages || [];
     const messages = [...previous, { id: previous.length + 70, task_id: task, kind: 'user', data: { content: body.content }, created_at: 1000 },
-      ...data.slice(1).filter(([kind]) => !['assistant_delta', 'stream_retry', 'step'].includes(kind)).map(([kind, value], i) => ({ id: previous.length + i + 71, task_id: task, kind, data: value, created_at: 1001 + i }))];
+      ...data.slice(1).filter(([kind]) => !['assistant_delta', 'reasoning_delta', 'reasoning_message', 'stream_retry', 'step', 'usage', 'compaction_started', 'compaction_finished', 'auto_compaction_started', 'auto_compaction_finished'].includes(kind)).map(([kind, value], i) => ({ id: previous.length + i + 71, task_id: task, kind, data: value, created_at: 1001 + i }))];
     this.histories.set(session, { messages, generating: false, outcome: { status: 'completed' } });
     if (this.pauseSend) await this.pauseSend;
     if (this.disconnectSend) return route.abort('failed');
@@ -241,11 +326,11 @@ export class CloudHarness {
       await expect(dismiss).toHaveCount(0);
     }
     await this.page.getByRole('button', { name: 'Chat', exact: true }).click();
-    if (this.cached) await this.row(sessionA).waitFor();
+    if (this.cached && !this.archived.has(sessionA)) await this.row(sessionA).waitFor();
   }
 
   row(id) {
-    return this.page.locator(`[id="conversation:cloud.live:${this.userId}:${id}::open"]`);
+    return this.page.locator(`[id="conversation:cloud.live:${this.userId}:${id}::open"], [id="conversation:cloud.archived:${this.userId}:${id}::open"]`);
   }
 
   async open(id = sessionA) {
@@ -257,9 +342,10 @@ export class CloudHarness {
 
   async create() {
     await this.page.locator('.section-primary-action[aria-label="New chat"]').click();
-    await this.row(sessionC).waitFor();
-    await this.page.waitForFunction(() => document.querySelector('.conversation-open[aria-current="true"]')?.textContent.includes('New chat'));
-    await this.page.locator('#task').waitFor();
+    await expect(this.page.locator('main .topbar-title')).toHaveText('New chat');
+    await expect(this.page.locator('main [title="Export conversation"]')).toHaveCount(0);
+    await expect(this.page.getByRole('button', { name: 'Model', exact: true })).toBeDisabled();
+    await expect(this.page.locator('#task')).toBeEnabled();
   }
 
 }

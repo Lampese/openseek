@@ -2,23 +2,26 @@
 /// Facts accepted by the application update. This adapter alone interprets
 /// root messages and compares domain state; history policy consumes these facts.
 priv struct NavigationObservation {
-  location : @navigation.Location?
+  location : @routes.Location?
   user_visit : Bool
   session_rotated : Bool
   explicit : Bool
   repeat_visit : Bool
-  promotion : (@navigation.Location, @navigation.Location)?
-  durable : Array[(@navigation.Location, @navigation.Location)]
+  retired : Array[String]
+  promotion : (@routes.Location, @routes.Location)?
+  durable : Array[(@routes.Location, @routes.Location)]
 }
 
 ///|
 fn Msg::is_navigation_visit(self : Msg) -> Bool {
   match self {
     OpenSetup
+    | Ssh(Open)
     | OpenSchedules
     | OpenSkills
     | OpenCodex
     | OpenCloudConversation(..)
+    | CloudAction(@cloud.Create)
     | OpenSession(_, _)
     | OpenSessionHere(_)
     | OpenArchivedSession(_, ..)
@@ -55,7 +58,9 @@ fn observe_navigation_catalogs(message : Msg, model : Model) -> AppNavigation {
         dev.connection_generation &&
         request_generation == dev.archived_request_generation =>
         { ..model.navigation, archived: Some(Err(message)), }
-      SessionsFailed(message) =>
+      SessionsFailed(message~, connection_generation~, request_generation~) if connection_generation ==
+        dev.connection_generation &&
+        request_generation == dev.sessions_request_generation =>
         {
           ..model.navigation,
           sessions: Some(Err(message)),
@@ -79,7 +84,7 @@ fn observe_navigation(
 ) -> NavigationObservation {
   let old_codex = previous.codex.navigation_target()
   let new_codex = next.codex.navigation_target()
-  let promotion : (@navigation.Location, @navigation.Location)? = if message
+  let promotion : (@routes.Location, @routes.Location)? = if message
     is (ModelPicked(_, ..)
     | ComposerAction(@composer.ModelSelected(..))
     | CodexComposerAction(@composer.ModelSelected(..))) &&
@@ -87,6 +92,21 @@ fn observe_navigation(
     previous.navigation_location() is Some(old) &&
     next.navigation_location() is Some(promoted) {
     Some((old, promoted))
+  } else if message is CloudAction(@cloud.Created(epoch, request, session)) &&
+    epoch == previous.cloud.epoch &&
+    previous.cloud.creation is Some(creation) &&
+    creation.request == request &&
+    next.cloud.creation is None &&
+    previous.cloud.user_id is Some(account) {
+    Some(
+      (
+        {
+          device: None,
+          target: CloudDraft(account=Some(account), id=creation.id),
+        },
+        { device: None, target: CloudSession(account=Some(account), session~), },
+      ),
+    )
   } else if message is Codex(_, ..) &&
     old_codex is CodexDraft(_) &&
     new_codex is Thread(_) &&
@@ -113,15 +133,39 @@ fn observe_navigation(
     .conversation_selection()
     .map(selection => (selection.channel, selection.session)) ==
     Some((pending.source.channel, reply.session))
-  let cloud_opened = message is CloudAction(_) &&
-    next.cloud_selected() &&
-    next.cloud_identity() is Some(_) &&
-    next.cloud_identity() != previous.cloud_identity()
+  // A cleared selection on a Cloud URL is not a visit: it keeps that URL's
+  // unavailable state instead of falling back to the Cloud landing page.
+  let cloud_opened = message is (CloudAction(_) | AccountLoaded(_, _)) &&
+    (next.cloud_identity() is Some(_) || next.cloud_draft_identity() is Some(_)) &&
+    next.selected_conversation != previous.selected_conversation
   let explicit = message.is_navigation_visit() ||
     cloud_opened ||
     fork_opened ||
     (message is SessionRotated(_) && previous.navigation.new_chat_requested)
-  let durable : Array[(@navigation.Location, @navigation.Location)] = []
+  // Conversations this page itself deleted. Their replacement draft takes
+  // over the current entry; a delete from elsewhere is only observed through
+  // the missing target.
+  let retired : Array[String] = match message {
+    FromDevice(channel, SessionsChanged(change="deleted", key~, ..)) if channel ==
+      previous.focused &&
+      previous.owns_deletion(channel, key) => [key.session]
+    // Only a reply the update accepts removed anything; a stale one is
+    // discarded there and must not move navigation either.
+    FromDevice(
+      channel,
+      ArchivedDeleted(
+        sessions~,
+        connection_generation~,
+        request_generation~,
+        ..
+      )
+    ) if channel == previous.focused &&
+      previous.device_state(channel) is Some(dev) &&
+      connection_generation == dev.connection_generation &&
+      request_generation == dev.archived_request_generation => sessions
+    _ => []
+  }
+  let durable : Array[(@routes.Location, @routes.Location)] = []
   if next.console.page_device is Some(device) {
     for conv in next.conversations {
       if conv.has_begun() &&
@@ -143,6 +187,7 @@ fn observe_navigation(
     explicit,
     repeat_visit: message
     is (OpenSetup
+    | Ssh(Open)
     | OpenSkills
     | OpenSchedules
     | OpenCodex
@@ -150,6 +195,7 @@ fn observe_navigation(
     | OpenSessionHere(_)
     | CodexDraftRotated(..)
     | CodexOpenThread(_)),
+    retired,
     promotion,
     durable,
   }

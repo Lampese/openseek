@@ -12,7 +12,7 @@ import {
 }
 
 // Values
-pub fn component(@rabbita.Val[Input], Actions, @rabbita.Val[@i18n.Locale]) -> @rabbita.Val[Array[(String, @html.Html)]]
+pub fn component(@rabbita.Val[Input], Actions, @rabbita.Val[@i18n.Locale], @rabbita.Val[@conversation.Search]) -> @rabbita.Val[Array[(String, @html.Html)]]
 
 // Errors
 
@@ -21,8 +21,18 @@ pub(all) struct Actions {
   new_conversation : (Id) -> @cmd.Cmd
   open_settings : (Id) -> @cmd.Cmd
   detach : (Id) -> @cmd.Cmd
+  host_details : (Id) -> @cmd.Cmd
   conversation : @conversation.Actions
 }
+
+pub(all) struct Host {
+  name : String
+  online : Bool
+  details : Bool
+} derive(Eq, @debug.Debug)
+pub fn Host::equal(Self, Self) -> Bool
+pub fn Host::not_equal(Self, Self) -> Bool
+pub fn Host::to_repr(Self) -> @debug.Repr
 
 pub(all) struct Id {
   source : String
@@ -32,7 +42,7 @@ pub(all) struct Id {
 pub fn Id::Id(source~ : String, channel~ : String, root~ : String) -> Self
 pub fn Id::channel(Self) -> String
 pub fn Id::equal(Self, Self) -> Bool
-pub fn Id::hash(Self) -> Int
+pub fn Id::hash(Self) -> Int32
 pub fn Id::hash_combine(Self, Hasher) -> Unit
 pub fn Id::key(Self) -> String
 pub fn Id::not_equal(Self, Self) -> Bool
@@ -44,6 +54,7 @@ pub(all) struct Input {
   id : Id
   title : String
   label : String
+  host : Host?
   activation : String?
   can_start : Bool
   managed : Bool

@@ -10,6 +10,7 @@ fn integrated_cloud_model() -> Model {
         title: Some("Cloud conversation"),
         updated_at: Some(100),
         generating: false,
+        archived: false,
       },
     ],
   }
@@ -62,6 +63,34 @@ test "Cloud selection after Settings wins over the previous navigation destinati
   )
   assert_true(cloud.screen is Chat)
   assert_true(cloud.cloud_identity() == model.cloud_identity())
+  let initial = {
+    ..model,
+    is_desktop: false,
+    devices: [],
+    console: { ..model.console, page_device: None, },
+  }
+  let snapshot : @navigation_browser.Snapshot = {
+    path: "/cloud/session/cloud-b",
+    settings: false,
+    can_back: true,
+    can_forward: false,
+  }
+  let (_, direct) = update(dispatch, Navigation(Browser(snapshot)), initial)
+  let (_, repeated) = update(dispatch, Navigation(Browser(snapshot)), initial)
+  assert_true(direct.cloud == repeated.cloud)
+  assert_true(direct.navigation == repeated.navigation)
+  assert_true(
+    direct.cloud_identity() ==
+    Some(@interop.Cloud(account="fixture-user", session="cloud-b")),
+  )
+  assert_false(initial.cloud.conversations.contains("cloud-b"))
+  let (_, home) = update(
+    dispatch,
+    Navigation(Browser({ ..snapshot, path: "/cloud", })),
+    direct,
+  )
+  assert_true(home.cloud_selected() && home.cloud_identity() is None)
+  assert_true(home.cloud.creation is None)
 }
 
 ///|
@@ -160,6 +189,7 @@ test "Back prevents a pending Cloud creation from taking foreground later" {
   let cloud = integrated_cloud_model()
   let (_, settings) = update(dispatch, OpenSetup, cloud)
   let (_, creating) = update(dispatch, CloudAction(@cloud.Create), settings)
+  let creating = submit_blank_cloud(creating)
   let creation = creating.cloud.creation.unwrap()
   let (_, back) = update(dispatch, Navigation(Back), creating)
   let (_, late) = update(
@@ -169,8 +199,9 @@ test "Back prevents a pending Cloud creation from taking foreground later" {
     ),
     back,
   )
-  assert_true(late.cloud_identity() == cloud.cloud_identity())
-  assert_true(late.navigation == back.navigation)
+  assert_true(back.screen is Settings && late.screen is Settings)
+  assert_true(late.navigation.location == back.navigation.location)
+  assert_eq(late.navigation.revision, back.navigation.revision)
   assert_true(late.cloud.sessions.any(item => item.id == "late-cloud"))
 }
 
@@ -211,12 +242,14 @@ test "Cloud and Local folders keep their own rows, ordering and create action" {
           title: Some("Older cloud"),
           updated_at: Some(100),
           generating: false,
+          archived: false,
         },
         {
           id: "cloud-b",
           title: Some("Newer cloud"),
           updated_at: Some(300),
           generating: false,
+          archived: false,
         },
       ],
     },
@@ -254,6 +287,7 @@ test "Cloud uses the existing composer and transcript without a host workspace" 
         description: "",
         source: "local",
         registry: None,
+        enabled: true,
       },
     ],
     composer_context_generation: 7,
@@ -264,9 +298,11 @@ test "Cloud uses the existing composer and transcript without a host workspace" 
     input.identity.owner
     is @interop.Cloud(account="fixture-user", session="cloud-a"),
   )
-  assert_true(input.file_index is @composer.FileIndexEmpty(epoch=7))
-  assert_true(input.root is None)
-  assert_true(!input.shell_available && !input.presentation.images_enabled)
+  assert_true(input.file_index is @composer.FileIndexEmpty(epoch=99))
+  assert_eq(input.root, file_ctx(model).root())
+  assert_true(input.root is Some({ scheme: "openseek-cloud", .. }))
+  assert_false(input.shell_available)
+  assert_true(input.presentation.images_enabled)
   assert_true(
     input.slash_commands.is_empty() && input.installed_skills.is_empty(),
   )
@@ -318,6 +354,13 @@ test "same-account sign-out retires old composer actions, while the new entry ca
       ),
     ),
     connecting,
+  )
+  let (_, signed_in) = update(
+    test_dispatch(),
+    CloudAction(
+      @cloud.Listed(epoch, signed_in.cloud.list_request, model.cloud.sessions),
+    ),
+    signed_in,
   )
   let (_, opened) = update(
     test_dispatch(),
@@ -451,6 +494,7 @@ test "notification navigation prevents a pending Cloud creation from stealing fo
     account: integrated_cloud_model().account,
   }
   let (_, creating) = update(test_dispatch(), CloudAction(@cloud.Create), model)
+  let creating = submit_blank_cloud(creating)
   let request = creating.cloud.sequence
   let (_, opened) = update(
     test_dispatch(),
@@ -516,7 +560,12 @@ test "Local setup does not interrupt Cloud selection or background settings" {
 ///|
 test "Cloud suppression does not dismiss Work API setup" {
   let model = integrated_cloud_model()
-  let work = { ..model, selected_conversation: None, }.settle_api_setup()
+  let (_, work) = update(
+    test_dispatch(),
+    OpenSession(Local, "desktop-test"),
+    model,
+  )
+  let work = work.settle_api_setup()
   assert_true(work.api_setup_open)
   let (_, cloud) = update(
     test_dispatch(),
@@ -525,18 +574,24 @@ test "Cloud suppression does not dismiss Work API setup" {
   )
   assert_false(cloud.api_setup_open)
   assert_false(cloud.api_setup_dismissed)
-  assert_true(
-    { ..cloud, selected_conversation: None, }.settle_api_setup().api_setup_open,
+  let (_, returned) = update(
+    test_dispatch(),
+    OpenSession(Local, "desktop-test"),
+    cloud,
   )
+  assert_true(returned.settle_api_setup().api_setup_open)
   let (_, dismissed) = update(test_dispatch(), DismissApiSetup, work)
   let (_, cloud) = update(
     test_dispatch(),
     OpenCloudConversation(account="fixture-user", session="cloud-a"),
     dismissed,
   )
-  assert_false(
-    { ..cloud, selected_conversation: None, }.settle_api_setup().api_setup_open,
+  let (_, returned) = update(
+    test_dispatch(),
+    OpenSession(Local, "desktop-test"),
+    cloud,
   )
+  assert_false(returned.settle_api_setup().api_setup_open)
 }
 
 ///|
@@ -562,6 +617,7 @@ test "project New chat replaces Cloud selection before the host rotation arrives
 test "late Cloud creation cannot replace a project New chat" {
   let model = integrated_cloud_model()
   let (_, creating) = update(test_dispatch(), CloudAction(@cloud.Create), model)
+  let creating = submit_blank_cloud(creating)
   let creation = creating.cloud.creation.unwrap()
   let (_, navigating) = update(
     test_dispatch(),
@@ -593,11 +649,12 @@ test "the new-chat shortcut follows the visible conversation instead of the side
     sidebar_mode: WorkMode,
   })
   assert_true(cloud.cloud.creation is Some(_))
-  let work = {
-    ..model.with_active_project(Some(@interop.ChannelId::Local.test_project())),
-    selected_conversation: None,
-    sidebar_mode: ChatMode,
-  }
+  let (_, work) = update(
+    test_dispatch(),
+    OpenSession(Local, "desktop-test"),
+    model,
+  )
+  let work = { ..work, sidebar_mode: ChatMode, }
   let (_, navigating) = update(test_dispatch(), NewChatRequested, work)
   let (_, rotated) = update(
     test_dispatch(),
@@ -628,11 +685,14 @@ test "managed local and Codex Chats start Cloud even when browsing Work" {
     active_project: Some(managed),
     chat_root: Some(Ok(root)),
   })
-  let model = { ..model, selected_conversation: None, sidebar_mode: WorkMode, }
   let model = model.replace_conversation({
-    ..model.active(),
+    ..model.find_conversation(channel, "desktop-test").unwrap(),
     workspace: Project(root=managed),
   })
+  let model = {
+    ..model.activate(channel, "desktop-test", managed),
+    sidebar_mode: WorkMode,
+  }
   let (_, created) = update(test_dispatch(), NewChatRequested, model)
   assert_true(created.cloud.creation is Some(_))
   for message in [OpenSetup, OpenSkills, OpenSchedules] {

@@ -2,9 +2,24 @@
 
 ///|
 priv enum UiMessage {
+  DownloadToLocal
+  DownloadingFile
+  ExcelCopyTable
+  ExcelCopyTableHint
+  ExcelCopyMarkdown
+  ExcelCopyMarkdownHint
+  ExcelCopied
+  ExcelCopyFailed
+  ExcelCopyTooLarge
+  OfficeCitationUnavailable
   UnresolvedGithubConversations
   AddToContext
   OfficeControls
+  OfficePages
+  OfficeClosePages
+  OfficePageLabel
+  OfficePageCount
+  OfficePageUnavailable
   OfficeFind
   OfficeZoomOut
   OfficeZoomIn
@@ -51,6 +66,8 @@ priv enum UiMessage {
   WaitingPlacement
   MissingCheckout
   NoConversation
+  PreviewAnyway
+  LoadingFile
   ExplorerViews
   WorkspaceFiles
   FilesLabel
@@ -192,6 +209,101 @@ priv enum UiMessage {
 ///|
 fn ui(locale : @i18n.Locale, message : UiMessage) -> String {
   match (locale, message) {
+    (English, DownloadToLocal) => "Download to local"
+    (SimplifiedChinese, DownloadToLocal) => "下载到本地"
+    (TraditionalChinese, DownloadToLocal) => "下載到本機"
+    (Japanese, DownloadToLocal) => "ローカルにダウンロード"
+    (Spanish, DownloadToLocal) => "Descargar al equipo"
+    (English, DownloadingFile) => "Downloading…"
+    (SimplifiedChinese, DownloadingFile) => "正在下载…"
+    (TraditionalChinese, DownloadingFile) => "正在下載…"
+    (Japanese, DownloadingFile) => "ダウンロード中…"
+    (Spanish, DownloadingFile) => "Descargando…"
+    (English, LoadingFile) => "Loading file…"
+    (SimplifiedChinese, LoadingFile) => "正在加载文件…"
+    (TraditionalChinese, LoadingFile) => "正在載入檔案…"
+    (Japanese, LoadingFile) => "ファイルを読み込み中…"
+    (Spanish, LoadingFile) => "Cargando archivo…"
+    (English, PreviewAnyway) => "Preview anyway"
+    (SimplifiedChinese, PreviewAnyway) => "仍要预览"
+    (TraditionalChinese, PreviewAnyway) => "仍要預覽"
+    (Japanese, PreviewAnyway) => "それでもプレビュー"
+    (Spanish, PreviewAnyway) => "Previsualizar de todos modos"
+    (English, ExcelCopyTable) => "Copy table"
+    (SimplifiedChinese, ExcelCopyTable) => "复制表格"
+    (TraditionalChinese, ExcelCopyTable) => "複製表格"
+    (Japanese, ExcelCopyTable) => "表をコピー"
+    (Spanish, ExcelCopyTable) => "Copiar tabla"
+    (English, ExcelCopyTableHint) => "Copy selected values as a table (TSV)"
+    (SimplifiedChinese, ExcelCopyTableHint) =>
+      "将所选值复制为表格（TSV）"
+    (TraditionalChinese, ExcelCopyTableHint) =>
+      "將所選值複製為表格（TSV）"
+    (Japanese, ExcelCopyTableHint) =>
+      "選択した値を表としてコピー（TSV）"
+    (Spanish, ExcelCopyTableHint) =>
+      "Copiar los valores seleccionados como tabla (TSV)"
+    (English, ExcelCopyMarkdown) => "Copy as Markdown table"
+    (SimplifiedChinese, ExcelCopyMarkdown) => "复制为 Markdown 表格"
+    (TraditionalChinese, ExcelCopyMarkdown) => "複製為 Markdown 表格"
+    (Japanese, ExcelCopyMarkdown) => "Markdown の表としてコピー"
+    (Spanish, ExcelCopyMarkdown) => "Copiar como tabla Markdown"
+    (English, ExcelCopyMarkdownHint) =>
+      "Copy as Markdown table; the first row becomes the header"
+    (SimplifiedChinese, ExcelCopyMarkdownHint) =>
+      "复制为 Markdown 表格，首行用作表头"
+    (TraditionalChinese, ExcelCopyMarkdownHint) =>
+      "複製為 Markdown 表格，首行用作表頭"
+    (Japanese, ExcelCopyMarkdownHint) =>
+      "Markdown の表としてコピー（先頭行は見出し）"
+    (Spanish, ExcelCopyMarkdownHint) =>
+      "Copiar como tabla Markdown; la primera fila será el encabezado"
+    (English, ExcelCopied) => "Copied"
+    (SimplifiedChinese, ExcelCopied) => "已复制"
+    (TraditionalChinese, ExcelCopied) => "已複製"
+    (Japanese, ExcelCopied) => "コピーしました"
+    (Spanish, ExcelCopied) => "Copiado"
+    (English, ExcelCopyFailed) => "Copy failed. Try again."
+    (SimplifiedChinese, ExcelCopyFailed) => "复制失败，请重试。"
+    (TraditionalChinese, ExcelCopyFailed) => "複製失敗，請重試。"
+    (Japanese, ExcelCopyFailed) =>
+      "コピーに失敗しました。再試行してください。"
+    (Spanish, ExcelCopyFailed) => "No se pudo copiar. Inténtalo de nuevo."
+    (English, ExcelCopyTooLarge) => "Select at most 1,000,000 cells to copy."
+    (SimplifiedChinese, ExcelCopyTooLarge) =>
+      "选区超过 100 万个单元格，请缩小后复制。"
+    (TraditionalChinese, ExcelCopyTooLarge) =>
+      "選取範圍超過 100 萬個儲存格，請縮小後複製。"
+    (Japanese, ExcelCopyTooLarge) =>
+      "選択範囲を100万セル以下にしてコピーしてください。"
+    (Spanish, ExcelCopyTooLarge) =>
+      "Selecciona como máximo 1.000.000 de celdas para copiar."
+    (English, OfficePages) => "Page thumbnails"
+    (SimplifiedChinese, OfficePages) => "页面缩略图"
+    (TraditionalChinese, OfficePages) => "頁面縮圖"
+    (Japanese, OfficePages) => "ページのサムネイル"
+    (Spanish, OfficePages) => "Miniaturas de páginas"
+    (English, OfficeClosePages) => "Hide page thumbnails"
+    (SimplifiedChinese, OfficeClosePages) => "收起页面缩略图"
+    (TraditionalChinese, OfficeClosePages) => "收合頁面縮圖"
+    (Japanese, OfficeClosePages) => "サムネイルを閉じる"
+    (Spanish, OfficeClosePages) => "Ocultar miniaturas"
+    (English, OfficePageLabel) => "Page {page}"
+    (SimplifiedChinese, OfficePageLabel) => "第 {page} 页"
+    (TraditionalChinese, OfficePageLabel) => "第 {page} 頁"
+    (Japanese, OfficePageLabel) => "{page} ページ"
+    (Spanish, OfficePageLabel) => "Página {page}"
+    (English, OfficePageCount) => "Pages · {count}"
+    (SimplifiedChinese, OfficePageCount) => "{count} 页"
+    (TraditionalChinese, OfficePageCount) => "{count} 頁"
+    (Japanese, OfficePageCount) => "{count} ページ"
+    (Spanish, OfficePageCount) => "Páginas · {count}"
+    (English, OfficePageUnavailable) => "Preview unavailable"
+    (SimplifiedChinese, OfficePageUnavailable) => "预览不可用"
+    (TraditionalChinese, OfficePageUnavailable) => "預覽無法使用"
+    (Japanese, OfficePageUnavailable) =>
+      "プレビューを表示できません"
+    (Spanish, OfficePageUnavailable) => "Vista previa no disponible"
     (English, OfficeControls) => "Office viewer controls"
     (SimplifiedChinese, OfficeControls) => "文档预览控件"
     (TraditionalChinese, OfficeControls) => "文件預覽控制項"
@@ -435,6 +547,16 @@ fn ui(locale : @i18n.Locale, message : UiMessage) -> String {
       "PDF のプレビューをキャンセルしました。ファイルを開き直すと再試行できます。"
     (Spanish, PdfPreviewCancelled) =>
       "Vista del PDF cancelada. Vuelve a abrir el archivo para intentarlo de nuevo."
+    (English, OfficeCitationUnavailable) =>
+      "The cited location is unavailable or ambiguous in this preview. The file is open; check its page, heading, or cell range."
+    (SimplifiedChinese, OfficeCitationUnavailable) =>
+      "当前预览无法定位此引用，或位置不唯一。文件已打开，请核对页码、标题或单元格范围。"
+    (TraditionalChinese, OfficeCitationUnavailable) =>
+      "目前預覽無法定位此引用，或位置不唯一。檔案已開啟，請核對頁碼、標題或儲存格範圍。"
+    (Japanese, OfficeCitationUnavailable) =>
+      "このプレビューでは引用位置を特定できません。開いたファイルのページ、見出し、セル範囲を確認してください。"
+    (Spanish, OfficeCitationUnavailable) =>
+      "La ubicación citada no está disponible o es ambigua en esta vista previa. Comprueba la página, el título o el rango en el archivo abierto."
     (English, OfficeSelectionFailed) =>
       "Could not add this selection. Select the content again."
     (SimplifiedChinese, OfficeSelectionFailed) =>

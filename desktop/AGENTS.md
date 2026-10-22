@@ -6,6 +6,18 @@
   matching frontend and host version, and evolve protocol payloads and both
   implementations in the same change. Support for mixed versions is a separate
   product requirement when explicitly requested.
+- The relay serves one current browser frontend to every host. When a host
+  command, reply or event changes incompatibly, increment
+  `HostProtocolRevision` in `protocol/desktop_messages.mbt` (and the E2E
+  harness's `hostProtocol`). The host sends it in every `agent.connected`.
+  A browser starts its automatic resync only after a matching revision; on a
+  mismatch it closes the socket without retrying and shows the host as
+  unavailable on every non-Cloud page. Requests are not gated at the
+  transport, so a manual read in the moment between the socket opening and
+  `agent.connected` (opening Skills or Scheduled, say) can still reach a
+  mismatched host before the gate covers the page. Keep `agent.connected`
+  decodable for every host: add fields, but never require one beyond
+  `protocol`.
 
 ## Module Boundary
 
@@ -13,6 +25,11 @@
   independent of Proton and window toolkits. Code that needs Proton belongs in
   `desktop/app`; when shared code needs a fact only Proton knows, the window
   host passes it in as a value (`@resources.Resources`).
+- `desktop/app` is the only module that depends on Proton. It is left out of
+  the root `moon.work` and builds in its own `desktop/app/moon.work`, so root
+  Moon commands (and the CI rows that run them) need no Proton runtime. Keep
+  Proton imports in this module; `proton_contract` is the exception, being
+  target-neutral types with no native setup.
 - `desktop/app` is a thin host of the backend. Put services required by every
   backend host in `desktop/backend` (`ApiState::start_services`); keep window
   initialization in the app's entry point.
@@ -33,6 +50,26 @@
 - For behavior that depends on the Desktop host or packaging, reproduce and
   validate it in the packaged development app. Unpackaged launch paths are
   historical; their removal belongs to a task that includes that cleanup.
+
+## Validation By Change Scope
+
+Apply the [root scope and expansion rules](../AGENTS.md#validation-by-change-scope).
+
+| Change | Targeted checks |
+| --- | --- |
+| CSS or presentation assets | Rebuild the browser bundle and preview affected UI or run a focused Playwright spec. |
+| Frontend MoonBit source | JS checks and relevant model/package tests; browser cases for changed rendering, events, or user workflows. |
+| Protocol/codecs or backend behavior | Owning package and affected consumer checks/tests; exercise changed frontend/backend flows. |
+| Proton window host or contracts it consumes | Check/test affected packages from `app/moon.work`; validate host-dependent behavior in the packaged development app. |
+| Build scripts or packaging | Affected script syntax/tests or build-package checks, then inspect the affected artifact. |
+
+Command details: [browser tests](e2e/README.md), [host checks](README.md), and
+[packaging](package/README.md). Browser fixtures replace HTTP/WebSocket sources;
+use real backend/host checks when those layers change.
+
+Full entries from the repository root: `just desktop-test-browser`,
+`just desktop-app-check`, `just desktop-app-test`, and
+`just desktop-build-scripts-check`, when justified or explicitly required.
 
 ## UI Pull Requests
 

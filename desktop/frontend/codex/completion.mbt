@@ -84,6 +84,7 @@ fn State::installed_codex_skills(self : State) -> Array[@skills.InstalledItem] {
     description: skill.description,
     source: "codex",
     registry: None,
+    enabled: true,
   })
 }
 
@@ -409,11 +410,13 @@ pub fn State::composer_input(
         label: "/compact",
         detail: ui(locale, CompactContext),
         command: "compact",
+        prompt: None,
       },
       {
         label: "/review",
         detail: ui(locale, ReviewChanges),
         command: "review",
+        prompt: None,
       },
     ],
     // Codex runs its own shell tools; `!` mode is OpenSeek's.
@@ -422,6 +425,8 @@ pub fn State::composer_input(
     root: self
     .active_placement(context.channel)
     .bind(placement => placement.checkout_root()),
+    cloud_access: None,
+    staged_attachments: [],
     installed_skills: self.installed_codex_skills(),
     context_generation: 0,
     turn_id: active_turn,
@@ -626,8 +631,10 @@ fn State::apply_composer_action(
     | @composer.ReasoningMenuToggled(..)
     | @composer.SelectMenuDismissed(..)
     | @composer.ApprovalAnswered(..)
+    | @composer.ApprovalModeToggled(..)
     | @composer.ApiSetupRequested(..)
     | @composer.FollowupSubmitted(..)
+    | @composer.DraftAttachmentsSubmitted(..)
     | @composer.QueuedInputEditRequested(..)
     | @composer.QueuedInputSteerRequested(..)
     | @composer.QueuedInputDeleteRequested(..)

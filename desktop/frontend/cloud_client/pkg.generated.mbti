@@ -1,0 +1,70 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "openseek_desktop/frontend/cloud_client"
+
+import {
+  "moonbitlang/async/http",
+  "openseek_desktop/protocol",
+}
+
+// Values
+pub const CloudOrigin : String = "https://cloud.moonbitlang.cn"
+
+pub fn check_status(Int32) -> Unit raise RequestError
+
+pub async fn download_file(String, String, String) -> Bytes
+
+pub async fn file_unchanged(String, String, String, String) -> Bool
+
+pub async fn import_attachment(String, String, @protocol.AttachmentSource) -> @protocol.ImportAttachmentReply
+
+pub async fn materialize_semantic_selection(String, String, @protocol.MaterializeSemanticSelectionPayload) -> @protocol.MaterializeSemanticSelectionReply
+
+pub async fn prepare_attachment(String, String, @protocol.AttachmentSource) -> @protocol.PrepareAttachmentReply
+
+pub async fn read_directory(String, String, String) -> @protocol.ReadDirReply
+
+pub async fn read_file(String, String, String, allow_large? : Bool) -> @protocol.ReadFileReply
+
+pub async fn read_file_index(String, String) -> Array[String]
+
+pub async fn request(String, String, @http.RequestMethod, token? : String, body? : Json) -> Json
+
+pub async fn watch_files(String, String, (@http.Client) -> Unit, () -> Bool, () -> Unit) -> Unit
+
+// Errors
+pub(all) suberror RequestError {
+  RequestError(Failure)
+}
+
+// Types and methods
+pub(all) struct Access {
+  token : String
+  epoch : Int32
+} derive(Eq)
+pub fn Access::equal(Self, Self) -> Bool
+pub fn Access::not_equal(Self, Self) -> Bool
+
+pub(all) enum Failure {
+  Unauthorized
+  Busy
+  Http(Int32)
+  Unreachable
+  Malformed
+  ExportUnavailable
+  ServiceNotConfigured
+  CredentialServiceUnavailable
+  SignInFailed(String)
+  InvalidImage
+}
+pub fn Failure::label(Self) -> String
+
+pub struct SseParser {
+  mut event : String
+  mut data : Array[String]
+}
+pub fn SseParser::line(Self, String) -> (String, String)?
+pub fn SseParser::new() -> Self
+
+// Type aliases
+
+// Traits

@@ -6,6 +6,8 @@ priv enum ShellMessage {
   NavigateForward
   NavigationLoading
   NavigationMissing
+  NavigationInvalid
+  HostIncompatibleNotice
   NavigationRetry
   NewChatLabel
   ArchiveHint
@@ -23,7 +25,9 @@ priv enum ShellMessage {
   ShowDetailed
   ShowMinimal
   DetailedMode
+  ConversationTransfer
   ExportConversation
+  ImportConversation
   HideTerminal
   ShowTerminal
   ShowPanel
@@ -50,6 +54,17 @@ priv enum ShellMessage {
   SigningOut
   SignOutLabel
   LoadingConversation
+  StatusWaitingBridge
+  StatusReconnecting
+  StatusReady
+  StatusSetupRequired
+  StatusApiKeyRequired
+  StatusStarting
+  StatusRunning
+  StatusCancelling
+  StatusStep(Int32?)
+  StatusFailed
+  StatusErrored
   CannotLoadConversation
   RetryLabel
   ScheduleReadOnly
@@ -75,6 +90,7 @@ priv enum ShellMessage {
   ShellTerminalUnavailable
   ShellWorktreeFailed
   SetGoal
+  UltraReview
   GoalPlaceholder
   EditQueuePlaceholder
   QueuePlaceholder
@@ -110,6 +126,23 @@ fn shell_text(locale : @i18n.Locale, message : ShellMessage) -> String {
       "此目標已不存在，或其工作區已移除。"
     (Japanese, NavigationMissing) =>
       "移動先が存在しないか、ワークスペースが解除されています。"
+    (English, HostIncompatibleNotice) =>
+      "This computer runs a SeekMoon version this page can't control. Update SeekMoon on that computer, then reload this page."
+    (Spanish, HostIncompatibleNotice) =>
+      "Este equipo ejecuta una versión de SeekMoon que esta página no puede controlar. Actualiza SeekMoon en ese equipo y vuelve a cargar esta página."
+    (SimplifiedChinese, HostIncompatibleNotice) =>
+      "这台电脑上的 SeekMoon 版本无法由此页面控制。请在那台电脑上更新 SeekMoon，然后重新加载此页面。"
+    (TraditionalChinese, HostIncompatibleNotice) =>
+      "這台電腦上的 SeekMoon 版本無法由此頁面控制。請在那台電腦上更新 SeekMoon，然後重新載入此頁面。"
+    (Japanese, HostIncompatibleNotice) =>
+      "このコンピュータの SeekMoon のバージョンは、このページから操作できません。そのコンピュータで SeekMoon を更新してから、このページを再読み込みしてください。"
+    (English, NavigationInvalid) => "This page address is invalid."
+    (Spanish, NavigationInvalid) =>
+      "La dirección de esta página no es válida."
+    (SimplifiedChinese, NavigationInvalid) => "页面地址无效。"
+    (TraditionalChinese, NavigationInvalid) => "頁面位址無效。"
+    (Japanese, NavigationInvalid) =>
+      "ページのアドレスが無効です。"
     (English, NavigationRetry) => "Retry"
     (Spanish, NavigationRetry) => "Reintentar"
     (SimplifiedChinese, NavigationRetry) => "重试"
@@ -218,11 +251,21 @@ fn shell_text(locale : @i18n.Locale, message : ShellMessage) -> String {
     (SimplifiedChinese, DetailedMode) => "详细模式"
     (TraditionalChinese, DetailedMode) => "詳細模式"
     (Japanese, DetailedMode) => "詳細モード"
-    (English, ExportConversation) => "Export conversation"
-    (Spanish, ExportConversation) => "Exportar conversación"
-    (SimplifiedChinese, ExportConversation) => "导出对话"
-    (TraditionalChinese, ExportConversation) => "匯出對話"
-    (Japanese, ExportConversation) => "チャットをエクスポート"
+    (English, ConversationTransfer) => "Export and import"
+    (Spanish, ConversationTransfer) => "Compartir e importar"
+    (SimplifiedChinese, ConversationTransfer) => "导出与导入"
+    (TraditionalChinese, ConversationTransfer) => "匯出與匯入"
+    (Japanese, ConversationTransfer) => "共有とインポート"
+    (English, ExportConversation) => "Export"
+    (Spanish, ExportConversation) => "Exportar"
+    (SimplifiedChinese, ExportConversation) => "导出"
+    (TraditionalChinese, ExportConversation) => "匯出"
+    (Japanese, ExportConversation) => "エクスポート"
+    (English, ImportConversation) => "Import"
+    (Spanish, ImportConversation) => "Importar"
+    (SimplifiedChinese, ImportConversation) => "导入"
+    (TraditionalChinese, ImportConversation) => "匯入"
+    (Japanese, ImportConversation) => "インポート"
     (English, HideTerminal) => "Hide terminal (Ctrl+`)"
     (Spanish, HideTerminal) => "Ocultar terminal (Ctrl+`)"
     (SimplifiedChinese, HideTerminal) => "隐藏终端（Ctrl+`）"
@@ -372,6 +415,86 @@ fn shell_text(locale : @i18n.Locale, message : ShellMessage) -> String {
     (SimplifiedChinese, SignOutLabel) => "退出登录"
     (TraditionalChinese, SignOutLabel) => "退出登入"
     (Japanese, SignOutLabel) => "ログアウト"
+    (English, StatusWaitingBridge) => "Waiting for bridge"
+    (Spanish, StatusWaitingBridge) => "Esperando conexión con el puente"
+    (SimplifiedChinese, StatusWaitingBridge) => "正在等待连接桥"
+    (TraditionalChinese, StatusWaitingBridge) => "正在等待連線橋"
+    (Japanese, StatusWaitingBridge) => "ブリッジ接続を待機中"
+    (English, StatusReconnecting) => "Reconnecting…"
+    (Spanish, StatusReconnecting) => "Reconectando"
+    (SimplifiedChinese, StatusReconnecting) => "正在重连"
+    (TraditionalChinese, StatusReconnecting) => "正在重新連線"
+    (Japanese, StatusReconnecting) => "再接続中"
+    (English, StatusReady) => "Ready"
+    (Spanish, StatusReady) => "Listo"
+    (SimplifiedChinese, StatusReady) => "就绪"
+    (TraditionalChinese, StatusReady) => "就緒"
+    (Japanese, StatusReady) => "準備完了"
+    (English, StatusSetupRequired) => "Setup required"
+    (Spanish, StatusSetupRequired) => "Se requiere configuración"
+    (SimplifiedChinese, StatusSetupRequired) => "需要设置"
+    (TraditionalChinese, StatusSetupRequired) => "需要設定"
+    (Japanese, StatusSetupRequired) => "設定が必要です"
+    (English, StatusApiKeyRequired) => "API key required"
+    (Spanish, StatusApiKeyRequired) => "Se requiere una clave de API"
+    (SimplifiedChinese, StatusApiKeyRequired) => "需要 API 密钥"
+    (TraditionalChinese, StatusApiKeyRequired) => "需要 API 金鑰"
+    (Japanese, StatusApiKeyRequired) => "API キーが必要です"
+    (English, StatusStarting) => "Starting"
+    (Spanish, StatusStarting) => "Iniciando"
+    (SimplifiedChinese, StatusStarting) => "正在启动"
+    (TraditionalChinese, StatusStarting) => "正在啟動"
+    (Japanese, StatusStarting) => "起動中"
+    (English, StatusRunning) => "Running"
+    (Spanish, StatusRunning) => "En ejecución"
+    (SimplifiedChinese, StatusRunning) => "运行中"
+    (TraditionalChinese, StatusRunning) => "執行中"
+    (Japanese, StatusRunning) => "実行中"
+    (English, StatusCancelling) => "Cancelling"
+    (Spanish, StatusCancelling) => "Cancelando"
+    (SimplifiedChinese, StatusCancelling) => "正在取消"
+    (TraditionalChinese, StatusCancelling) => "正在取消"
+    (Japanese, StatusCancelling) => "キャンセル中"
+    (English, StatusStep(step)) =>
+      if step is Some(step) {
+        "Step \{step}"
+      } else {
+        "Step"
+      }
+    (Spanish, StatusStep(step)) =>
+      if step is Some(step) {
+        "Paso \{step}"
+      } else {
+        "Paso"
+      }
+    (SimplifiedChinese, StatusStep(step)) =>
+      if step is Some(step) {
+        "第 \{step} 步"
+      } else {
+        "执行步骤"
+      }
+    (TraditionalChinese, StatusStep(step)) =>
+      if step is Some(step) {
+        "第 \{step} 步"
+      } else {
+        "執行步驟"
+      }
+    (Japanese, StatusStep(step)) =>
+      if step is Some(step) {
+        "ステップ \{step}"
+      } else {
+        "実行ステップ"
+      }
+    (English, StatusFailed) => "Failed"
+    (Spanish, StatusFailed) => "Falló"
+    (SimplifiedChinese, StatusFailed) => "失败"
+    (TraditionalChinese, StatusFailed) => "失敗"
+    (Japanese, StatusFailed) => "失敗"
+    (English, StatusErrored) => "Error"
+    (Spanish, StatusErrored) => "Error"
+    (SimplifiedChinese, StatusErrored) => "错误"
+    (TraditionalChinese, StatusErrored) => "錯誤"
+    (Japanese, StatusErrored) => "エラー"
     (English, LoadingConversation) => "Loading conversation…"
     (Spanish, LoadingConversation) => "Cargando conversación…"
     (SimplifiedChinese, LoadingConversation) => "正在加载对话…"
@@ -548,6 +671,16 @@ fn shell_text(locale : @i18n.Locale, message : ShellMessage) -> String {
     (TraditionalChinese, SetGoal) => "設定或清除此對話的長期目標"
     (Japanese, SetGoal) =>
       "このチャットの継続的な目標を設定・解除"
+    (English, UltraReview) =>
+      "Parallel multi-lens review of your changes — uses many tokens"
+    (Spanish, UltraReview) =>
+      "Revisar tus cambios con revisores en paralelo; consume muchos tokens"
+    (SimplifiedChinese, UltraReview) =>
+      "用多个并行审阅者审查你的改动（消耗大量 token）"
+    (TraditionalChinese, UltraReview) =>
+      "用多個平行審閱者審查你的變更（耗用大量 token）"
+    (Japanese, UltraReview) =>
+      "複数のレビュアーが並行して変更をレビュー（トークンを大量に消費）"
     (English, GoalPlaceholder) =>
       "Describe the standing goal for this conversation — Enter sets it, Esc cancels."
     (Spanish, GoalPlaceholder) =>

@@ -1,10 +1,25 @@
 ///|
+/// One device the account can switch the page to.
+pub(all) struct DeviceChoice {
+  id : String
+  name : String
+} derive(Debug, Eq)
+
+///|
 pub(all) struct Account {
   login : String
   avatar : String
   busy : Bool
   notice : String?
+  // The page's device, when it has one; a Cloud page has none.
+  device : DeviceChoice?
+  // The account's online devices, in roster order; the selector offers these.
+  online_devices : Array[DeviceChoice]
 } derive(Debug, Eq)
+
+///|
+/// The action-menu target of the footer's device selector.
+const DeviceSelectorTarget : String = "sidebar:device-selector"
 
 ///|
 /// The id of the grab strip the sidebar renders on its right edge. The
@@ -25,6 +40,7 @@ pub(all) enum Mode {
 /// in `Actions`, so this value remains comparable and can drive incremental
 /// Rabbita branches without embedding emitters in application data.
 pub(all) struct Input {
+  search : @session_search.Model
   locale : @i18n.Locale
   mode : Mode
   notices : Array[String]
@@ -40,12 +56,14 @@ pub(all) struct Input {
 ///|
 pub(all) struct Actions {
   update : @cmd.Cmd
-  open_search : @cmd.Cmd
+  search : @cmd.Emit[@session_search.Msg]
   open_schedules : @cmd.Cmd
   open_skills : @cmd.Cmd
   open_settings : @cmd.Cmd
   refresh_account : @cmd.Cmd
   sign_out : @cmd.Cmd
+  // Switch the page to the device with this id.
+  select_device : (String) -> @cmd.Cmd
   select_mode : (Mode) -> @cmd.Cmd
   section : @section.Actions
 }
@@ -104,6 +122,9 @@ fn Input::menu_definition(
   target : String,
   actions : Actions,
 ) -> @action_menu.Definition? {
+  if target == DeviceSelectorTarget && self.account is Some(account) {
+    return Some(account.device_menu(actions.select_device, locale=self.locale))
+  }
   if self.find_project(target) is Some(project) {
     return Some({
       label: @messages.text(self.locale, WorkspaceActions),
@@ -119,13 +140,53 @@ fn Input::menu_definition(
 }
 
 ///|
+/// The selector's menu: online devices only, the page's own one checked and
+/// inert. With none online, one inert row says so.
+fn Account::device_menu(
+  self : Account,
+  select_device : (String) -> @cmd.Cmd,
+  locale~ : @i18n.Locale,
+) -> @action_menu.Definition {
+  let entries : Array[@action_menu.Entry] = self.online_devices.map(choice => {
+    let current = self.device.map(device => device.id) == Some(choice.id)
+    Action({
+      label: choice.name,
+      title: choice.name,
+      icon: if current {
+        Some(@icons.icon(@icons.icon_check))
+      } else {
+        None
+      },
+      enabled: !current,
+      destructive: false,
+      command: select_device(choice.id),
+    })
+  })
+  if entries.is_empty() {
+    let label = @messages.text(locale, NoDevicesOnline)
+    entries.push(
+      Action({
+        label,
+        title: label,
+        icon: None,
+        enabled: false,
+        destructive: false,
+        command: @cmd.none,
+      }),
+    )
+  }
+  { label: @messages.text(locale, ChooseDevice), entries, }
+}
+
+///|
 fn Actions::section_component(
   self : Actions,
   _id : @section.Id,
   input : @rabbita.Val[@section.Input],
   locale : @rabbita.Val[@i18n.Locale],
+  search : @rabbita.Val[@conversation.Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
-  @section.component(input, self.section, locale)
+  @section.component(input, self.section, locale, search)
 }
 
 ///|
@@ -164,10 +225,21 @@ pub fn component(
   input : @rabbita.Val[Input],
   actions : Actions,
 ) -> @rabbita.Val[@html.Html] {
-  // Locale travels through the same keyed input as section data. A separate
-  // global locale dependency can render a keyed child before its input updates.
+  // Locale and search presentation travel with the keyed section data.
+  // Separate global dependencies can render a child before its input updates.
   let section_inputs = input.map(input => {
-    @vector.from_array(input.sections.map(section => (input.locale, section)))
+    let results = input.search_results()
+    let search : @conversation.Search = {
+      query: input.search.query(),
+      selected: if input.search.query().is_blank() {
+        None
+      } else {
+        results.get(input.search.selected(results.length()))
+      },
+    }
+    @vector.from_array(
+      input.sections.map(section => (input.locale, section, search)),
+    )
   })
   let section_rows = section_inputs.assoc_by(
     (id, section) => {
@@ -175,6 +247,7 @@ pub fn component(
         id,
         section.map(pair => pair.1),
         section.map(pair => pair.0),
+        section.map(parts => parts.2),
       )
     },
     by=section => section.1.id(),
@@ -183,10 +256,8 @@ pub fn component(
     input.menu_definition(target, actions)
   })
   input.map3(section_rows, overlay, (input, section_rows, overlay) => {
-    // One keyed container holds every row. Child components cache their
-    // (key, node) output; keyed diffing re-pairs each cached node with its
-    // own element when neighbours appear or leave, so a row's event slots
-    // can never be re-bound to another row's element.
+    // Key each section in the outer container; sections key their own content
+    // rows so insertions and reordering keep each row's DOM and event slots.
     let rows : Map[String, @html.Html] = Map([])
     for index, notice in input.notices {
       rows["notice:\{index}"] = @html.div(
@@ -198,6 +269,15 @@ pub fn component(
       for row in group {
         rows[row.0] = row.1
       }
+    }
+    if !input.search.query().is_blank() && input.search_results().is_empty() {
+      rows["search:empty"] = @html.div(
+        class="conversation-row placeholder",
+        @html.span(
+          class="sidebar-label sidebar-notice",
+          @messages.text(input.locale, NoMatchingConversations),
+        ),
+      )
     }
     let footer : Array[@html.Html] = []
     if input.update_label is Some(label) {
@@ -296,6 +376,34 @@ pub fn component(
           @messages.text(input.locale, SignOut),
         ),
       )
+      let choose = @messages.text(input.locale, ChooseDevice)
+      footer.push(
+        @html.button(
+          class="sidebar-button device-selector",
+          type_="button",
+          title=choose,
+          // The footer sits at the bottom edge, so the menu opens upward.
+          attrs=@action_menu.button_attrs(
+            DeviceSelectorTarget,
+            align_right=false,
+            open_upward=true,
+          ).aria_label(choose),
+          [
+            @html.span(class="sidebar-icon", @icons.icon(@icons.icon_vm)),
+            @html.span(
+              class="sidebar-label",
+              match account.device {
+                Some(device) => device.name
+                None => choose
+              },
+            ),
+            @html.span(
+              class="sidebar-icon device-selector-chevron",
+              @icons.icon(@icons.icon_chevron_down),
+            ),
+          ],
+        ),
+      )
       footer.push(@html.div(class="console-account", account_row))
       if account.notice is Some(notice) {
         footer.push(@html.div(class="console-notice", notice))
@@ -321,10 +429,7 @@ pub fn component(
           ],
         ),
       ]),
-      @html.button(class="sidebar-search", on_click=actions.open_search, [
-        @icons.icon(@icons.icon_search),
-        @html.span(@messages.text(input.locale, SearchConversations)),
-      ]),
+      input.search.view(input.locale, actions.search),
       @html.div(class="sidebar-main", [
         @html.div(class="sidebar-section sessions", rows),
       ]),
@@ -362,3 +467,9 @@ pub extend Mode with Eq::{equal, not_equal}
 
 ///|
 pub extend Input with Eq::{equal, not_equal}
+
+///|
+pub extend DeviceChoice with Debug::{to_repr}
+
+///|
+pub extend DeviceChoice with Eq::{equal, not_equal}

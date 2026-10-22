@@ -51,7 +51,7 @@ fn review_inventory_reply(
 ) -> Msg {
   FileEditor(
     @fileeditor.ChangesLoaded(
-      owner=file_ctx(model).owner,
+      owner=file_ctx(model).owner.host().unwrap(),
       generation=model.file_panel.changes_generation,
       repository=true,
       head=Some("baseline"),
@@ -66,7 +66,7 @@ test "saved review jump loads a cold inventory and waits for its final snapshot"
   assert_true(initial.file_panel.changes is @fileeditor.ChangeListIdle)
   let loading = click_saved_review(initial, "src/main.mbt")
   assert_true(loading.right_panel_open)
-  assert_true(loading.dock.active is Some(FilePicker))
+  assert_true(loading.dock_state().active is Some(FilePicker))
   assert_eq(loading.notifications.length(), 0)
   assert_true(loading.pending_review_context is Some(_))
   // Opening the watcher coalesces a fresh request. An intermediate empty
@@ -84,7 +84,7 @@ test "saved review jump loads a cold inventory and waits for its final snapshot"
     intermediate,
   )
   let file = opened.test_file("src/main.mbt")
-  assert_eq(@dock.active_file(opened.dock), Some(file))
+  assert_eq(@dock.active_file(opened.dock_state()), Some(file))
   assert_true(
     opened.file_panel.docs.get(file)
     is Some({ review: Some({ view_mode: @fileeditor.ReviewDiff, .. }), .. }),
@@ -105,21 +105,21 @@ test "the latest saved review jump wins and rejects unrelated inventory replies"
   for
     stale in [
       @fileeditor.ChangesLoaded(
-        owner={ ..owner, session: "another-session", },
+        owner={ ..owner.host().unwrap(), session: "another-session", },
         generation=last.file_panel.changes_generation,
         repository=true,
         head=Some("baseline"),
         files=[],
       ),
       @fileeditor.ChangesFailed(
-        owner~,
+        owner=owner.host().unwrap(),
         generation=last.file_panel.changes_generation - 1,
         message="obsolete failure",
       ),
     ] {
     let (_, unchanged) = update(test_dispatch(), FileEditor(stale), last)
     assert_true(unchanged.pending_review_context == last.pending_review_context)
-    assert_true(unchanged.dock.active is Some(FilePicker))
+    assert_true(unchanged.dock_state().active is Some(FilePicker))
     assert_eq(unchanged.notifications.length(), 0)
   }
   let (_, intermediate) = update(
@@ -136,7 +136,7 @@ test "the latest saved review jump wins and rejects unrelated inventory replies"
     intermediate,
   )
   assert_eq(
-    @dock.active_file(opened.dock),
+    @dock.active_file(opened.dock_state()),
     Some(opened.test_file("src/last.mbt")),
   )
   assert_eq(
@@ -169,7 +169,7 @@ test "competing navigation or conversation cancels an inventory-backed saved rev
       review_inventory_reply(loading, [saved_review_file("src/main.mbt")]),
       moved,
     )
-    assert_true(replied.dock.active == moved.dock.active)
+    assert_true(replied.dock_state().active == moved.dock_state().active)
     assert_true(replied.file_panel.review_context_reveal is None)
     assert_eq(replied.notifications.length(), 0)
   }
@@ -211,7 +211,7 @@ test "saved review jumps distinguish a missing change from an inventory failure"
       test_dispatch(),
       FileEditor(
         @fileeditor.ChangesFailed(
-          owner=file_ctx(model).owner,
+          owner=file_ctx(model).owner.host().unwrap(),
           generation=model.file_panel.changes_generation,
           message="Git is unavailable",
         ),
@@ -219,7 +219,7 @@ test "saved review jumps distinguish a missing change from an inventory failure"
       model,
     )
     assert_true(failed.pending_review_context is None)
-    assert_true(@dock.active_file(failed.dock) is None)
+    assert_true(@dock.active_file(failed.dock_state()) is None)
     assert_eq(failed.notifications.length(), 1)
     assert_eq(
       failed.notifications[0].message,

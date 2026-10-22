@@ -147,3 +147,25 @@ test "later configurations replace whole servers before connection" {
   assert_eq(@config.merge([first, first]), first)
   assert_eq(@config.merge([]), [])
 }
+
+///|
+test "a server's target identifies it without its secrets" {
+  let stdio : @config.McpServer = Stdio(
+    name="local",
+    command="npx",
+    args=["--token", "secret"],
+    env={ "API_KEY": "secret" },
+  )
+  assert_eq(stdio.target(), "npx")
+  fn http(url : String) -> String {
+    @config.McpServer::Http(name="remote", url~, headers={}).target()
+  }
+
+  assert_eq(
+    http("https://user:secret@example.com/mcp?token=abc#frag"),
+    "https://example.com/mcp",
+  )
+  assert_eq(http("https://example.com/mcp"), "https://example.com/mcp")
+  // An `@` in the path is not userinfo.
+  assert_eq(http("https://example.com/a@b"), "https://example.com/a@b")
+}

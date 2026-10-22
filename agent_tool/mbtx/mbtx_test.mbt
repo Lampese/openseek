@@ -22,7 +22,7 @@ async fn dispatch(
 }
 
 ///|
-/// Run with an explicit `workspace_root` and raw arguments (for cwd / target /
+/// Run with an explicit `workspace_root` and raw arguments (for cwd and
 /// decode-failure cases).
 async fn run_in(
   workspace_root : String,
@@ -41,29 +41,28 @@ async test "runs a pure-core program and returns its output" {
 ///|
 /// The text of a `share/examples` script the prompt deliberately does not
 /// link. `cli_greet.mbtx` is not shown to the model — `share/workflow/
-/// check.mbtx` already teaches the `args` contract inline, four lines above
-/// where it used to sit — but it stays the fixture driven through the real
-/// tool below, being the smallest script whose whole behavior is its
-/// arguments.
+/// check.mbtx` already teaches the `args` contract in the language guide —
+/// but it stays the fixture driven through the real tool below, being the
+/// smallest script whose whole behavior is its arguments.
 async fn unlinked_example(name : String) -> String {
   @fs.read_file("share/examples/\{name}").text()
 }
 
 ///|
-/// The same guarantee for a `share/workflow` script the prompt shows inline:
-/// the bundled workflows are linked the same way, so the reusable-script
+/// The same guarantee for a `share/workflow` script shown inline in the
+/// language guide: the bundled workflows are linked the same way, so the reusable-script
 /// contract is verified against the very file `@builtin/` runs.
 async fn prompt_workflow(name : String) -> String {
-  let prompt = @fs.read_file("prompt/default_prompt.mbt.md").text()
+  let prompt = @fs.read_file("prompt/moonbit_syntax_and_api.mbt.md").text()
   assert_true(
     prompt.contains("[share/workflow/\{name}](../share/workflow/\{name})"),
-    msg="the default prompt no longer links share/workflow/\{name}",
+    msg="the language guide no longer links share/workflow/\{name}",
   )
   @fs.read_file("share/workflow/\{name}").text()
 }
 
 ///|
-async test "default prompt reusable check script forwards arguments" {
+async test "language guide reusable check script forwards arguments" {
   let source = prompt_workflow("check.mbtx")
   @vfs.with_tmpdir(ws => {
     @fs.write_file(
@@ -117,36 +116,31 @@ async test "cli_greet example reads process arguments implicitly" {
 }
 
 ///|
-async test "script arguments reach inline and reused scripts verbatim on both runners" {
+async test "script arguments reach inline and reused scripts verbatim" {
   @vfs.with_tmpdir(ws => {
     let values : Array[String] = [
       "--policy", "two words", "", "你好", "$(echo nope)", "--",
     ]
-    for target in ["wasm", "js"] {
-      let skip = if target == "js" { 2 } else { 1 }
-      let source =
-        $|import { "moonbitlang/core/env" }
-        $|fn main { println(@env.args()[\{skip}:].to_array().to_json().stringify()) }
-      let filename = "args-\{target}.mbtx"
-      let inline = run_in(ws, { "source": source, "target": target })
-      assert_false(inline.is_error, msg=inline.content)
-      assert_eq(inline.content, "[]\n")
-      let saved = run_in(ws, {
-        "source": source,
-        "filename": filename,
-        "target": target,
-        "args": values,
-      })
-      assert_false(saved.is_error, msg=saved.content)
-      assert_true(saved.content.contains(Json(values).stringify()))
-      let reused = run_in(ws, {
-        "filename": filename,
-        "target": target,
-        "args": ["different input"],
-      })
-      assert_false(reused.is_error, msg=reused.content)
-      assert_eq(reused.content, "[\"different input\"]\n")
-    }
+    let source =
+      #|import { "moonbitlang/core/env" }
+      #|fn main { println(@env.args()[1:].to_array().to_json().stringify()) }
+    let filename = "args.mbtx"
+    let inline = run_in(ws, { "source": source })
+    assert_false(inline.is_error, msg=inline.content)
+    assert_eq(inline.content, "[]\n")
+    let saved = run_in(ws, {
+      "source": source,
+      "filename": filename,
+      "args": values,
+    })
+    assert_false(saved.is_error, msg=saved.content)
+    assert_true(saved.content.contains(Json(values).stringify()))
+    let reused = run_in(ws, {
+      "filename": filename,
+      "args": ["different input"],
+    })
+    assert_false(reused.is_error, msg=reused.content)
+    assert_eq(reused.content, "[\"different input\"]\n")
   })
 }
 
@@ -355,10 +349,10 @@ async test "saved scripts retain compiler filename and FFI checks" {
     assert_true(out.content.contains("broken.mbtx:1:"), msg=out.content)
     @fs.write_file(
       "\{ws}/ffi.mbtx",
-      "extern \"js\" fn escape() -> Unit = \"() => {}\"\nfn main { escape() }",
+      "extern \"c\" fn escape() -> Unit = \"escape\"\nfn main { escape() }",
       create_mode=CreateOrTruncate,
     )
-    let out = run_in(ws, { "filename": "./ffi.mbtx", "target": "js" })
+    let out = run_in(ws, { "filename": "./ffi.mbtx" })
     assert_true(out.is_error)
     assert_true(out.content.contains("native FFI"))
   })
@@ -445,20 +439,6 @@ async test "a run timeout carries build warnings and blames only the program" {
     assert_true(output.content.contains("the PROGRAM that did not finish"))
     assert_true(output.content.contains("Unused variable"))
   })
-}
-
-///|
-/// Only the wasm target is staged; a single-shot target's one exit code
-/// covers both phases and its report deliberately claims neither.
-async test "a non-wasm failure carries no stage label" {
-  let out = run_in(".", {
-    "source": "fn main { println(\"before\"); panic() }",
-    "target": "js",
-  })
-  assert_true(out.is_error)
-  assert_true(out.content.contains("exited"))
-  assert_false(out.content.contains("at RUNTIME"))
-  assert_false(out.content.contains("BUILD failed"))
 }
 
 ///|
@@ -964,7 +944,8 @@ async test "a worker's snippet writes neither its own tree nor a sibling's" {
       worker_sandbox={
         deny_roots: [@fs.realpath(repo)],
         worker_root: @fs.realpath(worker),
-        worker_admin_dir: @fs.realpath("\{common_git}/worktrees/wt-1"),
+        worker_admin_dir: Some(@fs.realpath("\{common_git}/worktrees/wt-1")),
+        git_index: None,
       },
     )
     let source = (
@@ -996,65 +977,21 @@ async test "a worker's snippet writes neither its own tree nor a sibling's" {
 }
 
 ///|
-/// Without a job runtime the description names the longer cancelling timeout;
-/// the schema never asks the model to choose foreground versus background.
-test "a definition without a job runtime describes its hard timeout" {
+test "the schema does not ask callers to choose foreground versus background" {
   let definition = @mbtx.definition(workspace_root=".")
-  assert_false(definition.description.contains("run_in_background"))
-  assert_true(definition.description.contains("no background-job runtime"))
-  assert_true(definition.description.contains("up to 300s"))
+  let JsonSchema(schema) = definition.schema
+  assert_false(schema.stringify().contains("run_in_background"))
+}
+
+///|
+test "injected timeout bounds reach the definition description" {
   let injected = @mbtx.definition(
     workspace_root=".",
     foreground_timeout_ms=12_345,
   )
-  assert_true(injected.description.contains("up to 12345ms"))
-  let JsonSchema(schema) = definition.schema
-  assert_false(schema.stringify().contains("run_in_background"))
-  // Both execution-time variants teach the staged wasm contract: the build
-  // runs first, synchronously, on its own bound.
-  assert_true(definition.description.contains("BUILT first, synchronously"))
+  assert_true(injected.description.contains("12345ms"))
   let staged_bound = @mbtx.definition(workspace_root=".", build_timeout_ms=777)
   assert_true(staged_bound.description.contains("777ms"))
-}
-
-///|
-/// Collapse every run of whitespace to one space, so a `contains` check reads
-/// the description's WORDS and not the column its generated bullets happen to
-/// wrap at. Without this, admitting one more command reflows a bullet and
-/// fails an assertion about text that is still there.
-fn flatten_whitespace(text : String) -> String {
-  let flattened = StringBuilder()
-  let mut in_space = false
-  for char in text {
-    if char is (' ' | '\n' | '\t' | '\r') {
-      if !in_space {
-        flattened.write_char(' ')
-        in_space = true
-      }
-    } else {
-      flattened.write_char(char)
-      in_space = false
-    }
-  }
-  flattened.to_string()
-}
-
-///|
-/// The Proton entry is rendered from the command policy rather than written
-/// beside it, so this pins that the render reaches the public definition
-/// boundary carrying both the verbs and the caveat no prefix can express.
-test "the description advertises the Proton CLI command surface" {
-  let description = flatten_whitespace(
-    @mbtx.definition(workspace_root=".").description,
-  )
-  assert_true(description.contains("`proton_cli`"))
-  assert_true(description.contains("doctor"))
-  assert_true(description.contains("cef"))
-  assert_true(
-    description.contains(
-      "`-C`/`--cwd` options before the subcommand are refused",
-    ),
-  )
 }
 
 ///|
@@ -1069,11 +1006,7 @@ test "the schema advertises every decoded argument" {
   // MoonBit's String ordering is by length first, so a sorted expectation would
   // encode neither what this test means nor what a reader expects.
   let names = properties.keys().collect()
-  assert_eq(names.length(), 7)
-  for
-    name in [
-      "source", "filename", "args", "description", "target", "cwd", "warning",
-    ] {
+  for name in ["source", "filename", "args", "description", "cwd", "warning"] {
     assert_true(names.contains(name))
   }
   assert_true(
@@ -1082,6 +1015,7 @@ test "the schema advertises every decoded argument" {
       { "type": "array", "items": { "type": "string", .. }, "default": [], .. }
     ),
   )
+  assert_true(properties.get("target") is None)
   assert_false(schema is { "anyOf": _, .. })
   assert_true(schema is { "required": ["description"], .. })
 }
@@ -1095,7 +1029,7 @@ async test "filename approval executes the reviewed snapshot even if the file ch
     let definition = @mbtx.definition(
       workspace_root=ws,
       approval=ApprovalChannel(ask => {
-        assert_eq(ask.body, Some(original))
+        assert_true(ask.body is Some(body) && body.has_suffix(original))
         @fs.write_file(
           path,
           "fn main { println(\"replacement program\") }",
@@ -1246,14 +1180,34 @@ async test "rejects non-string source arguments" {
 }
 
 ///|
-async test "runs a pure snippet on a non-native target" {
+async test "runs a pure snippet without selecting a target" {
   @vfs.with_tmpdir(ws => {
-    let out = run_in(ws, {
-      "source": "fn main { println(6 * 7) }",
-      "target": "js",
+    let out = run_in(ws, { "source": "fn main { println(6 * 7) }" })
+    assert_false(out.is_error, msg=out.content)
+    assert_eq(out.content, "42\n")
+  })
+}
+
+///|
+async test "removed target is rejected before saving or requesting approval" {
+  @vfs.with_tmpdir(ws => {
+    let asked = Ref(false)
+    let definition = @mbtx.definition(
+      workspace_root=ws,
+      approval=ApprovalChannel(_ => {
+        asked.val = true
+        AllowedOnce
+      }),
+    )
+    let out = dispatch(definition, {
+      "source": "fn main { println(42) }",
+      "filename": "rejected.mbtx",
+      "target": "wasm",
+      "escalated": true,
     })
-    assert_false(out.is_error)
-    assert_true(out.content.contains("42"))
+    assert_true(out.is_error, msg=out.content)
+    assert_false(@fs.exists("\{ws}/rejected.mbtx"))
+    assert_false(asked.val)
   })
 }
 
@@ -1409,19 +1363,6 @@ async test "the refusal scan applies only to a run that did not exit 0" {
 }
 
 ///|
-/// A compute-only backend has no moonrun policy. Text resembling its refusal
-/// marker is ordinary program output even in a runtime-less definition.
-async test "a runtime-less non-wasm run does not invent a policy refusal" {
-  let out = run_in(".", {
-    "source": "fn main { println(\"Sandbox policy blocked file write: example\") }",
-    "target": "js",
-  })
-  assert_false(out.is_error)
-  assert_true(out.content.contains("Sandbox policy blocked"))
-  assert_false(out.content.contains("mbtx sandbox:"))
-}
-
-///|
 async test "snippet stdin is an empty file (EOF), not the engine's inherited fd 0" {
   // A snippet that reads stdin must get immediate EOF, not block on (or steal
   // from) the parent's fd 0 — which under serve/TUI is the control channel.
@@ -1445,7 +1386,7 @@ async test "a non-zero exit shows the exit code in the content, not just the bri
   let out = run("fn main { println(\"before\"); panic() }")
   assert_true(out.is_error)
   assert_true(out.content.contains("before"))
-  assert_true(out.content.contains("exited"))
+  assert_true(out.content.contains("run failed (exit "))
 }
 
 ///|
@@ -1480,6 +1421,7 @@ async fn run_escalating(
   source : String,
   answer : @agent_runtime.ApprovalOutcome,
   asked~ : Array[@agent_runtime.ApprovalAsk],
+  args? : Array[String],
 ) -> @agent_tool.ToolOutput {
   @vfs.with_tmpdir(prefix="mbtx-escalate-", ws => {
     let definition = @mbtx.definition(
@@ -1489,8 +1431,32 @@ async fn run_escalating(
         answer
       }),
     )
-    dispatch(definition, { "source": source, "escalated": true })
+    let input : Map[String, Json] = {
+      "source": Json(source),
+      "escalated": Json(true),
+    }
+    if args is Some(args) {
+      input["args"] = Json(args)
+    }
+    dispatch(definition, Json(input))
   })
+}
+
+///|
+/// The question carries what decides what runs besides the program: where it
+/// runs and with which arguments — the same source elsewhere is a different
+/// operation to approve.
+#cfg(not(platform="windows"))
+async test "an escalation asks with the program's working directory and arguments" {
+  let asked : Array[@agent_runtime.ApprovalAsk] = []
+  let out = run_escalating("fn main {  }", Rejected, asked~, args=["notes/"])
+  assert_true(out.is_error)
+  guard asked is [{ body: Some(body), .. }] else {
+    fail("expected one question with a body")
+  }
+  assert_true(body.has_prefix("// cwd: "))
+  assert_true(body.contains("// args: [\"notes/\"]\n"))
+  assert_true(body.has_suffix("fn main {  }"))
 }
 
 ///|
@@ -1651,52 +1617,6 @@ async test "a refusal names escalation when a channel is wired" {
 }
 
 ///|
-/// The allowlist section of the description carries the same fork, because the
-/// case that motivated this never reached a refusal at all: asked to run `just
-/// check`, the model read the justfile and quietly ran the three `moon`
-/// commands it expands to, never mentioning that asking was possible.
-test "the description offers asking as an answer where it exists" {
-  let plain = @mbtx.definition(workspace_root=".").description
-  assert_true(plain.contains("say so rather than working around it"))
-  let asking = @mbtx.definition(
-      workspace_root=".",
-      approval=ApprovalChannel(_ => Rejected),
-    ).description
-  assert_true(asking.contains("two answers are legitimate"))
-  assert_true(asking.contains("retry that one snippet with escalated=true"))
-  // The stance survives the fork: reconstructing the command out of allowed
-  // parts without saying so is still the answer that is not.
-  assert_true(asking.contains("Reconstructing the refused command"))
-}
-
-///|
-/// Escalation only means something on the backend the policy binds. The
-/// compute-only targets never had `--wasm-policy` passed to them, so a grant
-/// there would change nothing about the run — and the prompt behind it costs a
-/// person's attention. Refused before anyone is asked.
-async test "escalation is refused on a target that carries no policy" {
-  let asked : Array[@agent_runtime.ApprovalAsk] = []
-  let out = @vfs.with_tmpdir(prefix="mbtx-target-", ws => {
-    let definition = @mbtx.definition(
-      workspace_root=ws,
-      approval=ApprovalChannel(ask => {
-        asked.push(ask)
-        AllowedOnce
-      }),
-    )
-    dispatch(definition, {
-      "source": "fn main { println(1) }",
-      "target": "js",
-      "escalated": true,
-    })
-  })
-  assert_true(out.is_error)
-  assert_true(out.content.contains("applies to the wasm target"))
-  // Nobody was interrupted for a grant that would have done nothing.
-  assert_eq(asked.length(), 0)
-}
-
-///|
 /// An approved escalation runs with no policy, so the marker the refusal scan
 /// keys on cannot mean what it means elsewhere: `@process.spawn(): Permission
 /// denied` is the guest's own `EPERM` text, which an unsandboxed child raises
@@ -1759,6 +1679,34 @@ async test "an unhosted snippet sees no handoff, even one its host inherited" {
   assert_false(out.is_error)
   assert_true(out.content.contains("clear"))
   assert_false(out.content.contains("LEAKED"))
+}
+
+///|
+async test "a sandboxed snippet gets the MCP host's handoff" {
+  @async.with_task_group(group => {
+    let host = @mcphost.Service::start(
+      group,
+      call=(_, _, _) => @agent_tool.respond("unused"),
+      items=() => [],
+    )
+    @vfs.with_tmpdir(prefix="mbtx-ws-", ws => {
+      let definition = @mbtx.definition(workspace_root=ws, mcp_service=host)
+      let out = dispatch(definition, {
+        "source": (
+          #|import { "moonbitlang/core/env" }
+          #|
+          #|fn main {
+          #|  println("mcp=\{@env.get_env_var("OPENSEEK_MCP").unwrap_or("none")}")
+          #|}
+        ),
+      })
+      assert_false(out.is_error, msg=out.content)
+      assert_true(
+        out.content.contains("mcp=\{host.env()["OPENSEEK_MCP"]}"),
+        msg=out.content,
+      )
+    })
+  })
 }
 
 ///|

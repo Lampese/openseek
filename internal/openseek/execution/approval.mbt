@@ -52,6 +52,28 @@ pub async fn ApprovalDesk::ApprovalDesk(now_ms~ : Int64) -> ApprovalDesk {
 }
 
 ///|
+/// Mint this desk's next question id: the desk's nonce plus an ordinal, so ids
+/// from two engines cannot collide and one log still reads in ask order.
+fn ApprovalDesk::mint_request_id(self : ApprovalDesk) -> String {
+  self.next_id += 1
+  "ap-\{self.nonce}-\{self.next_id}"
+}
+
+///|
+/// Announce one permission question on the wire. Retiring it is the asker's own
+/// job: every announced question is answered by exactly one `approval_resolved`.
+fn announce_request(id : String, ask : @agent_runtime.ApprovalAsk) -> Unit {
+  @emit.emit(
+    ApprovalRequested(
+      id~,
+      tool_name=ask.tool_name,
+      detail=ask.detail,
+      body=ask.body,
+    ),
+  )
+}
+
+///|
 /// Announce one question and wait for its answer, for as long as that takes.
 ///
 /// There is deliberately no deadline. Neither reference has one on a human
@@ -75,8 +97,7 @@ async fn ApprovalDesk::ask(
   // for an answer that cannot come is a turn that never ends. Not announced
   // either: a request nobody can see is not a question.
   guard !self.closed else { return Cancelled }
-  self.next_id += 1
-  let id = "ap-\{self.nonce}-\{self.next_id}"
+  let id = self.mint_request_id()
   let replies : @aqueue.Queue[@agent_runtime.ApprovalOutcome] = Queue(
     kind=Unbounded,
   )
@@ -89,14 +110,7 @@ async fn ApprovalDesk::ask(
     self.pending.remove(id)
     @emit.emit(ApprovalResolved(id~, outcome=approval_outcome_word(outcome)))
   }
-  @emit.emit(
-    ApprovalRequested(
-      id~,
-      tool_name=ask.tool_name,
-      detail=ask.detail,
-      body=ask.body,
-    ),
-  )
+  announce_request(id, ask)
   outcome = replies.get()
   outcome
 }
@@ -148,9 +162,12 @@ pub fn ApprovalDesk::withdraw_all(self : ApprovalDesk) -> Unit {
 /// a tool registry, and its absence is what decides whether the tools that
 /// would ask offer the argument that asks. A refusing channel would leave the
 /// argument advertised and every use of it dead on arrival.
+///
+/// `reviewer` answers under `Review`; the other policies never call it.
 pub fn approval_channel(
   policy : ApprovalPolicy,
   desk : ApprovalDesk,
+  reviewer~ : ApprovalReviewer,
 ) -> @agent_runtime.ApprovalChannel? {
   match policy {
     Never => None
@@ -160,18 +177,26 @@ pub fn approval_channel(
     Always =>
       Some(
         ApprovalChannel(ask => {
-          desk.next_id += 1
-          let id = "ap-\{desk.nonce}-\{desk.next_id}"
-          @emit.emit(
-            ApprovalRequested(
-              id~,
-              tool_name=ask.tool_name,
-              detail=ask.detail,
-              body=ask.body,
-            ),
-          )
+          let id = desk.mint_request_id()
+          announce_request(id, ask)
           @emit.emit(ApprovalResolved(id~, outcome="allowed_once"))
           AllowedOnce
+        }),
+      )
+    // Only a question the reviewer escalates reaches the wire, as one
+    // ordinary card. A decided one is not announced: a controller treats an
+    // `approval_requested` as a person's to answer (it shows a card and
+    // notifies), so announcing a settled question would ask for attention
+    // that is not needed. The decision is recorded in the reviewer's own
+    // transcript instead.
+    Review(ask_on_escalate~) =>
+      Some(
+        ApprovalChannel(ask => {
+          match (reviewer.0)(ask) {
+            Allow => AllowedOnce
+            Deny => Rejected
+            Escalate => if ask_on_escalate { desk.ask(ask) } else { Rejected }
+          }
         }),
       )
   }

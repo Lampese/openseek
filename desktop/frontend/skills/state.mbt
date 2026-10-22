@@ -38,15 +38,23 @@ priv enum Notice {
 ///|
 priv struct PendingOperation {
   channel : @interop.ChannelId
-  identity : (String, String)
+  identity : PendingTarget
   action : PendingSkillAction
+} derive(Eq)
+
+///|
+/// Installation and enablement are independent operations. Registry actions
+/// follow the package identity; switches follow the installed library entry.
+priv enum PendingTarget {
+  Registry((String, String))
+  LibraryEntry(String)
 } derive(Eq)
 
 ///|
 fn Notice::belongs_to(
   self : Notice,
   channel : @interop.ChannelId,
-  identity : (String, String),
+  identity : PendingTarget,
 ) -> Bool {
   match self {
     SkillActionFailed(operation~, ..) =>
@@ -60,6 +68,7 @@ pub(all) enum PendingSkillAction {
   Installing(source~ : String)
   Uninstalling(source~ : String, id~ : String)
   Updating(source~ : String)
+  SettingEnabled(source~ : String, id~ : String, enabled~ : Bool)
 } derive(Eq)
 
 ///|
@@ -68,8 +77,21 @@ pub extend PendingSkillAction with Eq::{equal, not_equal}
 ///|
 fn PendingSkillAction::source(self : PendingSkillAction) -> String {
   match self {
-    Installing(source~) | Uninstalling(source~, ..) | Updating(source~) =>
-      source
+    Installing(source~)
+    | Uninstalling(source~, ..)
+    | Updating(source~)
+    | SettingEnabled(source~, ..) => source
+  }
+}
+
+///|
+/// Whether this operation decides the entry's lifecycle, so the enable switch
+/// must not race it. Updating keeps the entry in place and leaves the switch
+/// usable; a pending enablement is handled by the switch's own pending state.
+fn PendingSkillAction::blocks_enablement(self : PendingSkillAction) -> Bool {
+  match self {
+    Installing(..) | Uninstalling(..) => true
+    Updating(..) | SettingEnabled(..) => false
   }
 }
 
@@ -80,7 +102,8 @@ fn State::pending_action(
   identity : (String, String),
 ) -> PendingSkillAction? {
   for operation in self.busy {
-    guard operation.channel == channel && operation.identity == identity else {
+    guard operation.channel == channel &&
+      operation.identity == PendingTarget::Registry(identity) else {
       continue
     }
     return Some(operation.action)
@@ -89,14 +112,32 @@ fn State::pending_action(
 }
 
 ///|
+fn State::pending_enabled(
+  self : State,
+  channel : @interop.ChannelId,
+  id : String,
+) -> Bool {
+  self.busy
+  .iter()
+  .any(operation => {
+    operation.channel == channel &&
+    operation.identity == PendingTarget::LibraryEntry(id)
+  })
+}
+
+///|
 fn State::start_action(
   self : State,
   channel : @interop.ChannelId,
-  identity : (String, String),
+  identity : PendingTarget,
   action : PendingSkillAction,
   cmd : @cmd.Cmd,
 ) -> (@cmd.Cmd, State, Outcome?) {
-  guard self.pending_action(channel, identity) is None else {
+  guard !self.busy
+    .iter()
+    .any(operation => {
+      operation.channel == channel && operation.identity == identity
+    }) else {
     return (@cmd.none, self, None)
   }
   let busy = self.busy.copy()
@@ -137,6 +178,11 @@ enum Preview {
 } derive(Eq)
 
 ///|
+/// The subject a preview was opened for. For `Installed`, this is the snapshot
+/// the read was issued against: an enablement-only library change deliberately
+/// leaves it untouched so the outstanding read can still settle. Its `enabled`
+/// is therefore historical; render live state from `Input.installed`, as
+/// `detail_action_target` does.
 enum PreviewTarget {
   Market(MarketItem)
   Installed(InstalledItem)
@@ -168,6 +214,7 @@ pub(all) enum Msg {
   // Capture the source alongside the library id before the entry disappears.
   Uninstall(InstalledItem)
   Update(MarketItem)
+  ToggleEnabled(String)
   // A skill operation settled: `action` is the operation to release, and
   // an `error` becomes a notice for that skill (a success reports the
   // library change to the root instead).
@@ -258,7 +305,15 @@ pub fn State::sync_library(
       Installed(current)
     }
   }
-  guard current != target else { return (@cmd.none, self) }
+  let document_changed = match (target, current) {
+    (Installed(previous), Installed(current)) =>
+      { ..previous, enabled: current.enabled, } != current
+    _ => current != target
+  }
+  // Enablement comes from the live input. Keep the document snapshot so an
+  // outstanding read can still settle against the target it was issued for;
+  // its `enabled` stays historical until the document itself changes.
+  guard document_changed else { return (@cmd.none, self) }
   let request = preview_request_id(self.preview) + 1
   (
     fetch_content(emit, input.channel, request, current),
@@ -413,6 +468,27 @@ pub fn State::handle(
       guard channel == input.channel else { return (@cmd.none, self, None) }
       (@cmd.none, { ..self, catalog: Failed(message), }, None)
     }
+    ToggleEnabled(id) => {
+      guard input.installed.iter().find_first(item => item.id == id)
+        is Some(item) else {
+        return (@cmd.none, self, None)
+      }
+      let payload : @protocol.SetSkillEnabledPayload = {
+        id,
+        enabled: !item.enabled,
+      }
+      let action = SettingEnabled(
+        source=if item.source.is_empty() { item.name } else { item.source },
+        id~,
+        enabled=payload.enabled,
+      )
+      self.start_action(
+        input.channel,
+        PendingTarget::LibraryEntry(id),
+        action,
+        set_enabled(emit, input.channel, payload, action),
+      )
+    }
     Install(item) | Update(item) => {
       let source = source_label(item)
       let action : PendingSkillAction = {
@@ -421,7 +497,7 @@ pub fn State::handle(
       }
       self.start_action(
         input.channel,
-        item.identity(),
+        PendingTarget::Registry(item.identity()),
         action,
         install(emit, input.channel, item, action),
       )
@@ -432,7 +508,7 @@ pub fn State::handle(
       }
       self.start_action(
         input.channel,
-        identity,
+        PendingTarget::Registry(identity),
         Uninstalling(source=item.source, id=item.id),
         uninstall(emit, input.channel, item),
       )

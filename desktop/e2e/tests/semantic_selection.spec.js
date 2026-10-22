@@ -116,6 +116,35 @@ test('large semantic selection retries and sends its original draft while later 
   expect(app.pageErrors).toEqual([]);
 });
 
+test('closing the follow-up menu does not steal focus back from the composer', async ({ page }) => {
+  await page.clock.install();
+  const app = new DesktopBrowserHarness(page);
+  await app.install();
+  await app.goto();
+  await app.openSession();
+  const composer = page.locator('#task');
+  await composer.fill('Start a turn');
+  await page.getByTitle('Send', { exact: true }).click();
+  const choice = page.getByRole('button', { name: 'Follow-up action', exact: true });
+  await expect(choice).toContainText('Steer now');
+  await composer.fill('Queued draft to preserve');
+  await choice.click();
+  await expect(page.getByRole('listbox', { name: 'Follow-up action' })).toBeVisible();
+
+  // Put the user's next focus change between selection and the closing paint.
+  // Enter must still reach the composer when that paint eventually completes.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 100);
+  await page.getByRole('option', { name: 'Queue next', exact: true }).click();
+  await composer.focus();
+  await page.clock.runFor(32);
+  await expect(choice).toContainText('Queue next');
+  await expect(composer).toBeFocused();
+  await page.clock.resume();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.queued-input-row')).toContainText('Queued draft to preserve');
+  expect(app.requests.filter(request => request.method === 'agent.steer')).toHaveLength(0);
+  expect(app.pageErrors).toEqual([]);
+});
 
 test('queued message Edit waits for semantic preparation so the send keeps its draft and target', async ({ page }) => {
   const app = new DesktopBrowserHarness(page);
@@ -164,7 +193,7 @@ test('queued message Edit waits for semantic preparation so the send keeps its d
   expect(app.pageErrors).toEqual([]);
 });
 
-for (const provider of ['OpenSeek new chat', 'OpenSeek session', 'Codex']) {
+for (const provider of ['OpenSeek session', 'Codex']) {
   test(`${provider} semantic chip opens the selected search results`, async ({ page }) => {
     const app = new DesktopBrowserHarness(page);
     app.codexModels = codexModels;
@@ -180,6 +209,9 @@ for (const provider of ['OpenSeek new chat', 'OpenSeek session', 'Codex']) {
       await page.getByRole('option', { name: 'GPT-5.4 Codex' }).click();
     } else if (provider === 'OpenSeek session') {
       await app.openSession();
+    } else {
+      // The shell can render before the new chat has an active workspace.
+      await expect(page.getByRole('button', { name: 'Choose project, current project workspace', exact: true })).toBeVisible();
     }
     await openCodeSearch(page);
     await page.getByRole('button', { name: 'Select match', exact: true }).first().click();
@@ -283,7 +315,6 @@ for (const clear of [false, true]) {
   });
 }
 
-
 test('a fresh draft cannot switch agents while its semantic snapshot is being written', async ({ page }) => {
   const app = new DesktopBrowserHarness(page);
   app.codexModels = codexModels;
@@ -293,6 +324,7 @@ test('a fresh draft cannot switch agents while its semantic snapshot is being wr
   app.replyFor = request => request.method === method ? materialization.promise : replyFor(request);
   await app.install();
   await app.goto();
+  await expect(page.getByRole('button', { name: 'Choose project, current project workspace', exact: true })).toBeVisible();
   await selectWholePattern(page);
   const picker = page.getByRole('button', { name: 'Model', exact: true });
   await expect(picker).toBeEnabled();

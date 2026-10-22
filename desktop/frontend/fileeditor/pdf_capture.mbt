@@ -5,6 +5,7 @@ pub fn capture_pdf_region(
   state : State,
   ctx : Ctx,
 ) -> @cmd.Cmd {
+  let owner = ctx.owner
   guard ctx.panel_open &&
     active_pdf_document(state, ctx) is Some((path, document, sig)) &&
     document.status is PdfReady else {
@@ -22,8 +23,8 @@ pub fn capture_pdf_region(
       unsupported_annotation=ui(ctx.locale, PdfCaptureUnsupportedAnnotation),
       emit.map(result => {
         PdfCaptureFinished(
-          owner=ctx.owner,
-          epoch=state.request_epoch,
+          owner~,
+          epoch=state.surface_epoch(ctx.owner),
           path~,
           sig~,
           generation=document.generation,
@@ -47,7 +48,7 @@ pub fn capture_submission_declined_message(locale : @i18n.Locale) -> String {
 ///|
 pub(all) struct PdfCapturePreview {
   id : Int64
-  owner : @interop.ConversationKey
+  owner : @interop.ConversationIdentity
   epoch : Int32
   path : @common.Uri
   sig : String
@@ -130,7 +131,7 @@ pub fn PdfCapturePreview::materialized_selection(
     "mode": "full",
     "selection": Json::object(selection),
     "source": {
-      "file": self.path.path,
+      "file": reference_file(self.owner, self.path),
       "format": "pdf",
       "capture": self.capture.source,
       "readable": false,

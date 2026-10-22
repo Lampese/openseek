@@ -655,6 +655,12 @@ pub let skills_uninstall : Command[
 ] = Command("skills.uninstall")
 
 ///|
+pub let skills_set_enabled : Command[
+  @protocol.SetSkillEnabledPayload,
+  @protocol.SetSkillEnabledReply,
+] = Command("skills.set_enabled")
+
+///|
 pub let update_check : Command[
   @protocol.EmptyPayload,
   @protocol.CheckUpdateReply,
@@ -713,6 +719,12 @@ pub let github_pull_request : Command[
   @protocol.GithubPullRequestPayload,
   @protocol.GithubPullRequestDetail,
 ] = Command("github.pull_request")
+
+///|
+pub let github_pull_request_summary : Command[
+  @protocol.GithubPullRequestSummaryPayload,
+  @protocol.GithubPullRequestSummaryReply,
+] = Command("github.pull_request_summary")
 
 ///|
 pub let github_checkout : Command[
@@ -907,6 +919,14 @@ pub let jobs_stop : Command[@protocol.JobTarget, @protocol.JobStopReply] = Comma
 )
 
 ///|
+/// What a conversation's engine last reported of its MCP servers. Reads what
+/// the host kept: it starts nothing and does not ask the engine.
+pub let mcp_status : Command[
+  @protocol.McpStatusPayload,
+  @protocol.McpStatusReply,
+] = Command("mcp.status")
+
+///|
 pub let schedules_list : Command[
   @protocol.EmptyPayload,
   @protocol.SchedulesReply,
@@ -997,3 +1017,28 @@ pub let remote_access_set : Command[
   @protocol.RemoteAccessPayload,
   @protocol.AuthStatusPayload,
 ] = Command("remote.access_set")
+
+///|
+pub let session_import : Command[
+  @protocol.SessionImportPayload,
+  @protocol.SessionImportReply,
+] = Command("session.import")
+
+///|
+pub let session_artifacts_list : Command[
+  @protocol.SessionArtifactsChangedPayload,
+  @protocol.SessionArtifacts,
+] = Command("session.artifacts_list")
+
+///|
+pub let session_artifacts_remove : Command[
+  @protocol.SessionArtifactRemovePayload,
+  @protocol.SessionArtifacts,
+] = Command("session.artifacts_remove")
+
+///|
+/// Window-only: save a Cloud file to the system Downloads directory.
+pub let cloud_file_download : Command[
+  @protocol.CloudFileDownloadPayload,
+  @protocol.CloudFileDownloadReply,
+] = Command("cloud.file_download")

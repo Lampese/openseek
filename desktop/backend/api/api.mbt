@@ -304,7 +304,7 @@ pub fn ApiState::ApiState(
     hub: Hub(),
     auth: match auth {
       Some(store) => store
-      None => @auth.AuthStore::empty(app_version~)
+      None => @auth.AuthStore::empty()
     },
     app_version,
     console_url,
@@ -385,7 +385,28 @@ pub fn endpoints(
   on_share_progress~ : async (@protocol.SessionShareProgress) -> Unit = _ => (),
 ) -> Array[@endpoint.Endpoint] {
   let endpoints = [
-    @endpoint.Endpoint(@commands.session_share, payload => {
+    @endpoint.Endpoint(@commands.session_import, payload => {
+      Success(
+        @engine.import_session(
+          state.manager,
+          payload,
+          on_created=created => {
+            publish_session_changed(
+              state,
+              "created",
+              created,
+              payload.workspace,
+            )
+          },
+          on_worktree_changed=(workspace, worktrees) => {
+            publish_worktree_changed(state, workspace, worktrees)
+          },
+        ),
+      ) catch {
+        error => Failed(error.to_string())
+      }
+    }),
+    Endpoint(@commands.session_share, payload => {
       SessionShare::{ state, payload, local_account: local_share, }.publish(on_progress=progress => {
         on_share_progress({ generation: payload.generation, progress, }) catch {
           _ => ()
@@ -484,6 +505,9 @@ pub fn endpoints(
     }),
     Endpoint(@commands.jobs_stop, payload => {
       @engine.stop_job(state.manager, payload)
+    }),
+    Endpoint(@commands.mcp_status, payload => {
+      @engine.mcp_status(state.manager, payload)
     }),
     Endpoint(@commands.agent_goal, payload => {
       @engine.goal_run(state.manager, payload)
@@ -593,6 +617,14 @@ pub fn endpoints(
           publish_worktree_changed(state, workspace, worktrees)
         },
       )
+    }),
+    Endpoint(@commands.session_artifacts_list, payload => {
+      @engine.session_artifacts_list(state.manager, payload.session)
+    }),
+    Endpoint(@commands.session_artifacts_remove, payload => {
+      state.save_session_artifacts(payload.session, artifacts => {
+        artifacts.without(payload.artifact)
+      })
     }),
     Endpoint(@commands.session_rename, payload => {
       @engine.rename_session(state.manager, payload)
@@ -840,6 +872,7 @@ test "remote endpoint catalog has one entry per command name" {
     }
     names.push(name)
   }
+  assert_true(names.contains("mcp.status"))
   assert_true(names.contains("codex.config.open"))
   assert_true(names.contains("codex.draft.open"))
   assert_true(names.contains("codex.draft.close"))

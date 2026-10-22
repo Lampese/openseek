@@ -17,6 +17,7 @@ import {
   "openseek_desktop/frontend/interop",
   "openseek_desktop/frontend/mention_context",
   "openseek_desktop/frontend/office_capture",
+  "openseek_desktop/frontend/office_location",
   "openseek_desktop/frontend/pathx",
   "openseek_desktop/frontend/pdf_capture",
   "openseek_desktop/protocol",
@@ -39,7 +40,9 @@ pub fn basename(@pathx.Relative) -> String
 
 pub fn body_view(locale? : @i18n.Locale, @cmd.Emit[Msg], State, Ctx, semantic_review? : @html.Html) -> @html.Html
 
-pub fn breadcrumb_view(locale? : @i18n.Locale, @cmd.Emit[Msg], State, Ctx, reveal? : (String, @cmd.Cmd)?) -> @html.Html
+pub fn breadcrumb_view(desktop? : Bool, locale? : @i18n.Locale, @cmd.Emit[Msg], State, Ctx, reveal? : (String, @cmd.Cmd)?) -> @html.Html
+
+pub fn browser_download(@cmd.Emit[Msg], @interop.ConversationIdentity, Int32, Int32, @common.Uri, Bytes) -> @cmd.Cmd
 
 pub fn capture_pdf_region(@cmd.Emit[Msg], State, Ctx) -> @cmd.Cmd
 
@@ -53,13 +56,17 @@ pub fn close_history_diff(State, @dock.GitHistoryDiff) -> State
 
 pub fn editor_classes(State, Ctx) -> String
 
+pub fn forget_cloud_files(State, String, session? : String) -> (State, @cmd.Cmd)
+
 pub fn mount_cmds(@cmd.Emit[Msg]) -> @cmd.Cmd
+
+pub fn office_feedback_subscription(@cmd.Emit[Msg], OfficeSelectionPreview, String, (String, Bool) -> @cmd.Cmd) -> @sub.Sub
 
 pub fn open_changed_document(@cmd.Emit[Msg], State, Ctx, ChangedFile, had_active~ : Bool) -> (@cmd.Cmd, State)
 
-pub fn open_document(@cmd.Emit[Msg], State, Ctx, @common.Uri, name~ : String, file_link_generation? : Int, range~ : @common.Range?, annotation? : String, had_active~ : Bool) -> (@cmd.Cmd, State)
+pub fn open_document(@cmd.Emit[Msg], State, Ctx, @common.Uri, name~ : String, file_link_generation? : Int32, range~ : @common.Range?, annotation? : String, had_active~ : Bool) -> (@cmd.Cmd, State)
 
-pub fn open_file(@cmd.Emit[Msg], State, Ctx, @common.Uri, file_link_generation? : Int, range~ : @common.Range?, annotation? : String, had_active~ : Bool) -> (@cmd.Cmd, State)
+pub fn open_file(@cmd.Emit[Msg], State, Ctx, @common.Uri, file_link_generation? : Int32, range~ : @common.Range?, annotation? : String, office_target? : @office_location.Target, had_active~ : Bool) -> (@cmd.Cmd, State)
 
 pub fn open_history_diff(@cmd.Emit[Msg], State, Ctx, @dock.GitHistoryDiff) -> (@cmd.Cmd, State)
 
@@ -136,12 +143,20 @@ pub(all) struct ChangedFileReview {
 pub fn ChangedFileReview::equal(Self, Self) -> Bool
 pub fn ChangedFileReview::not_equal(Self, Self) -> Bool
 
+pub(all) struct CloudFiles {
+  epoch : Int32
+  token : String
+} derive(Eq)
+pub fn CloudFiles::equal(Self, Self) -> Bool
+pub fn CloudFiles::not_equal(Self, Self) -> Bool
+
 pub(all) struct Ctx {
   locale : @i18n.Locale
   model : String
   thinking : @protocol.OpenSeekThinking?
-  owner : @interop.ConversationKey
-  request_epoch : Int
+  owner : @interop.ConversationIdentity
+  cloud_files : CloudFiles?
+  request_epoch : Int32
   watch_namespace : String
   placement : @interop.CheckoutPlacement?
   dark_mode : Bool
@@ -159,6 +174,7 @@ pub(all) struct Ctx {
 pub fn Ctx::equal(Self, Self) -> Bool
 pub fn Ctx::not_equal(Self, Self) -> Bool
 pub fn Ctx::observed_files(Self) -> Array[@common.Uri]
+pub fn Ctx::root(Self) -> @common.Uri?
 
 pub(all) struct Doc {
   name : String
@@ -168,6 +184,40 @@ pub(all) struct Doc {
 } derive(Eq)
 pub fn Doc::equal(Self, Self) -> Bool
 pub fn Doc::not_equal(Self, Self) -> Bool
+
+pub(all) struct ExcelCopyFeedback {
+  preview : OfficeSelectionPreview
+  generation : Int32
+  format : ExcelCopyFormat
+  status : ExcelCopyStatus
+} derive(Eq)
+pub fn ExcelCopyFeedback::equal(Self, Self) -> Bool
+pub fn ExcelCopyFeedback::not_equal(Self, Self) -> Bool
+
+pub(all) enum ExcelCopyFormat {
+  Tsv
+  Markdown
+} derive(Eq)
+pub fn ExcelCopyFormat::equal(Self, Self) -> Bool
+pub fn ExcelCopyFormat::not_equal(Self, Self) -> Bool
+
+pub(all) enum ExcelCopyStatus {
+  Copying
+  Copied
+  Failed
+} derive(Eq)
+pub fn ExcelCopyStatus::equal(Self, Self) -> Bool
+pub fn ExcelCopyStatus::not_equal(Self, Self) -> Bool
+
+pub struct ExcelSelectionTable {
+  first_row : Int32
+  last_row : Int32
+  first_column : Int32
+  last_column : Int32
+  cells : Map[(Int32, Int32), String]
+} derive(Eq)
+pub fn ExcelSelectionTable::equal(Self, Self) -> Bool
+pub fn ExcelSelectionTable::not_equal(Self, Self) -> Bool
 
 pub(all) enum ExplorerMode {
   ExplorerFiles
@@ -190,6 +240,7 @@ pub(all) enum FileContent {
   Binary
   Oversized
   Office(data_base64~ : String, media_type~ : String, sig~ : String)
+  Raster(url~ : String, sig~ : String)
   Content(content~ : String, sig~ : String)
 }
 
@@ -244,7 +295,7 @@ pub(all) enum HistoryBlob {
 
 pub(all) struct HistoryDiffDoc {
   diff : @dock.GitHistoryDiff
-  generation : Int
+  generation : Int32
   original : HistoryBlob
   modified : HistoryBlob
 } derive(Eq)
@@ -272,6 +323,11 @@ pub fn MoonModViewMode::equal(Self, Self) -> Bool
 pub fn MoonModViewMode::not_equal(Self, Self) -> Bool
 
 pub(all) enum Msg {
+  DownloadFile(desktop~ : Bool)
+  FileDownloadReady(owner~ : @interop.ConversationIdentity, auth_epoch~ : Int32, generation~ : Int32, path~ : @common.Uri, bytes~ : Bytes)
+  FileDownloaded(owner~ : @interop.ConversationIdentity, auth_epoch~ : Int32, generation~ : Int32, path~ : @common.Uri, result~ : Result[Unit, String])
+  OfficeCitationLocated(OfficeCitationNavigation, Bool)
+  OfficeCitationLaidOut(OfficeCitationNavigation)
   ReviewContextRevealFinished(source~ : @mention_context.ReviewSource, found~ : Bool)
   ReviewContextChanged(owner~ : @interop.ConversationKey, selection~ : @mention_context.ReviewChanges, adding~ : Bool)
   GithubReview(@github_review.Msg)
@@ -284,16 +340,23 @@ pub(all) enum Msg {
   Search(@grep_search.Msg)
   SearchMatchSelected(path~ : String, range~ : @common.Range)
   SemanticSelectionChanged(owner~ : @interop.ConversationKey, reference~ : @mention_context.SemanticSearchReference?)
-  OfficeSelectionChanged(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, sig~ : String, selection~ : String)
+  OfficeSelectionChanged(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, sig~ : String, selection~ : String)
   OfficeSelectionConfirmed(OfficeSelectionPreview)
   OfficeFeedbackChanged(OfficeSelectionPreview, String)
   OfficeFeedbackSubmitted(OfficeSelectionPreview, String, apply~ : Bool)
   OfficeSelectionDismissed(OfficeSelectionPreview)
+  ExcelSelectionCopyRequested(OfficeSelectionPreview, ExcelCopyFormat)
+  ExcelSelectionCopyFinished(OfficeSelectionPreview, Int32, Bool)
+  ExcelSelectionCopyExpired(OfficeSelectionPreview, Int32)
+  ExcelSelectionCleared(OfficeSelectionPreview)
   OfficeZoomChanged(String)
+  OfficeFitWidth
+  OfficePagesToggled
+  OfficeWidthFitted(@interop.ConversationIdentity, Int32, @common.Uri, Int32)
   OfficeSearchChanged(String)
   OfficeSystemFontsToggled
-  PdfStateChanged(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, sig~ : String, generation~ : Int, event~ : String)
-  PdfSelectionChanged(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, sig~ : String, generation~ : Int, selection~ : String)
+  PdfStateChanged(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, sig~ : String, generation~ : Int32, event~ : String)
+  PdfSelectionChanged(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, sig~ : String, generation~ : Int32, selection~ : String)
   OfficeRegionRequested
   OfficeRegionFinished(OfficeRegionRequest, Result[@office_capture.Capture, String]?)
   OfficeRegionFeedbackChanged(OfficeRegionPreview, String)
@@ -301,7 +364,7 @@ pub(all) enum Msg {
   OfficeRegionSubmissionDeclined(OfficeRegionPreview)
   OfficeRegionDismissed(OfficeRegionPreview)
   PdfCaptureRequested
-  PdfCaptureFinished(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, sig~ : String, generation~ : Int, result~ : Result[@pdf_capture.Capture, String])
+  PdfCaptureFinished(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, sig~ : String, generation~ : Int32, result~ : Result[@pdf_capture.Capture, String])
   PdfCaptureFeedbackChanged(PdfCapturePreview, String)
   PdfCaptureBatchChanged(PdfCapturePreview, Bool)
   PdfCaptureSubmissionDeclined(PdfCapturePreview)
@@ -321,21 +384,21 @@ pub(all) enum Msg {
   DirExpand(@pathx.Relative)
   DirToggle(@pathx.Relative)
   EnsureFileIndex
-  DirLoaded(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @pathx.Relative, entries~ : Array[FileEntry])
-  DirFailed(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @pathx.Relative, message~ : String)
-  FilesIndexed(owner~ : @interop.ConversationKey, epoch~ : Int, files~ : Array[@pathx.Relative], truncated~ : Bool)
-  FileIndexFailed(owner~ : @interop.ConversationKey, epoch~ : Int)
-  ChangesLoaded(owner~ : @interop.ConversationKey, generation~ : Int, repository~ : Bool, head~ : String?, files~ : Array[ChangedFile])
-  ChangesFailed(owner~ : @interop.ConversationKey, generation~ : Int, message~ : String)
+  DirLoaded(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @pathx.Relative, entries~ : Array[FileEntry])
+  DirFailed(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @pathx.Relative, message~ : String)
+  FilesIndexed(owner~ : @interop.ConversationIdentity, epoch~ : Int32, files~ : Array[@pathx.Relative], truncated~ : Bool)
+  FileIndexFailed(owner~ : @interop.ConversationIdentity, epoch~ : Int32)
+  ChangesLoaded(owner~ : @interop.ConversationKey, generation~ : Int32, repository~ : Bool, head~ : String?, files~ : Array[ChangedFile])
+  ChangesFailed(owner~ : @interop.ConversationKey, generation~ : Int32, message~ : String)
   ChangesPollDue
   GitHeadObserved(owner~ : @interop.ConversationKey, head~ : String?)
   GitHistoryRefreshRequested
   GitHistoryLoadMoreRequested
-  GitHistoryLoaded(owner~ : @interop.ConversationKey, generation~ : Int, append~ : Bool, reply~ : @protocol.GitHistoryReply)
-  GitHistoryFailed(owner~ : @interop.ConversationKey, generation~ : Int, append~ : Bool, message~ : String)
+  GitHistoryLoaded(owner~ : @interop.ConversationKey, generation~ : Int32, append~ : Bool, reply~ : @protocol.GitHistoryReply)
+  GitHistoryFailed(owner~ : @interop.ConversationKey, generation~ : Int32, append~ : Bool, message~ : String)
   GitCommitSelected(String)
-  GitCommitChangesLoaded(owner~ : @interop.ConversationKey, generation~ : Int, reply~ : @protocol.GitCommitChangesReply)
-  GitCommitChangesFailed(owner~ : @interop.ConversationKey, generation~ : Int, commit~ : String, message~ : String)
+  GitCommitChangesLoaded(owner~ : @interop.ConversationKey, generation~ : Int32, reply~ : @protocol.GitCommitChangesReply)
+  GitCommitChangesFailed(owner~ : @interop.ConversationKey, generation~ : Int32, commit~ : String, message~ : String)
   GitCommitChangesRetry(String)
   HistoricalFileSelected(@dock.GitHistoryDiff)
   ToggleChangesSection
@@ -344,10 +407,11 @@ pub(all) enum Msg {
   ChangeTreeReviewToggled(ChangeTreeItem)
   ToggleGitGraphSection
   FileSelected(path~ : @pathx.Relative, name~ : String)
+  PreviewLargeFile(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri)
   ChangedFileSelected(ChangedFile)
   ChangedFileNavigated(ChangedFile, Bool)
   ReviewDiffFileBoundary(Bool)
-  DiffLoadingDue(owner~ : @interop.ConversationKey, path~ : @common.Uri, generation~ : Int)
+  DiffLoadingDue(owner~ : @interop.ConversationKey, path~ : @common.Uri, generation~ : Int32)
   ToggleReviewDiff
   ToggleReviewDiffLayout
   ReviewDiffModeSelected(ReviewDiffMode)
@@ -361,30 +425,43 @@ pub(all) enum Msg {
   ToggleReviewProgress
   MbtiViewModeSelected(MbtiViewMode)
   MoonModViewModeSelected(MoonModViewMode)
-  PackageGraphRequestLoaded(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, generation~ : Int, source~ : String)
-  PackageGraphRequestFailed(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, generation~ : Int, message~ : String)
-  ReviewActiveHunkChanged(ready~ : Bool, change~ : ChangedFile, review_generation~ : Int, surface_generation~ : Int, hunk~ : ReviewHunk?, file_changes~ : ReviewHunk?, position~ : ReviewHunkPosition?)
+  PackageGraphRequestLoaded(owner~ : @interop.ConversationKey, epoch~ : Int32, path~ : @common.Uri, generation~ : Int32, source~ : String)
+  PackageGraphRequestFailed(owner~ : @interop.ConversationKey, epoch~ : Int32, path~ : @common.Uri, generation~ : Int32, message~ : String)
+  ReviewActiveHunkChanged(ready~ : Bool, change~ : ChangedFile, review_generation~ : Int32, surface_generation~ : Int32, hunk~ : ReviewHunk?, file_changes~ : ReviewHunk?, position~ : ReviewHunkPosition?)
   ToggleActiveReviewHunk
-  ToggleReviewHunk(change~ : ChangedFile, review_generation~ : Int, surface_generation~ : Int, hunk~ : ReviewHunk, file_changes~ : ReviewHunk?, position~ : ReviewHunkPosition?)
-  GitOriginalLoaded(owner~ : @interop.ConversationKey, path~ : @common.Uri, generation~ : Int, background~ : Bool, original~ : @protocol.GitOriginalFileReply)
-  GitOriginalFailed(owner~ : @interop.ConversationKey, path~ : @common.Uri, generation~ : Int, background~ : Bool, message~ : String)
-  HistoryBlobLoaded(owner~ : @interop.ConversationKey, key~ : String, generation~ : Int, side~ : HistoryDiffSide, blob~ : @protocol.GitOriginalFileReply)
-  HistoryBlobFailed(owner~ : @interop.ConversationKey, key~ : String, generation~ : Int, side~ : HistoryDiffSide, message~ : String)
+  ToggleReviewHunk(change~ : ChangedFile, review_generation~ : Int32, surface_generation~ : Int32, hunk~ : ReviewHunk, file_changes~ : ReviewHunk?, position~ : ReviewHunkPosition?)
+  GitOriginalLoaded(owner~ : @interop.ConversationKey, path~ : @common.Uri, generation~ : Int32, background~ : Bool, original~ : @protocol.GitOriginalFileReply)
+  GitOriginalFailed(owner~ : @interop.ConversationKey, path~ : @common.Uri, generation~ : Int32, background~ : Bool, message~ : String)
+  HistoryBlobLoaded(owner~ : @interop.ConversationKey, key~ : String, generation~ : Int32, side~ : HistoryDiffSide, blob~ : @protocol.GitOriginalFileReply)
+  HistoryBlobFailed(owner~ : @interop.ConversationKey, key~ : String, generation~ : Int32, side~ : HistoryDiffSide, message~ : String)
   OpenNavigationLocation(owner~ : @interop.ConversationKey, path~ : @pathx.Relative, range~ : @common.Range)
-  FileLoaded(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, name~ : String, file~ : FileContent, file_link_generation~ : Int?, review_generation~ : Int?, range~ : @common.Range?, annotation~ : String?)
-  FileFailed(owner~ : @interop.ConversationKey, epoch~ : Int, path~ : @common.Uri, file_link_generation~ : Int?, review_generation~ : Int?, message~ : String)
+  FileLoaded(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, name~ : String, file~ : FileContent, file_link_generation~ : Int32?, review_generation~ : Int32?, range~ : @common.Range?, annotation~ : String?)
+  FileFailed(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, file_link_generation~ : Int32?, review_generation~ : Int32?, message~ : String)
   FileWatchFailed(channel~ : @interop.ChannelId, root~ : @common.Uri, generation~ : String, message~ : String)
   FsChanged(root~ : @common.Uri, generation~ : String, changes~ : Array[FileChange]?)
-  RunSettled(owner~ : @interop.ConversationKey)
+  RunSettled(owner~ : @interop.ConversationIdentity)
+  WorkspaceInvalidated(owner~ : @interop.ConversationIdentity, auth_epoch~ : Int32)
+  FileVersionChecked(owner~ : @interop.ConversationIdentity, epoch~ : Int32, path~ : @common.Uri, sig~ : String, unchanged~ : Bool)
   RefreshExternalFiles
-  StatsLoaded(owner~ : @interop.ConversationKey, epoch~ : Int, stats~ : Array[FileStat], recheck_diagnostics~ : Bool)
-  DiagnosticsLoaded(owner~ : @interop.ConversationKey, epoch~ : Int, absolute~ : @common.Uri, diagnostics~ : Array[@protocol.LspDiagnostic])
+  StatsLoaded(owner~ : @interop.ConversationKey, epoch~ : Int32, stats~ : Array[FileStat], recheck_diagnostics~ : Bool)
+  DiagnosticsLoaded(owner~ : @interop.ConversationKey, epoch~ : Int32, absolute~ : @common.Uri, diagnostics~ : Array[@protocol.LspDiagnostic])
   DiagnosticsPublished(channel~ : @interop.ChannelId, absolute~ : @common.Uri, diagnostics~ : Array[@protocol.LspDiagnostic])
   LanguageRequestFailed(owner~ : @interop.ConversationKey, message~ : String)
   EditorCommentAdded(resource~ : ModelUri, file~ : @pathx.Relative, range~ : @common.Range, quote~ : String, comment~ : String, feedback_id~ : String)
   ApplyAllFeedback
-  DiffCommentAdded(file~ : @pathx.Relative, original_line_number~ : Int?, modified_line_number~ : Int?, quote~ : String, comment~ : String, resource~ : ModelUri?, feedback_id~ : String?)
+  DiffCommentAdded(file~ : @pathx.Relative, original_line_number~ : Int32?, modified_line_number~ : Int32?, quote~ : String, comment~ : String, resource~ : ModelUri?, feedback_id~ : String?)
 }
+
+pub(all) struct OfficeCitationNavigation {
+  owner : @interop.ConversationIdentity
+  epoch : Int32
+  generation : Int32
+  path : @common.Uri
+  target : @office_location.Target
+} derive(Eq, @debug.Debug)
+pub fn OfficeCitationNavigation::equal(Self, Self) -> Bool
+pub fn OfficeCitationNavigation::not_equal(Self, Self) -> Bool
+pub fn OfficeCitationNavigation::to_repr(Self) -> @debug.Repr
 
 pub(all) struct OfficeRegionDraft {
   preview : OfficeRegionPreview
@@ -403,31 +480,40 @@ pub fn OfficeRegionPreview::not_equal(Self, Self) -> Bool
 
 pub(all) struct OfficeRegionRequest {
   id : Int64
-  owner : @interop.ConversationKey
-  epoch : Int
+  owner : @interop.ConversationIdentity
+  epoch : Int32
   path : @common.Uri
   sig : String
-  pdf_generation : Int?
+  pdf_generation : Int32?
 } derive(Eq)
 pub fn OfficeRegionRequest::equal(Self, Self) -> Bool
 pub fn OfficeRegionRequest::not_equal(Self, Self) -> Bool
 
 pub(all) struct OfficeSelectionPreview {
-  owner : @interop.ConversationKey
-  epoch : Int
+  owner : @interop.ConversationIdentity
+  epoch : Int32
   path : @common.Uri
   sig : String
-  pdf_generation : Int?
+  pdf_generation : Int32?
   materialized : String
   summary : @mention_context.OfficeSelectionSummary
+  excel_table : ExcelSelectionTable?
 } derive(Eq)
 pub fn OfficeSelectionPreview::equal(Self, Self) -> Bool
+pub fn OfficeSelectionPreview::materialized_selection(Self, String) -> String?
 pub fn OfficeSelectionPreview::not_equal(Self, Self) -> Bool
 
+pub(all) struct OfficeZoomPreference {
+  fit_width : Bool
+  zoom : Int32
+} derive(Eq)
+pub fn OfficeZoomPreference::equal(Self, Self) -> Bool
+pub fn OfficeZoomPreference::not_equal(Self, Self) -> Bool
+
 pub(all) enum PackageGraphState {
-  PackageGraphLoading(Int)
-  PackageGraphReady(Int, String)
-  PackageGraphFailed(Int, String)
+  PackageGraphLoading(Int32)
+  PackageGraphReady(Int32, String)
+  PackageGraphFailed(Int32, String)
 } derive(Eq)
 pub fn PackageGraphState::equal(Self, Self) -> Bool
 pub fn PackageGraphState::not_equal(Self, Self) -> Bool
@@ -441,11 +527,11 @@ pub fn PdfCaptureDraft::not_equal(Self, Self) -> Bool
 
 pub(all) struct PdfCapturePreview {
   id : Int64
-  owner : @interop.ConversationKey
-  epoch : Int
+  owner : @interop.ConversationIdentity
+  epoch : Int32
   path : @common.Uri
   sig : String
-  generation : Int
+  generation : Int32
   capture : @pdf_capture.Capture
 } derive(Eq)
 pub fn PdfCapturePreview::equal(Self, Self) -> Bool
@@ -454,12 +540,12 @@ pub fn PdfCapturePreview::not_equal(Self, Self) -> Bool
 
 pub(all) struct PdfDocument {
   bytes : Bytes
-  generation : Int
+  generation : Int32
   status : PdfStatus
-  page : Int
-  pages : Int?
-  rotation : Int
-  search : (Int, Int)?
+  page : Int32
+  pages : Int32?
+  rotation : Int32
+  search : (Int32, Int32)?
   password : String
 } derive(Eq)
 pub fn PdfDocument::equal(Self, Self) -> Bool
@@ -569,8 +655,8 @@ pub fn ReviewNavigationDisplay::equal(Self, Self) -> Bool
 pub fn ReviewNavigationDisplay::not_equal(Self, Self) -> Bool
 
 pub(all) struct ReviewState {
-  generation : Int
-  working_generation : Int
+  generation : Int32
+  working_generation : Int32
   baseline : ReviewBaseline
   view_mode : ReviewViewMode
   selected : ChangedFile
@@ -606,21 +692,29 @@ pub(all) struct SemanticReviewLiveDocument {
 } derive(Eq, @debug.Debug)
 
 pub(all) struct State {
-  owner : @interop.ConversationKey?
+  owner : @interop.ConversationIdentity?
+  cloud_epoch : Int32?
+  cloud_documents : Map[@interop.ConversationIdentity, Map[@common.Uri, Doc]]
   placement : ReconciledPlacement
   tree_open : Bool
-  office_zoom : Int
+  office_zoom : Int32
+  office_zoom_preferences : Map[@common.Uri, OfficeZoomPreference]
+  office_pages_open : Bool
   office_query : String
   office_prefer_system_fonts : Bool
+  office_navigation : OfficeCitationNavigation?
   office_selection : OfficeSelectionPreview?
   office_selection_comment : String?
+  excel_copy_generation : Int32
+  excel_copy_selection : OfficeSelectionPreview?
+  excel_copy_feedback : ExcelCopyFeedback?
   office_region_request : OfficeRegionRequest?
   office_region : OfficeRegionDraft?
   office_region_id : Int64
   pdf_capture : PdfCaptureDraft?
   pdf_capture_batch : Bool
   pdf_capture_id : Int64
-  pdf_generation : Int
+  pdf_generation : Int32
   explorer_mode : ExplorerMode
   search : @grep_search.State
   github_review : @github_review.State
@@ -633,42 +727,43 @@ pub(all) struct State {
   semantic_review_collapsed : Array[String]
   review_diff_navigation_available : Bool
   review_navigation_destination : ReviewNavigationDestination?
-  review_navigation_remaining : Int?
+  review_navigation_remaining : Int32?
   change_extensions : Array[String?]?
   change_path_filter : String
   changes : ChangeList
   change_tree_collapsed : Array[@pathx.Relative]
   change_tree_focus : ChangeTreeItem?
   git_graph : GitGraphState
-  git_graph_generation : Int
+  git_graph_generation : Int32
   git_graph_selected : String?
   git_commit_files : GitCommitFiles
-  git_commit_files_generation : Int
+  git_commit_files_generation : Int32
   git_actual_head : String?
   git_actual_head_known : Bool
   changes_collapsed : Bool
   git_graph_collapsed : Bool
   history_docs : Map[String, HistoryDiffDoc]
-  history_generation : Int
+  history_generation : Int32
   review_context_reveal : @mention_context.ReviewChanges?
   review_context : Array[@mention_context.ReviewChanges]
   review_progress : Array[ChangedFileReview]
-  review_hunk_surface_generation : Int
+  review_hunk_surface_generation : Int32
   review_active_hunk : ReviewActiveHunk?
-  review_hunk_ready : (ChangedFile, Int, Int)?
+  review_hunk_ready : (ChangedFile, Int32, Int32)?
   review_navigation_display : ReviewNavigationDisplay?
-  changes_generation : Int
-  request_epoch : Int
-  file_link_generation : Int
+  changes_generation : Int32
+  request_epoch : Int32
+  cloud_surface_epoch : Int32
+  file_link_generation : Int32
   changes_head : String?
   changes_head_known : Bool
-  review_generation : Int
-  diff_loading_generation : Int?
+  review_generation : Int32
+  diff_loading_generation : Int32?
   review_recovery_pending : Bool
-  background_review_requests : Map[@common.Uri, Int]
+  background_review_requests : Map[@common.Uri, Int32]
   explorer_was_visible : Bool
   watching : WatchedPaths?
-  watch_generation : Int
+  watch_generation : Int32
   watch_error : String?
   tree_focus : @pathx.Relative?
   tree_reveal : TreeReveal
@@ -678,17 +773,19 @@ pub(all) struct State {
   children : Map[@pathx.Relative, Array[FileEntry]]
   directory_errors : Map[@pathx.Relative, String]
   docs : Map[@common.Uri, Doc]
+  download : @common.Uri?
+  download_generation : Int32
   mbti_view_modes : Map[@common.Uri, MbtiViewMode]
   moon_mod_view_modes : Map[@common.Uri, MoonModViewMode]
   package_graphs : Map[@common.Uri, PackageGraphState]
-  package_graph_generation : Int
+  package_graph_generation : Int32
   highlighted : @pathx.Relative?
   index : FileIndex
   error : String?
 } derive(Eq)
-pub fn State::accepts_office_callback(Self, Ctx, @interop.ConversationKey, Int, @common.Uri, String) -> Bool
+pub fn State::accepts_office_callback(Self, Ctx, @interop.ConversationIdentity, Int32, @common.Uri, String) -> Bool
 pub fn State::accepts_office_region(Self, Ctx, OfficeRegionRequest) -> Bool
-pub fn State::accepts_pdf_callback(Self, Ctx, @interop.ConversationKey, Int, @common.Uri, String, Int) -> Bool
+pub fn State::accepts_pdf_callback(Self, Ctx, @interop.ConversationIdentity, Int32, @common.Uri, String, Int32) -> Bool
 pub fn State::accepts_review_context(Self, @mention_context.ReviewChanges) -> Bool
 pub fn State::dismiss_office_selection(Self, Ctx, OfficeSelectionPreview) -> (@cmd.Cmd, Self)
 pub fn State::dismiss_pdf_capture(Self, Ctx, PdfCapturePreview) -> (@cmd.Cmd, Self)
@@ -702,7 +799,7 @@ pub fn State::pending_office_selection(Self, Ctx) -> OfficeSelectionPreview?
 pub fn State::pending_pdf_capture(Self, Ctx) -> PdfCaptureDraft?
 pub fn State::pending_region_feedback(Self, Ctx) -> RegionFeedbackDraft?
 pub fn State::polled_files(Self, Ctx) -> Array[@common.Uri]
-pub fn State::prepare_owner(Self, @interop.ConversationKey, Array[@common.Uri]) -> Self
+pub fn State::prepare_owner(Self, @interop.ConversationIdentity, Array[@common.Uri], cloud_epoch? : Int32) -> Self
 pub fn State::retire_watcher(Self, @cmd.Emit[Msg], Ctx) -> (Self, @cmd.Cmd)
 pub fn State::start_office_region(Self, Ctx, @cmd.Emit[Msg]) -> (@cmd.Cmd, Self)
 pub fn State::with_review_context_reveal(Self, @mention_context.ReviewChanges) -> Self
@@ -713,6 +810,7 @@ pub(all) enum TabState {
   TabLoaded(content~ : String, sig~ : String)
   TabOffice(document~ : @viewer.RenderedDocument, sig~ : String)
   TabPdf(document~ : PdfDocument, sig~ : String)
+  TabImage(url~ : String, sig~ : String)
   TabBinary
   TabOversized
   TabReadFailed(String)

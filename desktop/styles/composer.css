@@ -279,11 +279,13 @@
   max-width: 820px;
   margin: 0 auto 8px;
   padding: 6px 12px;
-  border: 1px solid var(--color-warning);
+  border: 1px solid var(--color-separator);
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
 }
 .composer-banner.hidden {
   display: none;
@@ -664,7 +666,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Size the icon span, not the SVG inside it: `.icon` is a fixed 16px flex box
+/* Size the icon span, not the SVG inside it: `.icon` is a sized flex box
    whose SVG fills it, so shrinking only the SVG leaves it parked at the box's
    top edge instead of on the text's centre line. */
 .composer-git-glyph {
@@ -823,6 +825,9 @@
   flex: none;
   color: var(--color-text-muted);
 }
+.composer-model-glyph {
+  --icon-size: var(--icon-md);
+}
 .composer-model-glyph,
 .composer-model-label {
   display: inline-flex;
@@ -866,11 +871,12 @@
 }
 
 .icon-button {
+  --icon-button-size: calc(var(--font-size-base) * 30 / 14);
   display: grid;
   place-items: center;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
+  width: var(--icon-button-size);
+  min-width: var(--icon-button-size);
+  height: var(--icon-button-size);
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -885,9 +891,7 @@
 }
 
 .icon-button.icon-button-compact {
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
+  --icon-button-size: calc(var(--font-size-base) * 24 / 14);
   border-radius: var(--radius-sm);
 }
 
@@ -1311,4 +1315,50 @@
 
 .shell-command-state {
   color: var(--color-text-muted);
+}
+
+/* The Approve for me switch. Same box as `.composer-model` and
+   `.composer-worktree`, so the toolbar chips sit at one height; the shield
+   and its label, highlighted while on. */
+.composer-auto-review {
+  --icon-size: var(--icon-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  height: 30px;
+  /* Shrinks like `.composer-model` in a narrow chat pane: the label clips
+     rather than pushing the toolbar past the composer. */
+  max-width: 220px;
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--color-control-surface);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.composer-auto-review-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-auto-review:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.composer-auto-review:not(:disabled):hover {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+}
+.composer-auto-review.on {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
 }

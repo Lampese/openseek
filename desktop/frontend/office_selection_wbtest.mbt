@@ -22,8 +22,7 @@ fn office_selection_model(
   }
   let path = model.test_file("report.docx")
   let model = {
-    ..model,
-    dock: @dock.open_file(model.dock, path),
+    ..model.with_dock_state(@dock.open_file(model.dock_state(), path)),
     right_panel_open: true,
   }
   let ctx = file_ctx(model)
@@ -193,7 +192,10 @@ test "cancel and stale Office confirmation leave the composer unchanged" {
   // Identical text in another owner still cannot approve this owner's preview.
   let previous_owner = {
     ..current,
-    owner: { ..current.owner, session: "previous", },
+    owner: @interop.Host({
+      ..current.owner.host().unwrap(),
+      session: "previous",
+    }),
   }
   let (_, unchanged) = update(
     test_dispatch(),
@@ -209,7 +211,10 @@ test "cancel and stale Office confirmation leave the composer unchanged" {
   assert_true(cancelled.file_panel.office_selection is None)
   assert_true(cancelled.file_panel.office_selection_comment is None)
   assert_true(cancelled.active_conversation().unwrap().mentions.is_empty())
-  let other = { ..ctx, owner: { ..ctx.owner, session: "other", }, }
+  let other = {
+    ..ctx,
+    owner: @interop.Host({ ..ctx.owner.host().unwrap(), session: "other", }),
+  }
   let (_, stale) = update(
     test_dispatch(),
     root_office_selection(other, path, "Late passage"),

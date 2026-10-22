@@ -14,7 +14,7 @@ import {
 // Values
 pub fn panel(locale? : @i18n.Locale, State, @cmd.Emit[Msg]) -> @html.Html
 
-pub fn reconcile(@cmd.Emit[Msg], State, Owner?, Bool) -> (@cmd.Cmd, State)
+pub fn reconcile(@cmd.Emit[Msg], State, Owner?, Watch) -> (@cmd.Cmd, State)
 
 pub fn subscriptions(State, @cmd.Emit[Msg]) -> @sub.Sub
 
@@ -32,9 +32,9 @@ pub(all) enum Msg {
   Pause
   Reload
   Stop
-  Listed(Int, Int, Result[@protocol.JobsListReply, String])
-  Read(Int, Int, Result[@protocol.JobReadReply, String])
-  Stopped(Int, (String, String), Result[@protocol.JobStopReply, String])
+  Listed(Int32, Int32, Result[@protocol.JobsListReply, String])
+  Read(Int32, Int32, Result[@protocol.JobReadReply, String])
+  Stopped(Int32, (String, String), Result[@protocol.JobStopReply, String])
   OpenSession(String)
 }
 
@@ -47,22 +47,22 @@ pub fn Owner::not_equal(Self, Self) -> Bool
 
 pub(all) struct State {
   owner : Owner?
-  active : Bool
-  epoch : Int
+  watch : Watch
+  epoch : Int32
   jobs : Array[@protocol.JobView]
   history_expanded : Bool
   selected : (String, String)?
   listing : Bool
-  next_offset : Int?
+  next_offset : Int32?
   error : String?
   warnings : Array[String]
   text : String
   cursor : Int64?
   reading : Bool
-  read_serial : Int
+  read_serial : Int32
   reading_state : @openseek_protocol.JobState?
   eof_state : @openseek_protocol.JobState?
-  read_budget : Int
+  read_budget : Int32
   catching_up : Bool
   reload_pending : Bool
   manual_read : Bool
@@ -75,6 +75,14 @@ pub(all) struct State {
 pub fn State::empty() -> Self
 pub fn State::equal(Self, Self) -> Bool
 pub fn State::not_equal(Self, Self) -> Bool
+
+pub(all) enum Watch {
+  Unwatched
+  Summary
+  Panel
+} derive(Eq)
+pub fn Watch::equal(Self, Self) -> Bool
+pub fn Watch::not_equal(Self, Self) -> Bool
 
 // Type aliases
 

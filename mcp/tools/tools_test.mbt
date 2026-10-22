@@ -1,5 +1,5 @@
-// Bridge tests: an in-process MCP server (over a queue transport) whose tools
-// are bridged into agent tools and dispatched.
+// Catalog tests: an in-process MCP server (over a queue transport) whose tools
+// are discovered and called.
 
 ///|
 struct FakeTransport {
@@ -56,8 +56,23 @@ fn server_reply(request : Json) -> Json? {
                 "type": "object",
                 "properties": { "text": { "type": "string" } },
               },
+              "outputSchema": {
+                "type": "object",
+                "properties": { "echo": { "type": "string" } },
+              },
             },
           ],
+        }),
+      )
+    {
+      "method": "tools/call",
+      "params": { "arguments": { "structured": structured, .. }, .. },
+      ..
+    } =>
+      Some(
+        ok(request, {
+          "content": [{ "type": "text", "text": "status: ok" }],
+          "structuredContent": structured,
         }),
       )
     { "method": "tools/call", .. } => {
@@ -76,17 +91,42 @@ fn server_reply(request : Json) -> Json? {
 }
 
 ///|
+/// `server_reply`, except that every `tools/call` answers with a caption, a PNG
+/// image, and an SVG image the model cannot receive.
+fn image_reply(request : Json) -> Json? {
+  match request {
+    { "method": "tools/call", .. } =>
+      Some(
+        ok(request, {
+          "content": [
+            { "type": "text", "text": "a screenshot" },
+            { "type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png" },
+            { "type": "image", "data": "PHN2Zy8+", "mimeType": "image/svg+xml" },
+          ],
+        }),
+      )
+    _ => server_reply(request)
+  }
+}
+
+///|
 fn[X] wire(
   group : @async.TaskGroup[X],
   transport : FakeTransport,
   rpc : @jsonrpc.Client,
+  reply? : (Json) -> Json?,
 ) -> Unit {
   group.spawn_bg(no_wait=true, allow_failure=true, () => rpc.run_message_pump())
   group.spawn_bg(no_wait=true, allow_failure=true, () => rpc.run_writer())
   group.spawn_bg(no_wait=true, allow_failure=true, () => {
     for ;; {
       let request = transport.outbound.get()
-      if server_reply(request) is Some(response) {
+      let response = if reply is Some(reply) {
+        reply(request)
+      } else {
+        server_reply(request)
+      }
+      if response is Some(response) {
         transport.inbound.put(response)
       }
     }
@@ -99,38 +139,29 @@ fn new_transport() -> FakeTransport {
 }
 
 ///|
-async test "tools_for_client bridges tools with namespaced names and schemas" {
+async test "discover keeps each tool under its own name with its schemas" {
   @async.with_task_group(group => {
     let transport = new_transport()
     let rpc = @jsonrpc.Client(transport)
     wire(group, transport, rpc)
-    let client = @mcp.McpClient(rpc)
-    let tools = @tools.tools_for_client("srv", client)
+    let tools = @tools.discover("srv", McpClient(rpc))
     assert_eq(tools.length(), 1)
-    assert_eq(tools[0].name, "mcp__srv__echo")
+    assert_eq(tools[0].name, "echo")
     assert_eq(tools[0].description, "Echoes")
-    let JsonSchema(schema) = tools[0].schema
-    assert_true(schema is { "type": "object", .. })
-    // The control flag is a built-in-only privilege: the ceiling salvage
-    // executes control-registered calls sight-unseen, so a server-supplied
-    // definition must never carry it.
-    assert_false(tools[0].is_control())
-    assert_false(tools[0].is_concurrent_safe())
-    assert_true(tools[0].is_program_callable())
+    assert_true(tools[0].input_schema is { "type": "object", .. })
+    assert_true(
+      tools[0].output_schema is Some({ "properties": { "echo": _, .. }, .. }),
+    )
   })
 }
 
 ///|
-async test "a bridged tool proxies tools/call and returns the result" {
+async test "call_tool proxies tools/call and returns the result" {
   @async.with_task_group(group => {
     let transport = new_transport()
     let rpc = @jsonrpc.Client(transport)
     wire(group, transport, rpc)
-    let client = @mcp.McpClient(rpc)
-    let tools = @tools.tools_for_client("srv", client)
-    guard tools[0].execute is Async(exec) else {
-      fail("expected an async executor")
-    }
+    let exec = args => @tools.call_tool(McpClient(rpc), "echo", args)
     guard exec({ "text": "hi" }) is Respond(output) else {
       fail("expected a respond action")
     }
@@ -141,87 +172,105 @@ async test "a bridged tool proxies tools/call and returns the result" {
 }
 
 ///|
-test "tool_name sanitizes provider-hostile characters and caps the length" {
-  assert_eq(
-    @tools.tool_name("my.server", "read.file"),
-    "mcp__my-server__read-file",
-  )
-  assert_eq(@tools.tool_name("a b", "c/d"), "mcp__a-b__c-d")
-  let long = @tools.tool_name(
-    "server", "an-extremely-long-tool-name-that-goes-on-and-on-and-on-and-on-and-on",
-  )
-  assert_true(long.length() <= 64)
-  assert_true(long.has_prefix("mcp__server__"))
+async test "a structured result reaches scripts as data beside its text" {
+  @async.with_task_group(group => {
+    let transport = new_transport()
+    let rpc = @jsonrpc.Client(transport)
+    wire(group, transport, rpc)
+    let exec = args => @tools.call_tool(McpClient(rpc), "echo", args)
+    let structured : Json = { "repo": "alpha", "open": 7 }
+    guard exec({ "structured": structured }) is Respond(output) else {
+      fail("expected a respond action")
+    }
+    assert_eq(output.data, Some(structured))
+    assert_true(output.content.contains("status: ok"))
+    assert_true(output.content.contains(structured.stringify()))
+  })
 }
 
 ///|
-/// Two tools whose sanitized names collide must both stay callable (the second
-/// under a suffixed name), not silently drop one.
-async test "build suffixes tools whose sanitized names collide" {
+async test "a large structured result keeps the text whole and leaves data out" {
   @async.with_task_group(group => {
-    let scope = @agent_runtime.AgentTaskScope(group)
-    let script =
-      #|read _
-      #|printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}\n'
-      #|read _
-      #|read _
-      #|printf '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"a.b"},{"name":"a-b"}]}}\n'
-      #|sleep 5
-    let servers = [
-      @config.Stdio(name="s", command="sh", args=["-c", script], env=Map([])),
-    ]
-    let tools = @tools.build(
-      scope,
-      servers,
-      client_name="openseek",
-      client_version="0.1",
+    let transport = new_transport()
+    let rpc = @jsonrpc.Client(transport)
+    wire(group, transport, rpc)
+    let exec = args => @tools.call_tool(McpClient(rpc), "echo", args)
+    // Text and data both fit alone, not together: the text, which a direct
+    // call's model reads, wins.
+    let structured : Json = { "blob": "x".repeat(40000) }
+    guard exec({ "structured": structured }) is Respond(output) else {
+      fail("expected a respond action")
+    }
+    assert_true(output.data is None)
+    assert_true(output.content.contains(structured.stringify()))
+    assert_false(output.content.contains("truncated=true"))
+  })
+}
+
+///|
+async test "a structured result over the reply budget stays text only" {
+  @async.with_task_group(group => {
+    let transport = new_transport()
+    let rpc = @jsonrpc.Client(transport)
+    wire(group, transport, rpc)
+    let exec = args => @tools.call_tool(McpClient(rpc), "echo", args)
+    let structured : Json = { "blob": "x".repeat(70000) }
+    guard exec({ "structured": structured }) is Respond(output) else {
+      fail("expected a respond action")
+    }
+    assert_true(output.data is None)
+    assert_true(output.content.contains("truncated=true"))
+    assert_true(Json(output.content).stringify().length() < 65536)
+  })
+}
+
+///|
+async test "call_tool returns image content as image input" {
+  @async.with_task_group(group => {
+    let transport = new_transport()
+    let rpc = @jsonrpc.Client(transport)
+    wire(group, transport, rpc, reply=image_reply)
+    let exec = args => @tools.call_tool(McpClient(rpc), "echo", args)
+    guard exec({}) is Respond(output) else { fail("expected a respond action") }
+    assert_false(output.is_error)
+    assert_eq(
+      output.content,
+      "a screenshot\n[image image/svg+xml not attached: expected PNG, JPEG, GIF, or WebP image bytes]",
     )
-    if tools.length() == 0 {
-      // Spawning is forbidden in this sandbox: skip.
-      println("skipped: cannot spawn sh")
-      return
-    }
-    let names = [ for tool in tools => tool.name ]
-    assert_eq(names, ["mcp__s__a-b", "mcp__s__a-b-2"])
-    // The control invariant must hold through build_grouped's RE-construction
-    // too (it rebuilds every bridged definition under the uniquified name) —
-    // pinning only the inner bridge would let a flag slip in at the re-wrap.
-    for tool in tools {
-      assert_false(tool.is_control())
-      assert_false(tool.is_concurrent_safe())
-      assert_true(
-        @agent_tool.Tools(tools).program_tools().find(tool.name) is Some(_),
-      )
-    }
+    assert_eq(output.images.length(), 1)
+    assert_eq(output.images[0].media_type, "image/png")
+    assert_eq(output.images[0].bytes, b"\x89PNG\r\n\x1a\n")
   })
 }
 
 ///|
 /// A server that handshakes but never answers tools/list is skipped at the
 /// discovery deadline instead of hanging engine startup.
-async test "build times out discovery on a wedged server" {
+async test "connect times out discovery on a wedged server" {
   @async.with_task_group(group => {
     let scope = @agent_runtime.AgentTaskScope(group)
     let script =
       #|read _
-      #|printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}\n'
+      #|printf '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"legacy"}}\n'
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25"}}\n'
       #|sleep 30
     let servers = [
       @config.Stdio(name="w", command="sh", args=["-c", script], env=Map([])),
     ]
-    let tools = @tools.build(
+    let entries = @tools.connect(
       scope,
       servers,
       client_name="openseek",
       client_version="0.1",
       discovery_timeout_ms=800,
     )
-    assert_eq(tools.length(), 0)
+    assert_true(entries is [{ connection: Failed(_), tools: [], .. }])
   })
 }
 
 ///|
-async test "build skips a server that cannot start" {
+async test "connect records a server that cannot start" {
   @async.with_task_group(group => {
     let scope = @agent_runtime.AgentTaskScope(group)
     let servers = [
@@ -232,13 +281,18 @@ async test "build skips a server that cannot start" {
         env=Map([]),
       ),
     ]
-    let tools = @tools.build(
+    let entries = @tools.connect(
       scope,
       servers,
       client_name="openseek",
       client_version="0.1",
     )
-    assert_eq(tools.length(), 0)
+    assert_true(entries is [{ connection: Failed(_), tools: [], .. }])
+    guard entries[0].call("anything", {}) is Respond(output) else {
+      fail("expected a respond action")
+    }
+    assert_true(output.is_error)
+    assert_true(output.content.contains("`bad` is unavailable"))
   })
 }
 
@@ -257,10 +311,11 @@ async fn respond_json(
 }
 
 ///|
-/// End-to-end over HTTP: `build` connects a configured Http server (a local
-/// mock MCP endpoint), discovers its tool, and the bridged executor proxies a
-/// live tools/call through the Streamable HTTP transport.
-async test "build bridges and dispatches MCP tools directly and through PTC" {
+/// End-to-end over HTTP: `connect` connects a configured Http server (a local
+/// mock MCP endpoint), discovers its tool, and a call is proxied as a live
+/// tools/call through the Streamable HTTP transport, directly and through the
+/// MCP host.
+async test "connect reaches an HTTP server's tools directly and through the MCP host" {
   @async.with_task_group() <| group => {
     let server = @http.Server(@socket.Addr::parse("127.0.0.1:0")) catch {
       error if "\{error}".contains("Operation not permitted") => {
@@ -278,6 +333,8 @@ async test "build bridges and dispatches MCP tools directly and through PTC" {
             _ => null
           }
           match message {
+            { "method": "server/discover", .. } =>
+              conn.send_response(400, "Bad Request")
             { "method": "initialize", .. } =>
               respond_json(conn, id, { "protocolVersion": "2025-11-25" })
             { "method": "tools/list", .. } =>
@@ -287,6 +344,16 @@ async test "build bridges and dispatches MCP tools directly and through PTC" {
                     "name": "ping",
                     "description": "Ping",
                     "inputSchema": { "type": "object" },
+                  },
+                  // Oversized in every server-supplied part.
+                  {
+                    "name": "big",
+                    "description": "d".repeat(2000),
+                    "inputSchema": [1, 2],
+                    "outputSchema": {
+                      "type": "object",
+                      "properties": { "x": { "enum": ["y".repeat(20000)] } },
+                    },
                   },
                 ],
               })
@@ -321,73 +388,205 @@ async test "build bridges and dispatches MCP tools directly and through PTC" {
         headers=Map([]),
       ),
     ]
-    let tools = @tools.build(
+    let entries = @tools.connect(
       scope,
       servers,
       client_name="openseek",
       client_version="0.1",
     )
-    assert_eq(tools.length(), 1)
-    assert_eq(tools[0].name, "mcp__remote__ping")
-    // Full production path (build -> build_grouped re-wrap): still no control.
-    assert_false(tools[0].is_control())
-    guard tools[0].execute is Async(exec) else {
-      fail("expected an async executor")
+    guard entries is [remote] else { fail("expected one entry") }
+    assert_eq([ for tool in remote.tools => tool.name ], ["ping", "big"])
+    // The catalog caps what the server supplied, so any item fits a reply.
+    guard @tools.catalog_items(entries)
+      is [
+        { "server": "remote", .. } as server_item,
+        { "server": "remote", "tool": { "name": "ping", .. }, .. },
+        { "server": "remote", "tool": big, .. },
+      ] else {
+      fail("expected the server, then its tools")
     }
-    guard exec(Json::empty_object()) is Respond(output) else {
+    assert_false(server_item is { "error": _, .. })
+    let open : Json = { "type": "object" }
+    guard big
+      is { "description": String(description), "input_schema": input, .. } else {
+      fail("expected a tool record")
+    }
+    assert_eq(description.char_length(), 1025)
+    assert_eq(input, open)
+    assert_false(big is { "output_schema": _, .. })
+    guard remote.call("ping", Json::empty_object()) is Respond(output) else {
       fail("expected a respond action")
     }
     assert_false(output.is_error)
     assert_eq(output.content, "pong")
-    // Exercise the real PTC listener with definitions from build_grouped,
-    // including its name/metadata re-wrap and the shared execution gate.
-    let file_state = @agent_tool.FileStateMap()
-    let service = @ptc.Service::start(
+    guard remote.call("pong", Json::empty_object()) is Respond(missing) else {
+      fail("expected a respond action")
+    }
+    assert_true(missing.is_error)
+    assert_true(missing.content.contains("has no tool `pong`"))
+    // Through the real MCP host: a call to the server, and to one that is not
+    // configured.
+    let host = @mcphost.Service::start(
       group,
-      Tools(tools.map(tool => file_state.serialize(tool))),
-    )
-    let program = service.register()
-    defer program.close()
-    guard @json.parse(program.env()["OPENSEEK_PTC"])
-      is { "url": String(url), "token": String(token), .. } else {
-      fail("missing PTC capability")
-    }
-    for should_fail in [false, true] {
-      let (response, body) = @http.post(
-        url,
-        (
-          {
-            "version": 1,
-            "name": "mcp__remote__ping",
-            "arguments": { "fail": should_fail },
-          } : Json),
-        headers={ "Authorization": "Bearer \{token}" },
-      )
-      assert_eq(response.code, 200)
-      guard body.json()
-        is { "content": String(content), "is_error": is_error, .. } else {
-        fail("expected a PTC tool result")
-      }
-      assert_eq(is_error, Json(should_fail))
-      assert_eq(content, if should_fail { "ping failed" } else { "pong" })
-    }
-    assert_true(
-      program.trace()
-      is {
-        "ptc_calls": [
-          {
-            "name": "mcp__remote__ping",
-            "result": { "is_error": false, .. },
-            ..
-          },
-          {
-            "name": "mcp__remote__ping",
-            "result": { "is_error": true, .. },
-            ..
-          },
-        ],
-        ..
+      call=(server, tool, arguments) => {
+        guard server == "remote" else {
+          return @agent_tool.respond("no MCP server `\{server}`", is_error=true)
+        }
+        remote.call(tool, arguments)
       },
+      items=() => @tools.catalog_items(entries),
     )
+    guard @json.parse(host.env()["OPENSEEK_MCP"])
+      is { "url": String(url), "token": String(token), .. } else {
+      fail("missing MCP host handoff")
+    }
+    let requests : Array[(Json, Json)] = [
+      (
+        {
+          "version": 1,
+          "call": { "server": "remote", "tool": "ping", "arguments": {} },
+        },
+        { "version": 1, "content": "pong", "is_error": false },
+      ),
+      (
+        {
+          "version": 1,
+          "call": {
+            "server": "remote",
+            "tool": "ping",
+            "arguments": { "fail": true },
+          },
+        },
+        { "version": 1, "content": "ping failed", "is_error": true },
+      ),
+      (
+        {
+          "version": 1,
+          "call": { "server": "other", "tool": "ping", "arguments": {} },
+        },
+        { "version": 1, "content": "no MCP server `other`", "is_error": true },
+      ),
+    ]
+    for pair in requests {
+      let (request, expected) = pair
+      let (response, body) = @http.post(url, request, headers={
+        "Authorization": "Bearer \{token}",
+      })
+      assert_eq(response.code, 200)
+      assert_eq(body.json(), expected)
+    }
   }
+}
+
+///|
+/// Beside the tools, `connect` keeps what connecting each server came to, and
+/// a live connection goes on saying whether it is still there.
+async test "connect keeps what each server came to, and a live one reports its loss" {
+  @async.with_task_group(group => {
+    let scope = @agent_runtime.AgentTaskScope(group)
+    // Offers one tool, then exits a moment later.
+    let brief =
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"legacy"}}\n'
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25"}}\n'
+      #|read _
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":3,"result":{"tools":[{"name":"ping"}]}}\n'
+      #|sleep 1
+    let empty =
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"legacy"}}\n'
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25"}}\n'
+      #|read _
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":3,"result":{"tools":[]}}\n'
+      #|sleep 5
+    let wedged =
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"legacy"}}\n'
+      #|read _
+      #|printf '{"jsonrpc":"2.0","id":2,"result":{"protocolVersion":"2025-11-25"}}\n'
+      #|sleep 30
+    fn sh(name : String, script : String) -> @config.McpServer {
+      Stdio(name~, command="sh", args=["-c", script], env=Map([]))
+    }
+
+    let entries = @tools.connect(
+      scope,
+      [
+        sh("brief", brief),
+        sh("empty", empty),
+        sh("wedged", wedged),
+        Stdio(
+          name="bad",
+          command="openseek-no-such-mcp-server-xyz",
+          args=[],
+          env=Map([]),
+        ),
+      ],
+      client_name="openseek",
+      client_version="0.1",
+      discovery_timeout_ms=800,
+    )
+    guard entries is [brief, empty, wedged, bad] else {
+      fail("expected one entry per configured server, in order")
+    }
+    if brief.connection is Failed(_) {
+      // Spawning is forbidden in this sandbox: skip.
+      println("skipped: cannot spawn sh")
+      return
+    }
+    guard brief.connection is Live(client) else {
+      fail("a server that offered a tool should be live")
+    }
+    assert_eq([ for tool in brief.tools => tool.name ], ["ping"])
+    assert_eq(brief.server.name(), "brief")
+    assert_true(empty.connection is NoTools)
+    assert_true(empty.tools.is_empty())
+    assert_true(wedged.connection is Failed("timed out listing its tools"))
+    assert_true(bad.connection is Failed(_))
+    assert_true(bad.tools.is_empty())
+    // The server exits on its own, and the client says so without being
+    // asked: that is what lets an engine report the loss when it happens.
+    // Install, then read — a connection already gone never runs the handler.
+    let lost : @async.Queue[Unit] = Queue(kind=Unbounded)
+    client.set_close_handler(() => ignore(lost.try_put(()) catch { _ => false }))
+    if !client.is_closed() {
+      @async.with_timeout(10000, () => lost.get())
+    }
+    assert_true(client.is_closed())
+  })
+}
+
+///|
+/// A configured server whose spawn fails, as a catalog entry.
+async fn[X] unavailable(
+  scope : @agent_runtime.AgentTaskScope[X],
+) -> Array[@tools.ServerEntry] {
+  @tools.connect(
+    scope,
+    [
+      Stdio(
+        name="bad",
+        command="openseek-no-such-mcp-server-xyz",
+        args=[],
+        env=Map([]),
+      ),
+    ],
+    client_name="openseek",
+    client_version="0.1",
+  )
+}
+
+///|
+async test "the catalog lists an unavailable server with its error and no tools" {
+  @async.with_task_group(group => {
+    let items = @tools.catalog_items(unavailable(AgentTaskScope(group)))
+    assert_true(
+      items is [{ "server": "bad", "error": String(_), .. } as item] &&
+      !(item is { "tool": _, .. }),
+    )
+  })
 }

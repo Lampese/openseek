@@ -15,6 +15,13 @@ app-lifetime owners.
 
 ## Shape
 
+The endpoint supports stateless MCP `2026-07-28` requests as well as legacy
+initialization-based clients. Each modern request carries its version and
+capabilities in `params._meta`; no prior handshake or MCP session is required.
+`stateless.mbt` validates the required HTTP headers against the body before
+dispatch. `server/discover` reports the modern capabilities. Legacy `initialize`
+continues to negotiate `2025-11-25` and earlier supported revisions.
+
 - `tool.mbt` — the contract a contributing package implements: `Tool` (name,
   description, input schema, handler) and `ToolCall` (the calling conversation
   and the arguments). A handler returns the text the agent reads; raising makes
@@ -163,3 +170,50 @@ approval with the destination and message.
 
 These tools are offered to the OpenSeek engine; Codex-backed chats are not
 message targets for this implementation.
+
+## Session artifacts
+
+The backend adds two tools to hosts that provide this server:
+
+- `artifacts_list({})` returns the current session's saved `{ "artifacts": [...] }`.
+- `artifacts_attach({ "type": "pull_request", "url": "https://github.com/example/project/pull/42" })`
+  appends one artifact and returns the saved list. Repeating an attachment is
+  idempotent; existing entries remain. Agents have no detach, clear, or list
+  replacement tool. Removal is available to authenticated frontend clients.
+
+The stored and returned list has this shape:
+
+```json
+{
+  "artifacts": [
+    { "type": "pull_request", "url": "https://github.com/example/project/pull/42" },
+    { "type": "branch", "url": "https://github.com/example/project/tree/feature/example" }
+  ]
+}
+```
+
+Each entry requires `type` (`pull_request` or `branch`) and `url`. The host
+trims surrounding whitespace and trailing slashes and deduplicates by the
+pair `(type, normalized URL)`, preserving insertion order. It checks basic
+HTTPS URL syntax without querying the remote or changing the checkout.
+Malformed arguments leave the list unchanged. The session comes from the
+MCP grant, never from a tool argument. Unpublished local branches cannot be
+attached by name.
+
+Attaching requires an existing live session record; a stale grant cannot
+recreate an archived or deleted session. Listing a session with no live
+record or no sidecar returns an empty list, while read/parse failures remain
+tool errors. Each attach reads and appends under the shared lock, so
+concurrent attachments retain both additions without a read-then-write step.
+
+The list lives beside the session transcript in `artifacts.json`, and moves
+with that session when archived/restored/deleted. Artifacts are explicit
+associations; automatic checkout facts are not written into this list.
+The [Desktop session protocol](../../../docs/remote-protocol.md#session-artifacts)
+documents frontend list/remove commands and the `session.artifacts_changed`
+notification emitted after a save. Removal targets an exact type and URL
+against the latest list, preserving unrelated concurrent additions.
+
+These tools belong to the `artifacts` group. If the configuration filters
+groups with `X-SeekMoon-Tool-Groups`, include `artifacts` (for example
+`browser,artifacts`).

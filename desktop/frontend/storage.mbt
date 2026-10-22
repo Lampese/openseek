@@ -29,6 +29,7 @@ fn load_saved_settings(
           fps_overlay_enabled=load_setting(FpsOverlayStorageKey) == Some("true"),
           model=load_setting(ModelStorageKey),
           conversation_models=load_setting(ConversationModelsStorageKey),
+          conversation_approvals=load_setting(ConversationApprovalsStorageKey),
           agent=load_setting(AgentStorageKey),
           codex_model=load_setting(CodexModelStorageKey),
           codex_effort=load_setting(CodexReasoningEffortStorageKey),
@@ -40,6 +41,9 @@ fn load_saved_settings(
     if load_setting(SidebarModeStorageKey).bind(parse_sidebar_mode)
       is Some(mode) {
       scheduler.add(dispatch(SidebarModeLoaded(mode)))
+    }
+    if load_setting(OverviewStorageKey) is Some(stored) {
+      scheduler.add(dispatch(OverviewLoaded(stored == "true")))
     }
   })
 }
@@ -149,6 +153,40 @@ fn save_conversation_model(key : String, model : EngineModel) -> @cmd.Cmd {
 }
 
 ///|
+/// Persist one conversation's approval choice, folded into the stored list
+/// for the same reason `save_conversation_model` folds: another tab's rows
+/// survive.
+fn save_conversation_approval(
+  key : String,
+  approval : @protocol.OpenSeekApproval,
+) -> @cmd.Cmd {
+  @cmd.custom_cmd(_ => {
+    let stored = load_setting(ConversationApprovalsStorageKey)
+      .map(parse_conversation_approvals)
+      .unwrap_or([])
+    let rows = approvals_with(stored, key, approval)
+    save_setting(ConversationApprovalsStorageKey, Json(rows).stringify())
+  })
+}
+
+///|
+/// Read the reviewed list back; anything that will not parse degrades to
+/// remembering nothing, which is every conversation asking.
+fn parse_conversation_approvals(text : String) -> Array[String] {
+  let keys : Array[String] = []
+  guard !text.is_blank() else { return keys }
+  let json = @json.parse(text) catch { _ => return keys }
+  guard json is Array(rows) else { return keys }
+  for row in rows {
+    guard keys.length() < ConversationModelsLimit else { break }
+    if row is String(key) && !key.is_empty() && !keys.contains(key) {
+      keys.push(key)
+    }
+  }
+  keys
+}
+
+///|
 /// Read them back. Storage is an input boundary shared with older and newer
 /// builds: a store that will not parse degrades to remembering nothing, and a
 /// single malformed row is skipped rather than discarding the rest.
@@ -196,6 +234,13 @@ fn load_setting(storage_key : String) -> String? {
 ///|
 fn save_setting(storage_key : String, value : String) -> Unit {
   @base_browser.local_storage_set(storage_key, value) |> ignore
+}
+
+///|
+/// Like the detailed-transcript preference, the overview's visibility is local
+/// to this browser profile.
+fn save_overview_open(open : Bool) -> @cmd.Cmd {
+  @cmd.custom_cmd(_ => save_setting(OverviewStorageKey, open.to_string()))
 }
 
 ///|

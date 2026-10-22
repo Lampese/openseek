@@ -150,9 +150,9 @@ Options:
   --system-prompt-file <system-prompt-file>                    Read the complete system prompt from this file instead of the built-in prompt. [env: OPENSEEK_SYSTEM_PROMPT_FILE] [default: ]
   --system-prompt-addendum-file <system-prompt-addendum-file>  Append this file to the selected system prompt for prompt experiments. [env: OPENSEEK_SYSTEM_PROMPT_ADDENDUM_FILE] [default: ]
   --global-skills-dir <global-skills-dir>                      User-level skills directory advertised alongside workspace skills; empty means $HOME/.openseek/skills, or %USERPROFILE%/.openseek/skills on Windows. [env: OPENSEEK_GLOBAL_SKILLS_DIR] [default: ]
-  --mcp-config <mcp-config>                                    Path to a JSON file of MCP servers ({"mcpServers": {"<name>": {"command", "args", "env"} | {"url", "headers"}}}); each server's tools (stdio subprocess or Streamable HTTP) are exposed to the agent, namespaced mcp__<server>__<tool>. Repeat to merge files in order; later servers with the same name replace earlier ones. Empty values are ignored; an empty value alone disables MCP. [env: OPENSEEK_MCP_CONFIG] [default: ]
+  --mcp-config <mcp-config>                                    Path to a JSON file of MCP servers ({"mcpServers": {"<name>": {"command", "args", "env"} | {"url", "headers"}}}); each server's tools (stdio subprocess or Streamable HTTP) are offered to the agent's scripts through the tools SDK's mcp package. Repeat to merge files in order; later servers with the same name replace earlier ones. Empty values are ignored; an empty value alone disables MCP. [env: OPENSEEK_MCP_CONFIG] [default: ]
   --review-deadline <review-deadline>                          Wall-clock deadline in milliseconds for one --review-gate audit; default 900000 (15 minutes).
-  --approval <approval>                                        What happens when a tool needs permission (sandbox escalation or file deletion): never (default; refuse without asking), ask (prompt the controller over the command stream and wait), always (grant without asking). [env: OPENSEEK_APPROVAL] [default: never]
+  --approval <approval>                                        What happens when a tool needs permission (sandbox escalation or file deletion): never (default; refuse without asking), ask (prompt the controller over the command stream and wait), always (grant without asking), review (a reviewer subagent decides against the user's own messages; what it cannot settle goes to the controller under serve and is refused under run). [env: OPENSEEK_APPROVAL] [default: never]
   --result-file <result-file>                                  Write how the run ended (status, answer, session, token usage) to this file as JSON once it is over; see docs/run-result.md. A missing file means the run did not finish.
   --result-root <result-root>                                  The directory --result-file must be written in: the result must be a new file inside it. A launcher pins it to decide where a run it starts may write.
   --kind <kind>                                                Run a preset instead of the general agent: explore, review, worker, pattern-repair, or echo (general selects the general agent). Needs --input-format json; the request's input is the preset's input.
@@ -167,7 +167,7 @@ deadline no one was ever going to beat.
 
 ```mooncram
 $ env DEEPSEEK=test-key openseek.exe run --approval ask "probe" 2>&1
-error: --approval ask needs a controller to ask: this command reads no commands, so use never (refuse escalation) or always (grant it unasked)
+error: --approval ask needs a controller to ask: this command reads no commands, so use never (refuse escalation), always (grant it unasked), or review (a reviewer decides; what it cannot settle is refused)
 [1]
 ```
 
@@ -179,7 +179,7 @@ must hand it `@env.get_env_vars()` — and this case fails if it ever stops.
 
 ```mooncram
 $ env DEEPSEEK=test-key OPENSEEK_APPROVAL=ask openseek.exe run "probe" 2>&1
-error: --approval ask needs a controller to ask: this command reads no commands, so use never (refuse escalation) or always (grant it unasked)
+error: --approval ask needs a controller to ask: this command reads no commands, so use never (refuse escalation), always (grant it unasked), or review (a reviewer decides; what it cannot settle is refused)
 [1]
 ```
 
@@ -304,7 +304,9 @@ compacted session demo events 1..2; last_sequence=3
 which `--session` then resumes. The copy ends where the last finished turn
 ended: the prompt that opened a turn still in flight stays with the original.
 The fork's system prompt is built for the fork: it names the fork's own
-scratch directory, where the original's prompt named the original's.
+scratch directory, where the original's prompt named the original's. A
+`[session forked]` runtime notice follows the copied history, telling the
+model that the files were not copied with it.
 `--through` stops at the end of an earlier turn and must name a turn's
 terminal event; an id that already exists is never replaced.
 
@@ -329,6 +331,7 @@ $ sh <<'EOF'
 retry
 user
 terminal
+runtime_notice
 sessions/retry/scratch
 error: session retry already exists
 exit-non-zero
@@ -476,6 +479,28 @@ Tagged steering keeps its submission id in the rejection receipt:
 ```mooncram
 $ printf '{"command":"steer","text":"too late","submission_id":"late-steer"}\n' | env DEEPSEEK=test-key openseek.exe serve 2>/dev/null | grep '"event":"steer_dropped"'
 {"event":"steer_dropped","content":"too late","submission_id":"late-steer"}
+```
+
+The engine reports what it holds of its MCP servers without being asked: an
+`mcp_status` event once connecting is over, and another each time that state
+changes. Every one carries the whole state, so a controller keeps the latest.
+With nothing configured there are no configs and no servers:
+
+```mooncram
+$ env DEEPSEEK=test-key openseek.exe serve </dev/null 2>/dev/null | grep '"event":"mcp_status"'
+{"event":"mcp_status","status":{"configs":[],"servers":[]}}
+```
+
+A server that cannot start is listed with its failure rather than left out (the `grep -o` stops before the error text, which
+is the operating system's):
+
+```mooncram
+$ sh <<'EOF'
+> printf '{"mcpServers":{"notes":{"command":"openseek-no-such-mcp-server"}}}' > mcp.json
+> env DEEPSEEK=test-key openseek.exe serve --mcp-config mcp.json </dev/null 2>/dev/null | grep -o '"event":"mcp_status".*"state":"failed"'
+> rm -f mcp.json
+> EOF
+"event":"mcp_status","status":{"configs":[{"path":"mcp.json","state":"loaded"}],"servers":[{"name":"notes","transport":"stdio","target":"openseek-no-such-mcp-server","state":"failed"
 ```
 
 `serve` takes no positional; a stray task is rejected by the parser before

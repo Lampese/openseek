@@ -52,6 +52,7 @@ pub(all) struct InstalledItem {
   description : String
   source : String
   registry : @protocol.RegistrySkillIdentity?
+  enabled : Bool
 } derive(Eq)
 pub fn InstalledItem::equal(Self, Self) -> Bool
 pub fn InstalledItem::not_equal(Self, Self) -> Bool
@@ -76,11 +77,12 @@ pub(all) enum Msg {
   Install(MarketItem)
   Uninstall(InstalledItem)
   Update(MarketItem)
+  ToggleEnabled(String)
   ActionDone(channel~ : @interop.ChannelId, action~ : PendingSkillAction, error~ : String?)
   PreviewMarket(MarketItem)
   PreviewInstalled(InstalledItem)
-  PreviewLoaded(channel~ : @interop.ChannelId, request~ : Int, target~ : PreviewTarget, content~ : String)
-  PreviewFailed(channel~ : @interop.ChannelId, request~ : Int, target~ : PreviewTarget, message~ : String)
+  PreviewLoaded(channel~ : @interop.ChannelId, request~ : Int32, target~ : PreviewTarget, content~ : String)
+  PreviewFailed(channel~ : @interop.ChannelId, request~ : Int32, target~ : PreviewTarget, message~ : String)
   BackToList
   SkillsScrolled(Double)
 }
@@ -95,6 +97,7 @@ pub(all) enum PendingSkillAction {
   Installing(source~ : String)
   Uninstalling(source~ : String, id~ : String)
   Updating(source~ : String)
+  SettingEnabled(source~ : String, id~ : String, enabled~ : Bool)
 } derive(Eq)
 pub fn PendingSkillAction::equal(Self, Self) -> Bool
 pub fn PendingSkillAction::not_equal(Self, Self) -> Bool

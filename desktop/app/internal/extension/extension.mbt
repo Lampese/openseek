@@ -74,6 +74,13 @@ let workflow_entry : @proton_contract.Event[@protocol.WorkflowEntryPayload] = @c
 )
 
 ///|
+let session_artifacts_changed_event : @proton_contract.Event[
+  @protocol.SessionArtifactsChangedPayload,
+] = @commands.extension_contract.event(
+  @protocol.NotificationKind::SessionArtifactsChanged.wire_name(),
+)
+
+///|
 let session_changed_event : @proton_contract.Event[
   @protocol.SessionChangedPayload,
 ] = @commands.extension_contract.event(
@@ -226,6 +233,9 @@ priv enum BridgeControl {
   WindowClosed
   WindowChromeChanged
   SystemAppearanceChanged
+  SshConnect(@protocol.SshConnect)
+  SshDisconnect(@protocol.SshConnect)
+  SshRemove(String, @async.Queue[@protocol.SshReply])
 }
 
 ///|
@@ -233,6 +243,7 @@ priv enum BridgeControl {
 /// the shared catalog, or this window's own browser view event — which has
 /// a Proton descriptor but deliberately no place in the wire catalog.
 priv enum PageNotification {
+  Ssh(Json)
   Hub(@protocol.Notification)
   BrowserEvent(Json)
   WindowChromeChanged
@@ -252,6 +263,7 @@ async fn PageEventTarget::emit(
   // Matching the closed enum keeps each Proton descriptor paired with the
   // payload type that belongs to that event.
   match notification {
+    Ssh(payload) => self.events.emit(ssh_event, payload)
     Hub(UserQuestions(payload)) =>
       self.events.emit(user_questions_event, payload)
     Hub(AgentApprovals(payload)) => self.events.emit(approvals_event, payload)
@@ -274,6 +286,8 @@ async fn PageEventTarget::emit(
       self.events.emit(worktree_changed_event, payload)
     Hub(SettingsChanged(payload)) =>
       self.events.emit(settings_changed_event, payload)
+    Hub(SessionArtifactsChanged(payload)) =>
+      self.events.emit(session_artifacts_changed_event, payload)
     Hub(SkillsChanged) => self.events.emit(skills_changed_event, NoPayload)
     Hub(UpdateDownloadProgress(payload)) =>
       self.events.emit(update_progress_event, payload)
@@ -329,6 +343,8 @@ const BridgeInboxCapacity = 4096
 /// it messages and never retain resource-owning request tasks.
 struct DesktopBridgeActor {
   state : @api.ApiState
+  askpass : String?
+  routes : Map[String, @ssh.Connection]
   // The desktop page owns one filesystem watcher independently of every
   // remote WebSocket connection.
   host_connection : @host.HostConnection
@@ -340,9 +356,12 @@ struct DesktopBridgeActor {
 ///|
 pub fn DesktopBridgeActor::DesktopBridgeActor(
   state : @api.ApiState,
+  askpass~ : String? = None,
 ) -> DesktopBridgeActor {
   {
     state,
+    askpass,
+    routes: Map([]),
     host_connection: HostConnection(),
     inbox: Queue(kind=Blocking(BridgeInboxCapacity)),
   }
@@ -379,6 +398,7 @@ pub fn openseek_capability(
   state : @api.ApiState,
   bridge : DesktopBridgeActor,
   views : BrowserViews,
+  downloads~ : () -> String raise,
 ) -> @proton_extension.RendererCapability {
   let endpoints = @api.endpoints(
     state,
@@ -389,6 +409,51 @@ pub fn openseek_capability(
     },
   )
   let window_only = [
+    WindowEndpoint(@commands.cloud_file_download, (_, payload) => {
+      let directory = downloads() catch {
+        error => return Failed(message="Could not locate Downloads: \{error}")
+      }
+      download_cloud_file(
+        payload,
+        () => state.auth_store().account(),
+        directory,
+      )
+    }),
+    WindowEndpoint(@commands.ssh_profiles, (_, _) => @ssh.profiles()),
+    WindowEndpoint(@commands.ssh_projects_save, (_, snapshot) => {
+      @ssh.remember_projects(snapshot)
+      Acknowledged
+    }),
+    WindowEndpoint(@commands.ssh_save, (_, profile) => {
+      SshSuccess(@ssh.save(profile).to_json()) catch {
+        error => SshRefused("\{error}")
+      }
+    }),
+    WindowEndpoint(@commands.ssh_request, (_, request) => {
+      match bridge.routes.get(request.host_id) {
+        Some(route) => route.request(request)
+        None => SshUnsent("SSH host is not connected")
+      }
+    }),
+    WindowEndpoint(@commands.ssh_connect, (_, target) => {
+      bridge.inbox.put(Control(SshConnect(target)))
+      Acknowledged
+    }),
+    WindowEndpoint(@commands.ssh_auth_respond, (_, response) => {
+      match bridge.routes.get(response.host_id) {
+        Some(route) => route.respond(response)
+        None => SshUnsent("SSH authentication request has expired")
+      }
+    }),
+    WindowEndpoint(@commands.ssh_disconnect, (_, target) => {
+      bridge.inbox.put(Control(SshDisconnect(target)))
+      Acknowledged
+    }),
+    WindowEndpoint(@commands.ssh_remove, (_, target) => {
+      let reply = @async.Queue(kind=Blocking(1))
+      bridge.inbox.put(Control(SshRemove(target.id, reply)))
+      reply.get()
+    }),
     WindowEndpoint(@commands.host_open_path_preview, (_, payload) => {
       @host.open_path_preview(payload)
     }),
@@ -509,6 +574,8 @@ pub async fn DesktopBridgeActor::run(self : DesktopBridgeActor) -> Unit {
         },
       )
     })
+    let tasks : Map[String, @async.Task[Unit]] = Map([])
+    let mut epoch = 0
     let mut connected = false
     let mut target : PageEventTarget? = None
     let pending : Array[PageNotification] = []
@@ -516,10 +583,96 @@ pub async fn DesktopBridgeActor::run(self : DesktopBridgeActor) -> Unit {
       match self.inbox.get() {
         Control(control) =>
           match control {
+            SshConnect(request) => {
+              let attempt = request.attempt
+              if self.routes.get(request.id) is Some(route) && route.active() {
+                continue
+              }
+              // Profile I/O belongs to the actor: cancellation must not overtake
+              // a connect command that is still reading its configuration.
+              epoch += 1
+              let profile = try {
+                let profiles = @ssh.profiles()
+                guard profiles.hosts.iter().find_first(p => p.id == request.id)
+                  is Some(profile) else {
+                  raise @ssh.SshError("Unknown SSH host")
+                }
+                profile
+              } catch {
+                error => {
+                  deliver_to_page(
+                    connected,
+                    target,
+                    pending,
+                    Ssh(
+                      @protocol.SshEvent::{
+                        host_id: request.id,
+                        epoch,
+                        attempt,
+                        event: {
+                          "disconnected": "SSH connection failed: \{error}",
+                        },
+                      }.to_json(),
+                    ),
+                  )
+                  continue
+                }
+              }
+              if tasks.get(profile.id) is Some(task) {
+                task.cancel()
+              }
+              if self.routes.get(profile.id) is Some(route) {
+                route.close()
+              }
+              let route = @ssh.Connection(
+                profile,
+                epoch,
+                attempt~,
+                askpass=self.askpass,
+              )
+              self.routes[profile.id] = route
+              tasks[profile.id] = group.spawn(allow_failure=true, () => {
+                route.run(
+                  model_environment=() => {
+                    @engine.ssh_model_credentials(self.state.manager())
+                  },
+                  event => {
+                    guard (self.inbox.try_put(
+                      Deliver(
+                        Ssh(
+                          @protocol.SshEvent::{
+                            host_id: profile.id,
+                            epoch: route.epoch,
+                            attempt: route.attempt,
+                            event,
+                          }.to_json(),
+                        ),
+                      ),
+                    ) catch {
+                      _ => false
+                    }) else {
+                      route.close()
+                    }
+                  },
+                )
+              })
+            }
+            SshDisconnect(request) => self.disconnect_ssh(request, tasks)
+            SshRemove(id, reply) => reply.put(self.remove_ssh(id, tasks))
             PageConnected(context, reply) => {
+              for route in self.routes.values() {
+                route.close()
+              }
+              for task in tasks.values() {
+                task.cancel()
+              }
+              self.routes.clear()
+              tasks.clear()
               // Serialize readiness before subsequent delivery so the
               // frontend can use it as the resync boundary.
-              context.emit(connected_event, { stage: Accepted, })
+              context.emit(connected_event, {
+                protocol: Some(@protocol.HostProtocolRevision),
+              })
               connected = true
               reply.put(())
             }
@@ -534,6 +687,14 @@ pub async fn DesktopBridgeActor::run(self : DesktopBridgeActor) -> Unit {
               pending.clear()
             }
             WindowClosed => {
+              for route in self.routes.values() {
+                route.close()
+              }
+              for task in tasks.values() {
+                task.cancel()
+              }
+              self.routes.clear()
+              tasks.clear()
               connected = false
               target = None
               pending.clear()
@@ -548,8 +709,16 @@ pub async fn DesktopBridgeActor::run(self : DesktopBridgeActor) -> Unit {
                 SystemAppearanceChanged,
               )
           }
-        Deliver(notification) =>
+        Deliver(notification) => {
+          if notification
+            is Ssh({ "host_id": String(id), "epoch": Number(epoch, ..), .. }) {
+            guard self.routes.get(id) is Some(route) &&
+              route.epoch == epoch.to_int() else {
+              continue
+            }
+          }
           deliver_to_page(connected, target, pending, notification)
+        }
         SubscriptionLagged(subscription) => {
           // Resume before emitting readiness: snapshot requests made by the
           // frontend cannot race a still-paused subscription. Every later
@@ -559,7 +728,9 @@ pub async fn DesktopBridgeActor::run(self : DesktopBridgeActor) -> Unit {
             connected,
             target,
             pending,
-            Hub(AgentConnected({ stage: Accepted, })),
+            Hub(
+              AgentConnected({ protocol: Some(@protocol.HostProtocolRevision), }),
+            ),
           )
         }
       }
@@ -596,9 +767,13 @@ async test "a full inbox preserves local events before the hub resync boundary" 
       for value in 0..<BridgeInboxCapacity {
         bridge.notify_browser_event(Json(value))
       }
-      state.publish(AgentConnected({ stage: Serving, }))
+      state.publish(
+        AgentConnected({ protocol: Some(@protocol.HostProtocolRevision), }),
+      )
       // Further publications must not schedule extra recovery tasks/markers.
-      state.publish(AgentConnected({ stage: Serving, }))
+      state.publish(
+        AgentConnected({ protocol: Some(@protocol.HostProtocolRevision), }),
+      )
       for value in 0..<BridgeInboxCapacity {
         assert_true(
           bridge.inbox.get() is Deliver(BrowserEvent(actual)) &&
@@ -609,9 +784,16 @@ async test "a full inbox preserves local events before the hub resync boundary" 
         fail("missing resync boundary after the full inbox")
       }
       paused.resume_delivery()
-      state.publish(AgentConnected({ stage: Accepted, }))
+      state.publish(
+        AgentConnected({ protocol: Some(@protocol.HostProtocolRevision), }),
+      )
       assert_true(
-        bridge.inbox.get() is Deliver(Hub(AgentConnected({ stage: Accepted, }))),
+        bridge.inbox.get()
+        is Deliver(
+          Hub(
+            AgentConnected({ protocol: Some(@protocol.HostProtocolRevision), })
+          )
+        ),
       )
       assert_true(bridge.inbox.try_get() is None)
     })

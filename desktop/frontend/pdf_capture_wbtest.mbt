@@ -7,7 +7,7 @@ fn pdf_capture_model(
     update_msg(
       test_dispatch(),
       Codex(
-        channel=ctx.owner.channel,
+        channel=ctx.owner.host().unwrap().channel,
         @codex.Msg::status_changed({ "status": "ready" }),
       ),
       model,
@@ -199,7 +199,10 @@ test "retired PDF capture and a closed panel cannot add an image" {
   })
   assert_true(closed.composer_input().draft.images.is_empty())
   assert_true(closed.file_panel.pdf_capture is None)
-  let other = { ..ctx, owner: { ..ctx.owner, session: "other", }, }
+  let other = {
+    ..ctx,
+    owner: @interop.Host({ ..ctx.owner.host().unwrap(), session: "other", }),
+  }
   let (_, switched) = update_msg(test_dispatch(), captured(other, path), model)
   assert_true(switched.composer_input().draft.images.is_empty())
   assert_true(switched.file_panel.pdf_capture is None)

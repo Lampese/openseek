@@ -479,11 +479,31 @@ fn Model::sidebar_component_sections(
       continue
     }
     let conversations = ordered_by_recency(stamped)
+    let host_name = if dev.channel == Local {
+      None
+    } else {
+      self.console.roster
+      .iter()
+      .find_first(host => host.id == dev.channel.device_id())
+      .map(host => host.name)
+    }
     projects.push(
       @section.Project({
         id: @project.Id(source="openseek.projects", channel~, root=path.path),
-        title: path.path,
+        title: match host_name {
+          None => path.path
+          Some(name) => name + " · " + path.path
+        },
         label: @resource.label(path),
+        host: if dev.channel == Local {
+          None
+        } else {
+          Some({
+            name: host_name.unwrap_or("Remote"),
+            online: dev.bridge is Connected,
+            details: @interop.is_native_ssh(dev.channel),
+          })
+        },
         // The Chat and Codex screens are exclusive, so at most one side
         // claims the row's activation.
         activation: if openseek_activation is Some(_) {
@@ -491,7 +511,11 @@ fn Model::sidebar_component_sections(
         } else {
           codex_activation
         },
-        can_start: true,
+        can_start: dev.bridge is Connected ||
+        (
+          self.is_desktop &&
+          self.ssh_ui.hosts.any(host => dev.channel == Remote(host.id))
+        ),
         managed: true,
         conversations,
       }),
@@ -534,7 +558,9 @@ fn Model::sidebar_component_sections(
   }
   match self.sidebar_mode {
     ChatMode => {
-      sections.push(self.cloud_chat_section(channel))
+      if dev.channel == self.focused {
+        sections.push(self.cloud_chat_section(channel))
+      }
       sections.push(
         self.local_chat_section(
           channel~,
@@ -605,6 +631,71 @@ fn Model::sidebar_component_sections(
       )
     }
   }
+  if self.sidebar_mode is ChatMode && dev.channel == self.focused {
+    for row in ordered_by_recency(self.cloud_chat_rows(archived=true)) {
+      archived_entries.push(@section.Conversation(row))
+    }
+  }
+  if !self.session_search.query().is_blank() {
+    let scoped : Array[@section.Entry] = []
+    for entry in archived_entries {
+      guard entry is @section.Conversation(row) else { continue }
+      let root = row.id().root()
+      let chat = row.id().source() is @conversation.CloudArchived ||
+        root
+        .bind(path => @resource.of_path(dev.channel, path))
+        .map_or(false, path => dev.is_chat_workspace(path))
+      if self.sidebar_mode is ChatMode {
+        if chat {
+          scoped.push(entry)
+        }
+      } else if !chat && root is Some(root) {
+        let row = { ..row, nested: true, }
+        let mut found = false
+        for index, entry in projects {
+          if entry is @section.Project(project) && project.id().root() == root {
+            projects[index] = @section.Project({
+              ..project,
+              conversations: [..project.conversations, row],
+            })
+            found = true
+            break
+          }
+        }
+        if !found {
+          projects.push(
+            @section.Project({
+              id: @project.Id(source="openseek.projects", channel~, root~),
+              title: root,
+              label: @resource.of_path(dev.channel, root).map_or(root, path => {
+                @resource.label(path)
+              }),
+              host: if dev.channel == Local {
+                None
+              } else {
+                Some({
+                  name: self.console.roster
+                  .iter()
+                  .find_first(host => host.id == dev.channel.device_id())
+                  .map_or("Remote", host => host.name),
+                  online: dev.bridge is Connected,
+                  details: @interop.is_native_ssh(dev.channel),
+                })
+              },
+              activation: None,
+              can_start: false,
+              managed: false,
+              conversations: [row],
+            }),
+          )
+        }
+      }
+    }
+    archived_entries.clear()
+    for entry in scoped {
+      archived_entries.push(entry)
+    }
+  }
   sections.push({
     id: @section.Id(source="archived", channel~),
     label: @sidebar_messages.text(
@@ -643,7 +734,7 @@ fn Model::codex_sidebar_context(
 /// same way `sidebar_component_sections` files rows: a conversation is a chat
 /// exactly when its workspace is under the host's managed chat root.
 fn Model::sidebar_activation(self : Model) -> (@sidebar.Mode, String)? {
-  if self.cloud.creating_at(self.chat_navigation_generation) {
+  if self.cloud_draft_identity() is Some(_) {
     return None
   }
   if self.cloud_identity() is Some(owner) && self.screen is Chat {
@@ -689,48 +780,77 @@ fn Model::sidebar_component_input(self : Model) -> @sidebar.Input {
   if self.cloud.notice is Some(notice) {
     notices.push(notice)
   }
-  let sections = match self.focused_device() {
-    Some(dev) => {
-      if dev.chat_root is Some(Err(message)) {
-        notices.push(
-          dynamic_text(self.locale, DStorageUnavailable(message.to_string())),
-        )
-      }
-      self.sidebar_component_sections(dev)
-    }
-    None => {
-      match self.console.roster_sync {
-        RosterLoading => notices.push(shell_text(self.locale, LoadingDevice))
-        RosterFailed(message) => notices.push(message)
-        RosterReady =>
-          if self.console.roster.is_empty() {
-            notices.push(shell_text(self.locale, NoDevices))
-          } else {
-            notices.push(shell_text(self.locale, NoOnlineDevice))
+  if self.focused_device() is Some({ chat_root: Some(Err(message)), .. }) {
+    notices.push(dynamic_text(self.locale, DStorageUnavailable(message)))
+  }
+  let sections = if self.is_desktop && !self.devices.is_empty() {
+    let combined : Array[@section.Input] = []
+    for dev in self.devices {
+      for section in self.sidebar_component_sections(dev) {
+        match
+          combined.search_by(item => item.id.source() == section.id.source()) {
+          Some(index) => {
+            let previous = combined[index]
+            combined[index] = {
+              ..previous,
+              entries: previous.entries + section.entries,
+              activation: match section.activation {
+                Some(_) => section.activation
+                None => previous.activation
+              },
+            }
           }
+          None => combined.push(section)
+        }
       }
-      if self.sidebar_mode is ChatMode {
-        [
-          self.cloud_chat_section(self.focused.uri_authority()),
-          self.local_chat_section(
-            channel=self.focused.uri_authority(),
-            activation=None,
-            rows=[],
-          ),
-          {
-            id: @section.Id(
-              source="archived",
+    }
+    combined
+  } else {
+    match self.focused_device() {
+      Some(dev) => self.sidebar_component_sections(dev)
+      None => {
+        if self.console.page_device is Some(_) {
+          match self.console.roster_sync {
+            RosterLoading =>
+              notices.push(shell_text(self.locale, LoadingDevice))
+            RosterFailed(message) => notices.push(message)
+            RosterReady =>
+              if self.console.roster.is_empty() {
+                notices.push(shell_text(self.locale, NoDevices))
+              } else {
+                notices.push(shell_text(self.locale, NoOnlineDevice))
+              }
+          }
+        }
+        if self.sidebar_mode is ChatMode {
+          let archived_entries = ordered_by_recency(
+            self.cloud_chat_rows(archived=true),
+          ).map(row => @section.Conversation(row))
+          [
+            self.cloud_chat_section(self.focused.uri_authority()),
+            self.local_chat_section(
               channel=self.focused.uri_authority(),
+              activation=None,
+              rows=[],
             ),
-            label: @sidebar_messages.text(self.locale, ArchivedChats(0)),
-            initially_collapsed: true,
-            activation: None,
-            action: None,
-            entries: [],
-          },
-        ]
-      } else {
-        []
+            {
+              id: @section.Id(
+                source="archived",
+                channel=self.focused.uri_authority(),
+              ),
+              label: @sidebar_messages.text(
+                self.locale,
+                ArchivedChats(archived_entries.length()),
+              ),
+              initially_collapsed: true,
+              activation: None,
+              action: None,
+              entries: archived_entries,
+            },
+          ]
+        } else {
+          []
+        }
       }
     }
   }
@@ -758,10 +878,20 @@ fn Model::sidebar_component_input(self : Model) -> @sidebar.Input {
         avatar,
         busy: self.console.busy,
         notice: self.console.notice,
+        device: self.console.page_device.bind(id => {
+          self.console.roster
+          .iter()
+          .find_first(meta => meta.id == id)
+          .map(meta => meta.device_choice())
+        }),
+        online_devices: self.console.roster
+        .filter(meta => meta.online)
+        .map(meta => meta.device_choice()),
       })
     _ => None
   }
-  {
+  @sidebar.Input::{
+    search: self.session_search,
     notices,
     locale: self.locale,
     mode: self.sidebar_mode,
@@ -772,7 +902,7 @@ fn Model::sidebar_component_input(self : Model) -> @sidebar.Input {
     skills_active: self.screen is Skills,
     settings_active: self.screen is Settings,
     account,
-  }
+  }.filtered()
 }
 
 ///|
@@ -810,10 +940,10 @@ fn editable_text(text : String) -> String {
 /// The archived conversation's only bottom action. Keeping it separate from
 /// the live composer means there is no textarea, model selector, goal editor,
 /// Send, or Stop control for an archived durable record.
-fn Conversation::archived_read_only_view(
+fn archived_read_only_view(
   locale~ : @i18n.Locale = English,
-  self : Conversation,
-  dispatch : @cmd.Emit[Msg],
+  restore : @cmd.Cmd,
+  disabled~ : Bool = false,
 ) -> @html.Html {
   @html.div(class="composer archived-read-only", [
     @html.div(class="archived-read-only-bar", [
@@ -825,7 +955,8 @@ fn Conversation::archived_read_only_view(
         class="archived-read-only-restore",
         type_="button",
         title=shell_text(locale, RestoreBeforeContinue),
-        on_click=dispatch(UnarchiveSession(self.device, self.session_id)),
+        disabled~,
+        on_click=restore,
         shell_text(locale, RestoreLabel),
       ),
     ]),
@@ -865,7 +996,7 @@ fn codex_account_rows(
         desc=@settings.text(model.locale, SignOutDescription),
       ),
     )
-  } else if codex.sign_in_required() {
+  } else if codex.sign_in_required() && !@interop.is_native_ssh(channel) {
     rows.push(
       @settings.row(
         @settings.text(model.locale, SignIn),
@@ -908,6 +1039,22 @@ fn codex_account_rows(
         desc=@settings.text(model.locale, FinishSignIn),
       ),
     )
+  }
+  if @interop.is_native_ssh(channel) {
+    rows.push(
+      @settings.row(
+        "Remote Codex",
+        [
+          @html.button(
+            class="button secondary",
+            on_click=dispatch(Codex(channel~, @codex.Msg::refresh())),
+            "Refresh account",
+          ),
+        ],
+        desc="Run codex login --device-auth in this host's terminal. Configure ~/.codex/config.toml on the remote host; credentials remain there.",
+      ),
+    )
+    return rows
   }
   rows.push(
     @settings.row(
@@ -1276,6 +1423,21 @@ fn api_settings_rows(
   dispatch : @cmd.Emit[Msg],
   model : Model,
 ) -> Array[@html.Html] {
+  if @interop.is_native_ssh(model.focused) {
+    return [
+      @settings.row(
+        "API key fallback from this computer",
+        [
+          @html.button(
+            class="button secondary",
+            on_click=dispatch(OpenLocalApiSettings),
+            "Open local API settings",
+          ),
+        ],
+        desc="Remote API settings take priority. This computer supplies a fallback API key; the remote provider, endpoint and model stay unchanged. Reconnect after changing the local key.",
+      ),
+    ]
+  }
   let settings_loaded = model.host_settings_loaded()
   let ready = model.api_ready()
   let rows : Array[@html.Html] = [
@@ -1406,6 +1568,11 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
   ]
   let api_rows : Array[@html.Html] = api_settings_rows(dispatch, model)
   let groups : Array[@html.Html] = [
+    ..if model.is_desktop {
+      [ssh_settings(dispatch, model)]
+    } else {
+      []
+    },
     @settings.group(icon_sparkle, @settings.text(locale, Engine), engine_rows),
     @settings.group(icon_key, "API", api_rows),
     @settings.group(
@@ -1631,10 +1798,13 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
 }
 
 ///|
-fn run_indicator(model : Model, conv : Conversation) -> @html.Html {
-  let status = model.display_status()
-  let label = status.label(locale=model.locale)
-  if conv.is_running() {
+fn run_indicator(
+  status : Status,
+  running : Bool,
+  locale~ : @i18n.Locale,
+) -> @html.Html {
+  let label = status.label(locale~)
+  if running {
     @html.div(class="run-status accent", [
       @html.span(class="run-dot accent pulse", ""),
       @html.span(class="run-text", label),
@@ -1645,6 +1815,106 @@ fn run_indicator(model : Model, conv : Conversation) -> @html.Html {
       @html.span(class="run-text", label),
     ])
   }
+}
+
+///|
+/// Where `conv` runs, for the overview's environment card.
+fn Model::overview_environment(
+  self : Model,
+  conv : Conversation,
+) -> @conversation_overview.Environment {
+  let project = conv.project()
+  {
+    device: self.device_name(conv.device),
+    project: @resource.label(project),
+    path: project.path,
+    branch: conv.branch.filter(branch => !branch.is_empty()),
+    worktree: match conv.workspace {
+      Worktree(name~, ..) => Some(name)
+      Project(..) => None
+    },
+  }
+}
+
+///|
+/// What `conv` runs in the background, for the overview's card; `None` while
+/// nothing runs. The jobs listing counts only while it is `conv`'s own.
+fn Model::overview_background(
+  self : Model,
+  dispatch : @cmd.Emit[Msg],
+  conv : Conversation,
+) -> @conversation_overview.Background? {
+  let own_jobs = self.jobs.owner is Some(owner) &&
+    owner.channel == conv.device &&
+    owner.scope.session == conv.session_id
+  let tasks = @conversation_overview.BackgroundTasks::from_listing(
+    jobs=if own_jobs { self.jobs.jobs } else { [] },
+    more_jobs=own_jobs && self.jobs.next_offset is Some(_),
+    workflows=conv.workflows,
+  )
+  // Each panel's link hides the side panel when it is the one on screen, as
+  // the titlebar's panel toggles do.
+  let active = if self.file_panel_visible() {
+    self.dock_state().active
+  } else {
+    None
+  }
+  fn link(shown : Bool, request : Msg) -> @conversation_overview.PanelLink {
+    { shown, toggle: dispatch(if shown { ToggleRightPanel } else { request }), }
+  }
+  tasks.map(tasks => {
+    tasks,
+    now_ms: @interop.now_ms(),
+    jobs: link(active is Some(Jobs), JobsRequested),
+    workflows: link(active is Some(Workflows), WorkflowsRequested),
+  })
+}
+
+///|
+/// The overview beside `conv`: where it runs, which pull requests and branches
+/// it works on, what its engine is connected to, and what it runs in the
+/// background.
+fn overview_view(
+  dispatch : @cmd.Emit[Msg],
+  model : Model,
+  conv : Conversation,
+) -> @html.Html {
+  let key : @interop.ConversationKey = {
+    channel: conv.device,
+    session: conv.session_id,
+  }
+  let checkout = conv.overview_checkout()
+  @conversation_overview.view(
+    locale=model.locale,
+    model.overview,
+    environment=model.overview_environment(conv),
+    changes=@session_changes.summary(
+      locale=model.locale,
+      key,
+      checkout,
+      model.changes,
+    ).map(summary => {
+      summary,
+      rows: @session_changes.rows(
+        locale=model.locale,
+        key,
+        checkout,
+        model.changes,
+        dispatch.map(msg => Changes(msg)),
+      ),
+    }),
+    connectors={
+      summary: @mcp.summary(locale=model.locale, key, model.mcp),
+      rows: @mcp.rows(locale=model.locale, key, model.mcp),
+      refresh: if @mcp.checking(key, model.mcp) {
+        None
+      } else {
+        Some(dispatch(Mcp(Refresh(key))))
+      },
+    },
+    background?=model.overview_background(dispatch, conv),
+    dispatch.map(msg => Overview(msg)),
+  )
 }
 
 ///|
@@ -1711,7 +1981,13 @@ fn conversation_header(
     session_tooltip(model, conv),
     Some(workspace),
   )
-  items.push(run_indicator(model, conv))
+  items.push(
+    run_indicator(
+      model.display_status(),
+      conv.is_running(),
+      locale=model.locale,
+    ),
+  )
   if conv.turn.usage_tokens > 0 {
     items.push(
       @html.span(
@@ -1720,29 +1996,9 @@ fn conversation_header(
       ),
     )
   }
-  // A phone's titlebar carries identity and run state only: the detail,
-  // export, terminal, and right-panel controls all leave the narrow layout.
+  items.push(conversation_transfer_button(model.locale))
   if !model.narrow {
     items.push(model.detail_toggle(dispatch))
-  }
-  // The owning host captures durable Work records; the current client
-  // downloads or publishes the snapshot with its own account.
-  if !conv.messages.is_empty() {
-    items.push(
-      @html.button(
-        class="panel-toggle",
-        title=shell_text(model.locale, ExportConversation),
-        on_click=dispatch(
-          OpenExport(conv.device, {
-            session: conv.session_id,
-            workspace: workspace.path,
-            title: model.selected_conversation_title(),
-            archived: conv.is_archived_read_only(),
-          }),
-        ),
-        icon(icon_chat_export),
-      ),
-    )
   }
   // A browser terminal is rendered locally but its PTY lives on the focused
   // remote device, reached through that device's WebSocket channel.
@@ -1764,6 +2020,16 @@ fn conversation_header(
       ),
     )
   }
+  // The overview is the only place the conversation's connectors are shown,
+  // so the narrow layout keeps it: there it is always the panel over the
+  // transcript.
+  items.push(
+    @conversation_overview.toggle(
+      locale=model.locale,
+      model.overview_open,
+      dispatch(ToggleOverview),
+    ),
+  )
   items
 }
 
@@ -1796,7 +2062,22 @@ fn onboarding_view(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
     // Until the bridge answers, this page knows nothing about the host's
     // projects. Offering to add one here would be a guess that the very next
     // message contradicts.
-    _ => card.push(@html.p(shell_text(model.locale, ConnectingDevice)))
+    _ =>
+      if model.focused is Remote(id) &&
+        model.ssh_ui.hosts.any(host => host.id == id) {
+        card.push(@html.p(ssh_connection_status(model, id)))
+        if model.ssh_ui.host_errors.get(id) is Some(error) {
+          card.push(
+            @html.pre(
+              class="ssh-error",
+              attrs=@html.Attrs::build().role("alert"),
+              error,
+            ),
+          )
+        }
+      } else {
+        card.push(@html.p(shell_text(model.locale, ConnectingDevice)))
+      }
   }
   @html.section(class="onboarding", [@html.div(class="onboarding-card", card)])
 }
@@ -1804,14 +2085,21 @@ fn onboarding_view(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
 ///|
 /// The console's full-screen gate. A missing `?device=` stops before sign-in;
 /// authentication gets its own progress/retry states, and a signed-in page
-/// stays here until its one query-selected device is available.
+/// stays here until its one query-selected device is available. A host built
+/// for another protocol revision stays here until the page is reloaded.
 fn console_gate_view(
   locale~ : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
   console : ConsoleState,
+  host_incompatible~ : Bool = false,
 ) -> @html.Html {
   let card : Array[@html.Html] = []
-  if console.page_device is Some(id) {
+  if console.page_device is Some(_) &&
+    console.auth is AuthSignedIn(..) &&
+    host_incompatible {
+    card.push(@html.h2(shell_text(locale, DeviceUnavailable)))
+    card.push(@html.p(shell_text(locale, HostIncompatibleNotice)))
+  } else if console.page_device is Some(id) {
     match console.auth {
       AuthChecking => {
         card.push(
@@ -1836,9 +2124,11 @@ fn console_gate_view(
         card.push(@html.h2(shell_text(locale, SignInLabel)))
         card.push(@html.p(shell_text(locale, BrowserAccess)))
         card.push(
+          // The relay's sign-in is a page load, not an application route.
           @html.a(
             class="portal-button-link",
             href=console.login_url(),
+            escape=true,
             shell_text(locale, SignInGitHub),
           ),
         )
@@ -1976,17 +2266,27 @@ fn conversation_load_failed_view(
   locale~ : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
   message : String,
+  retry~ : Bool = true,
 ) -> @html.Html {
-  @html.div(class="conversation-load-state failed", [
-    @html.strong(shell_text(locale, CannotLoadConversation)),
-    @html.span(class="conversation-load-state-message", message),
-    @html.button(
-      class="button secondary",
-      type_="button",
-      on_click=dispatch(RetrySelectedConversation),
-      shell_text(locale, RetryLabel),
-    ),
-  ])
+  @html.div(
+    class="conversation-load-state failed",
+    [
+      @html.strong(shell_text(locale, CannotLoadConversation)),
+      @html.span(class="conversation-load-state-message", message),
+      ..if retry {
+        [
+          @html.button(
+            class="button secondary",
+            type_="button",
+            on_click=dispatch(RetrySelectedConversation),
+            shell_text(locale, RetryLabel),
+          ),
+        ]
+      } else {
+        []
+      },
+    ],
+  )
 }
 
 ///|
@@ -2001,10 +2301,10 @@ fn view(
   composer_html : @html.Html,
   codex_composer_html : @html.Html,
   sidebar_html : @html.Html,
-  quick_open_and_context_menu : (@html.Html, @html.Html),
+  quick_open_and_context_menu : (@html.Html, @html.Html, @html.Html),
   skills_and_workspace_settings : (@html.Html, @html.Html),
 ) -> @html.Html {
-  let (quick_open_html, context_menu_html) = quick_open_and_context_menu
+  let (quick_open_html, context_menu_html, transfer_menu_html) = quick_open_and_context_menu
   let (skills_html, workspace_settings_html) = skills_and_workspace_settings
   // Until the relay session and its device exist, the console frame —
   // sidebar, composer, overlays — stays unbuilt and inert Local cannot
@@ -2033,6 +2333,16 @@ fn view(
               model.cloud_title()
             },
           ),
+          if model.cloud_selected() &&
+            model.cloud_display_status() is Some(status) {
+            run_indicator(
+              status,
+              status is (Starting | Running | Step(_)),
+              locale=model.locale,
+            )
+          } else {
+            @html.nothing
+          },
           if model.cloud_identity() is Some(_) {
             @html.button(
               class="panel-toggle",
@@ -2040,6 +2350,11 @@ fn view(
               on_click=dispatch(OpenCloudExport),
               icon(icon_chat_export),
             )
+          } else {
+            @html.nothing
+          },
+          if model.cloud_identity() is Some(_) && !model.narrow {
+            model.detail_toggle(dispatch)
           } else {
             @html.nothing
           },
@@ -2051,12 +2366,14 @@ fn view(
           _ => {
             let title = model.selected_conversation_title()
             let selected = model.conversation_selection()
-            model.conversation_heading(
+            let items = model.conversation_heading(
               selected.map_or(model.focused, selected => selected.channel),
               title,
               title,
               selected.map(selected => selected.workspace),
             )
+            items.push(conversation_transfer_button(model.locale))
+            items
           }
         }
       }
@@ -2076,21 +2393,52 @@ fn view(
       )
     Schedules => @page_shell.header(ui(model.locale, ScheduledTasks))
   }
+  if @interop.is_native_ssh(model.focused) &&
+    model.screen.work_screen() is Some(_) {
+    header.insert(0, ssh_context(dispatch, model))
+  }
   let content = match model.screen {
     // `Model::chat_column` is the one fork that decides what the conversation
     // column is; the transcript component's lifetime follows the same value.
     Chat =>
       if host_gated {
-        [console_gate_view(locale=model.locale, dispatch, model.console)]
+        [
+          console_gate_view(
+            locale=model.locale,
+            dispatch,
+            model.console,
+            host_incompatible=model.host_incompatible(),
+          ),
+        ]
       } else {
         match model.chat_column() {
-          CloudTranscript(..) => [transcript_html, composer_html]
-          LoadFailed(message~) =>
+          CloudTranscript(..) =>
+            [
+              transcript_html,
+              if model.cloud_archived() &&
+                model.cloud_identity()
+                is Some(@interop.Cloud(account~, session~)) {
+                archived_read_only_view(
+                  locale=model.locale,
+                  dispatch(
+                    CloudAction(
+                      @cloud.Edit(account~, session~, edit=Archive(false)),
+                    ),
+                  ),
+                  disabled=model.cloud.metadata_saves.contains(session),
+                )
+              } else {
+                composer_html
+              },
+            ]
+          CloudHome => [cloud_home_view(dispatch, model)]
+          LoadFailed(message~, retry~) =>
             [
               conversation_load_failed_view(
                 locale=model.locale,
                 dispatch,
                 message,
+                retry~,
               ),
             ]
           Loading => [conversation_loading_view(locale=model.locale)]
@@ -2116,7 +2464,10 @@ fn view(
                 @html.div(class="user-question-region", @html.nothing)
               },
               if conv.is_archived_read_only() {
-                conv.archived_read_only_view(locale=model.locale, dispatch)
+                archived_read_only_view(
+                  locale=model.locale,
+                  dispatch(UnarchiveSession(conv.device, conv.session_id)),
+                )
               } else if model.scheduled_session_read_only(conv) {
                 @html.div(class="composer archived-read-only", [
                   @html.div(class="archived-read-only-bar", [
@@ -2133,6 +2484,12 @@ fn view(
                 ])
               } else {
                 composer_html
+              },
+              // Last, so showing it never shifts the composer's position.
+              if model.overview_open {
+                overview_view(dispatch, model, conv)
+              } else {
+                @html.nothing
               },
             ]
         }
@@ -2151,6 +2508,20 @@ fn view(
     Schedules => [schedules_page(dispatch, model)]
     Skills => [skills_html]
     Settings => [settings_page(dispatch, model)]
+  }
+  // An incompatible host can drive no page. Show why wherever the page is,
+  // not only in a conversation header; Cloud pages do not need the host.
+  let content = if host_gated && model.host_incompatible() {
+    [
+      console_gate_view(
+        locale=model.locale,
+        dispatch,
+        model.console,
+        host_incompatible=true,
+      ),
+    ]
+  } else {
+    content
   }
   // The app is `sidebar | content`; `content` itself splits into the
   // conversation (left) and the editor (right) as two independent parts, so
@@ -2172,7 +2543,7 @@ fn view(
       content_class += " terminal-maximized"
     }
   }
-  let content = if !host_gated &&
+  let content = if (!host_gated || model.navigation.phase is Invalid) &&
     navigation_notice(dispatch, model) is Some(notice) {
     [notice]
   } else {
@@ -2185,7 +2556,9 @@ fn view(
     ),
     ..content,
   ]
-  let panel_available = !model.cloud_selected() &&
+  let panel_available = (
+      !model.cloud_selected() || file_ctx(model).cloud_files is Some(_)
+    ) &&
     (
       model.screen is Chat ||
       (
@@ -2193,17 +2566,18 @@ fn view(
         placement.checkout_root() is Some(_)
       )
     )
-  let panel_toggle_visible = !model.cloud_selected() &&
+  let panel_toggle_visible = if model.cloud_selected() {
+    file_ctx(model).cloud_files is Some(_)
+  } else {
+    file_panel_visible ||
     (
-      file_panel_visible ||
+      !model.narrow &&
       (
-        !model.narrow &&
-        (
-          model.screen is Codex ||
-          (model.screen is Chat && model.active_conversation() is Some(_))
-        )
+        model.screen is Codex ||
+        (model.screen is Chat && model.active_conversation() is Some(_))
       )
     )
+  }
   let panel_toggle_label = if file_panel_visible {
     shell_text(model.locale, HidePanel)
   } else if model.screen is Codex {
@@ -2249,16 +2623,21 @@ fn view(
       terminal_html,
     ]),
     workspace_settings_html,
-    // Keep the dialog before conditional overlays: replacing its DOM node
-    // would lose showModal state during resize or a notification.
-    model.session_search.view(
+    model.session_import_dialog.view(
       model.locale,
-      dispatch.map(msg => SessionSearch(msg)),
+      dispatch.map(msg => SessionImport(msg)),
     ),
     model.export_dialog.view(
       locale=model.locale,
       dispatch.map(msg => ExportDialog(msg)),
     ),
+    // Authentication input is deliberately DOM-only. Keep this slot before
+    // conditional overlays so resize/toasts cannot replace its input node.
+    if model.ssh_ui.editor_open || model.ssh_ui.details is Some(_) {
+      ssh_modal(dispatch, model)
+    } else {
+      @html.nothing
+    },
   ]
   // On the narrow layout the sidebar's stable backdrop fades with the drawer;
   // keeping it mounted lets the closing transition finish before it becomes
@@ -2305,6 +2684,11 @@ fn view(
         locale=model.locale,
         dispatch.map(msg => ProjectPicker(msg)),
         picker,
+        location?=if model.is_desktop {
+          Some(ssh_locations(dispatch, model))
+        } else {
+          None
+        },
       ),
     )
   }
@@ -2319,18 +2703,22 @@ fn view(
     )
   }
   if model.delete_confirm is Some(confirm) {
-    children.push(delete_modal(locale=model.locale, dispatch, confirm))
+    children.push(
+      delete_modal(locale=model.locale, dispatch, confirm, model.cloud),
+    )
   }
   // Rendered whether or not the palette is open — closed it is an empty
   // placeholder — so opening it never shifts the overlay children around it.
   children.push(quick_open_html)
   children.push(context_menu_html)
+  children.push(transfer_menu_html)
   // On the desktop a lost connection covers everything: with no event
   // stream and every API call failing, the app behind it can do nothing,
   // so an honest dead-end beats a half-broken UI. The console keeps its last
   // rendered device readable while its topbar and composer show reconnecting.
   if !model.cloud_selected() &&
     model.is_desktop &&
+    model.focused == Local &&
     model.bridge_state() is BridgeLost(message) {
     children.push(bridge_lost_overlay(locale=model.locale, message))
   }
@@ -2643,8 +3031,45 @@ fn Model::cloud_chat_section(self : Model, channel : String) -> @section.Input {
     activation: self.cloud_identity().map(owner => owner.session()),
     action: Some({
       title: @sidebar_messages.text(self.locale, NewChat),
-      disabled: self.cloud.creation is Some(_),
+      disabled: self.cloud.creation is Some({ submission: Some(_), .. }),
     }),
     entries,
   }
+}
+
+///|
+fn cloud_home_view(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
+  @html.section(class="cloud-home management-page", [
+    @html.h2(@sidebar_messages.text(model.locale, Cloud)),
+    if model.account is Some(_) {
+      @html.button(
+        class="button primary",
+        on_click=dispatch(CloudAction(@cloud.Create)),
+        shell_text(model.locale, NewChatLabel),
+      )
+    } else if model.console.auth is AuthChecking {
+      @html.div([
+        @html.p(
+          model.console.notice.unwrap_or(
+            shell_text(model.locale, CheckingSignIn),
+          ),
+        ),
+        if model.console.notice is Some(_) {
+          @html.button(
+            class="button",
+            on_click=dispatch(Console(RefreshClicked)),
+            shell_text(model.locale, TryAgain),
+          )
+        } else {
+          @html.nothing
+        },
+      ])
+    } else {
+      @html.button(
+        class="button primary",
+        on_click=dispatch(RemoteConnectClicked),
+        shell_text(model.locale, SignInGitHub),
+      )
+    },
+  ])
 }

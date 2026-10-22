@@ -157,6 +157,49 @@
 .office-viewer-surface .textLayer {
   cursor: text;
 }
+
+/* Host-owned page navigation has its own scrollport. The live Word/PDF
+   surface remains a stable sibling, including while the rail is collapsed. */
+.office-page-rail {
+  --office-pages-text: var(--color-text-secondary);
+  --office-pages-hover: var(--color-bg-subtle);
+  --office-pages-accent: var(--color-accent);
+  --office-pages-selected: var(--color-accent-soft);
+  --office-pages-font-size: var(--font-size-sm);
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 184px;
+  width: 184px;
+  min-height: 0;
+  margin: 8px 0 8px 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-surface);
+  box-shadow: 0 3px 12px rgb(15 23 42 / 7%);
+}
+.office-page-rail.hidden { display: none; }
+.office-page-rail[data-overlay="true"] {
+  position: absolute;
+  inset: 8px auto 8px 8px;
+  margin: 0;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 17%);
+}
+.office-page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 6px 14px;
+  flex: 0 0 auto;
+}
+.office-page-count {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
 .pdf-command-row {
   display: flex;
   align-items: center;
@@ -246,6 +289,42 @@
 }
 .office-selection-preview.hidden,
 .pdf-capture-feedback.hidden { display: none; }
+
+.excel-copy-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.viewer-breadcrumb:has(.excel-copy-controls) {
+  height: auto;
+  min-height: 34px;
+  flex-wrap: wrap;
+  padding-block: 4px;
+}
+.viewer-breadcrumb:has(.excel-copy-controls) .office-viewer-toolbar {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.excel-copy-controls .office-viewer-control {
+  width: auto;
+  padding-inline: 7px;
+  white-space: nowrap;
+}
+.excel-copy-feedback {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.excel-copy-range {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
 
 .office-viewer-surface .surface-empty {
   display: grid;
@@ -808,4 +887,17 @@
 }
 @media (max-width: 700px) {
   .office-presentation-layout { grid-template-columns: 92px minmax(0, 1fr); }
+}
+/* Citation targets are independent of text/cell selection and Agent feedback. */
+#openseek-office-surface .office-citation-target:is(td, .page) {
+  outline: 3px solid #e8a020;
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 2px #fff8;
+}
+#openseek-office-surface td.office-citation-target {
+  background-image: linear-gradient(#fbbf2440, #fbbf2440);
+}
+#openseek-office-surface .office-citation-highlight {
+  fill: #fbbf245c;
+  pointer-events: none;
 }

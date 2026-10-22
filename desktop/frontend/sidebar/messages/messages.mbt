@@ -4,6 +4,7 @@
 /// Shared chrome for sidebar sections and projects; never user-authored titles.
 pub(all) enum Message {
   SearchConversations
+  NoMatchingConversations
   Chats
   Cloud
   Local
@@ -31,6 +32,8 @@ pub(all) enum Message {
   Scheduled
   Settings
   RefreshDevices
+  ChooseDevice
+  NoDevicesOnline
   Refresh
   SignOut
 }
@@ -39,6 +42,12 @@ pub(all) enum Message {
 /// Translate sidebar chrome without changing stable component identities.
 pub fn text(locale : @i18n.Locale, message : Message) -> String {
   match (locale, message) {
+    (English, NoMatchingConversations) => "No matching conversations"
+    (SimplifiedChinese, NoMatchingConversations) => "未找到匹配的对话"
+    (TraditionalChinese, NoMatchingConversations) => "找不到符合的對話"
+    (Japanese, NoMatchingConversations) =>
+      "一致するチャットはありません"
+    (Spanish, NoMatchingConversations) => "No se encontraron conversaciones"
     (English, SearchConversations) => "Search"
     (SimplifiedChinese, SearchConversations) => "搜索"
     (TraditionalChinese, SearchConversations) => "搜尋"
@@ -213,6 +222,17 @@ pub fn text(locale : @i18n.Locale, message : Message) -> String {
     (SimplifiedChinese, Settings) => "设置"
     (TraditionalChinese, Settings) => "設定"
     (Japanese, Settings) => "設定"
+    (English, ChooseDevice) => "Choose a device"
+    (Spanish, ChooseDevice) => "Elegir un dispositivo"
+    (SimplifiedChinese, ChooseDevice) => "选择设备"
+    (TraditionalChinese, ChooseDevice) => "選擇裝置"
+    (Japanese, ChooseDevice) => "デバイスを選択"
+    (English, NoDevicesOnline) => "No devices online"
+    (Spanish, NoDevicesOnline) => "No hay dispositivos en línea"
+    (SimplifiedChinese, NoDevicesOnline) => "没有在线设备"
+    (TraditionalChinese, NoDevicesOnline) => "沒有在線裝置"
+    (Japanese, NoDevicesOnline) =>
+      "オンラインのデバイスはありません"
     (English, RefreshDevices) => "Refresh the device list"
     (Spanish, RefreshDevices) => "Actualizar la lista de dispositivos"
     (SimplifiedChinese, RefreshDevices) => "刷新设备列表"

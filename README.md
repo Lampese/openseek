@@ -11,36 +11,12 @@ data model, and the life of one agent turn — see
 
 ## Running without a checkout
 
-Native archives for Linux x64/arm64, macOS arm64 and Windows x64 are
-published independently by the **CLI release** workflow to OSS and S3.
-Downloads use `https://cli.moonbitlang.com/openseek/cli/releases/v<version>/`;
-the version comes from the root `moon.mod`. After publishing version 0.7.0, its files are
-[Linux x64](https://cli.moonbitlang.com/openseek/cli/releases/v0.7.0/openseek-linux-x64.tar.gz),
-[Linux arm64](https://cli.moonbitlang.com/openseek/cli/releases/v0.7.0/openseek-linux-arm64.tar.gz),
-[macOS arm64](https://cli.moonbitlang.com/openseek/cli/releases/v0.7.0/openseek-macos-arm64.tar.gz),
-[Windows x64](https://cli.moonbitlang.com/openseek/cli/releases/v0.7.0/openseek-windows-x64.tar.gz),
-and [SHA256SUMS](https://cli.moonbitlang.com/openseek/cli/releases/v0.7.0/SHA256SUMS).
-Each archive contains `bin/openseek` (`openseek.exe` on Windows), rg, and
-`share` documentation/workflows. Download your platform's archive and verify
-it against the release's `SHA256SUMS`, then extract the whole archive:
-
-```sh
-tar -xzf openseek-linux-x64.tar.gz
-./openseek-linux-x64/bin/openseek setup
-export PATH="$HOME/.openseek/bin:$HOME/.moon/bin:$PATH"
-```
-
-On Windows, extract `openseek-windows-x64.tar.gz`, run
-`.\openseek-windows-x64\bin\openseek.exe setup`, and add
-`%USERPROFILE%\.openseek\bin` and `%USERPROFILE%\.moon\bin` to PATH.
-Setup installs the bundled rg, replaces the complete `~/.openseek/share`
-resource directory, and copies the CLI if missing. Changes to bundled resources
-are overwritten and files absent from the new archive are removed. Setup calls
-the official MoonBit installer if the toolchain is missing; its exit status
-determines success. Existing MoonBit tools are reused. Installing MoonBit needs
-curl, network access, and Bash (Unix) or PowerShell (Windows). Linux binaries
-require glibc 2.35+.
-Git and Codex remain user-installed. Other commands do not require setup.
+`openseek-app-server` serves the working-host API at `ws://127.0.0.1:<port>/host`, intended for SSH forwarding.
+Stdout announces the port, instance ID and protocol version as one JSON line;
+stdin EOF ends the service. The server uses the `openseek` executable beside it;
+`OPENSEEK_ENGINE` can select an engine for source builds. Clients initialize
+with that instance ID and protocol version before calling the host API. Browser-origin requests are
+rejected. Keep the listener and SSH forward bound to loopback.
 
 The root CLI package builds on both native and wasm, and mooncakes.io hosts a
 prebuilt wasm binary for every published version. `moonx` fetches and caches it,
@@ -62,10 +38,13 @@ binary drives the same tools as the native one.
 
 ## Monorepo development
 
-The root [`moon.work`](moon.work) develops OpenSeek, the desktop app, and the
-[`moonbitlang/editor`](editor/README.md) source together. The editor keeps its
-smaller `editor/moon.work` as a scoped entry point for editor-only builds and
+The root [`moon.work`](moon.work) develops OpenSeek, the desktop modules, and
+the [`moonbitlang/editor`](editor/README.md) source together. The editor keeps
+its smaller `editor/moon.work` as a scoped entry point for editor-only builds and
 browser tests; root Moon commands are the integration gate across both projects.
+The Desktop window host (`desktop/app`) is the only module that depends on
+Proton, so it is left out of the root workspace and builds in its own
+`desktop/app/moon.work`; root commands therefore need no Proton runtime.
 
 A fresh checkout needs the MoonBit toolchain and `just`. Recipes use Windows
 PowerShell on Windows and the default POSIX shell on macOS/Linux. The root
@@ -78,7 +57,12 @@ just build              # native + JS MoonBit builds
 just editor-build       # editor web distribution and server
 just editor-test        # editor-only tests on every supported target
 just editor-test-browser
+just desktop-app-check  # Proton window host, in desktop/app/moon.work
+just desktop-app-test
 ```
+
+The `desktop-app-*` recipes need Proton's CEF runtime; install it once with
+`just cef-setup`.
 
 The CLI lifecycle test (`just test-turn-finish`, also included in `just test`)
 runs as a standalone MoonBit script and needs no Python runtime.
@@ -138,7 +122,7 @@ git submodule update --init editor/vscode     # opt-in performance suite
 | `moonbitlang/openseek/agent_review` | Read-only, compiler-grounded code-review engine behind the `review` kind (`openseek run --kind review`). | `agent_review/README.mbt.md` |
 | `moonbitlang/openseek/cmd/openseek` | Deprecated CLI compatibility entry point; use the root package. | `cmd/openseek/README.md` |
 | `moonbitlang/openseek/internal/openseek` | The CLI's dispatcher and implementation: `options` (argparse tree), `setup` (workspace, prompt, session), `execution` (event sink, approvals, tools, review gate), `run`, `serve`, and `commands`. | `internal/openseek/README.md` |
-| `moonbitlang/openseek/cli` | Shared command-main helpers: the agent options (`--api-key`, `--model`, …) and failure-text sanitizer used by `openseek` and the out-of-tree `openseek_tui`. | — |
+| `moonbitlang/openseek/cli` | Shared command-main helpers: the agent options (`--api-key`, `--model`, …) and failure-text sanitizer used by `openseek` and `openseek_tui`. | — |
 | `moonbitlang/openseek/viz` | Browser viewer for durable session logs (JS). | `viz/README.md` |
 | `moonbitlang/inspect` (in `inspect/`, own module) | HTTP server (native or wasm) that serves the visualizer over recorded sessions. | `inspect/README.md` |
 | `moonbitlang/openseek-viz-app` (in `cmd/viz_app/`, own module) | JS entry point compiled into the visualizer bundle. | `viz/README.md` |
@@ -194,8 +178,8 @@ filesystem, and process APIs.
 
 The root package is the headless automation entry point — a subcommand
 tree (`run`/`serve`/`mcp`/`sessions`). The interactive terminal
-UI is the separate `openseek_tui` binary, maintained in its own repository,
-[moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui). `openseek run` parses arguments and
+UI is the separate `openseek_tui` binary, its own module in
+[`openseek_tui/`](openseek_tui/README.md). `openseek run` parses arguments and
 runs the agent package. The agent sends DeepSeek native function tools and
 supports eleven local tools: `mbtx` — both the scripting surface and the
 command runner, spawning processes through the shell-free
@@ -298,12 +282,14 @@ nonzero if any file cannot be loaded.
 
 A `command` entry is launched as a stdio subprocess (in the agent's workspace,
 inheriting the environment plus any `env` overrides); a `url` entry speaks the
-Streamable HTTP transport. Each server's tools join the agent's registry as
-`mcp__<server>__<tool>` for `run`, `serve`, and the TUI (which forwards
-`OPENSEEK_MCP_CONFIG` to its engine). A server that fails to start, handshake,
-or list its tools is logged and skipped — MCP never breaks a session. Tool
-results are size-capped, calls are bounded by a timeout, and tool names are
-sanitized to the provider's function-name rules.
+Streamable HTTP transport. The servers' tools form a catalog that the agent's
+mbtx scripts search and call through the tools SDK's `mcp` package
+(`@mcp.search`, `@mcp.call(server, tool, arguments)`), for `run`, `serve`, and
+the TUI (which forwards `OPENSEEK_MCP_CONFIG` to its engine). They are not in
+the model's function list, so the request stays the same size however many
+servers are configured. A server that fails to start, handshake, or list its
+tools is logged and reported as unavailable — MCP never breaks a session. Tool
+results are size-capped and calls are bounded by a timeout.
 
 HTTP `url` and `headers` values support `${VAR}` references to the engine's
 environment, for example `"Authorization": "Bearer ${MCP_TOKEN}"`. Expansion
@@ -315,6 +301,18 @@ Validate a configuration without starting a session:
 ```bash
 moon run . -- mcp --mcp-config mcp.json
 ```
+
+A running `serve` engine reports what it holds of those servers without being
+asked. It emits an `mcp_status` event once it has finished connecting them, and
+again each time that state changes — a connected server exiting, say. Each
+event carries the whole state: every configuration file in the order given,
+`loaded` or `failed` with the error, and each server of the merged
+configuration with its `transport`, its `target` (the command, or the URL
+without credentials), and a `state` — `connected` with the
+tools it registered, `lost` when it connected and the connection has closed
+since, `no_tools`, `failed` with the error, or `skipped` when earlier servers
+used up the tool budget. A controller keeps the latest one; it is this engine's
+own connections, not what connecting again would yield.
 
 Resources and prompts (the other MCP capabilities) are not consumed: openseek's
 agent is tool-driven, and a server that wants to feed it context can expose a
@@ -332,10 +330,12 @@ agent reads the file before applying it. See `agent_skill/README.mbt.md`.
 
 ## Terminal UI
 
-The interactive terminal UI is the `openseek_tui` binary, maintained in its own
-repository: [moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui). It depends on this module
-(`moonbitlang/openseek` on mooncakes) for the agent, session, and provider
-packages, and spawns the `openseek` engine built here in `serve` mode. Its
+The interactive terminal UI is the `openseek_tui` binary, the
+`moonbitlang/openseek_tui` module in [`openseek_tui/`](openseek_tui/README.md).
+It is a member of this workspace, so it builds against this checkout's
+`moonbitlang/openseek` (agent, session, and provider packages) and
+`moonbitlang/openseek_protocol`, and drives the `openseek` engine in `serve`
+mode. Its
 sessions are interoperable with the CLI's: `moon run . -- sessions
 list` shows what is resumable from either.
 

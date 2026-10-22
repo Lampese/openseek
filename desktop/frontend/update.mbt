@@ -122,7 +122,11 @@ fn focus_channel(
   channel : @interop.ChannelId,
 ) -> (@cmd.Cmd, Model) {
   guard channel != model.focused else { return (@cmd.none, model) }
-  let focus_cmd = if model.device_state(channel) is Some(dev) {
+  let focus_cmd = if channel is Remote(id) &&
+    model.ssh_ui.hosts.any(host => host.id == id) &&
+    !model.ssh_online(id) {
+    @cmd.none
+  } else if model.device_state(channel) is Some(dev) {
     @cmd.batch([
       fetch_host_settings(dispatch, channel, dev.connection_generation),
       fetch_installed_skills(dispatch, channel),
@@ -504,6 +508,11 @@ fn adopt_projects(
   let workspace_settings_request_generation = dev.workspace_settings_request_generation +
     1
   let commands : Array[@cmd.Cmd] = []
+  if model.is_desktop &&
+    channel is Remote(id) &&
+    model.ssh_ui.hosts.any(host => host.id == id) {
+    commands.push(save_ssh_projects(dispatch, id, paths))
+  }
   for path in paths {
     commands.push(
       fetch_worktrees(
@@ -560,7 +569,7 @@ fn adopt_projects(
   })
   commands.push(refresh_cmd)
   if model.cloud_identity() is Some(_) ||
-    model.cloud.creating_at(model.chat_navigation_generation) {
+    model.cloud_draft_identity() is Some(_) {
     return (@cmd.batch(commands), next)
   }
   if selected_detached {
@@ -920,10 +929,10 @@ fn open_explorer(
   let next = {
     ..model,
     screen,
-    dock: @dock.open_picker(model.dock),
     right_panel_open: true,
     right_panel_menu_open: false,
   }
+  let next = next.with_dock_state(@dock.open_picker(next.dock_state()))
   let (cmd, file_panel) = @fileeditor.update(
     dispatch.map(msg => FileEditor(msg)),
     @fileeditor.ExplorerModeSelected(mode),
@@ -1027,6 +1036,7 @@ fn run_slash_command(
             reasoning=model.reasoning_for(conv.engine_model),
             max_steps=model.max_steps,
             workspace=conv.project(),
+            approval=model.approval_for(conv.device, conv.session_id),
           ),
           {
             ..model.replace_conversation({
@@ -1086,6 +1096,7 @@ fn send_goal(
       model.max_steps,
       command,
       text,
+      approval=model.approval_for(conv.device, conv.session_id),
     )
   }
   goal_openseek(
@@ -1096,51 +1107,10 @@ fn send_goal(
     reasoning=model.reasoning_for(conv.engine_model),
     max_steps=model.max_steps,
     workspace=conv.project(),
+    approval=model.approval_for(conv.device, conv.session_id),
     command,
     text,
   )
-}
-
-///|
-/// Whether an engine event reports progress on the open step's model request,
-/// which ends a pending retry notice: the replacement attempt produced output
-/// or completed (a tool-only response has no deltas, so its usage report or
-/// tool result is the first sign), or the step moved on or the run ended.
-/// Events about other work in the same run say nothing about that request.
-fn ends_retry(event : @transcript.EngineEvent) -> Bool {
-  match event {
-    AssistantDelta(_)
-    | ReasoningDelta(_)
-    | ReasoningMessage(_)
-    | AssistantMessage(_)
-    | Usage(..)
-    | ToolResult(..)
-    | ToolCallDecodeError(..)
-    | AgentStep(_)
-    | AgentFinished(_)
-    | ContextYield(_)
-    | AgentAborted(_)
-    | MaxStepsExhausted
-    | AgentSetupFailed(_) => true
-    StreamRetry(..)
-    | BackgroundNotice(_)
-    | SubrunOpened(..)
-    | SubrunClosed(..)
-    | WorkflowOpened(..)
-    | WorkflowClosed(..)
-    | SteerApplied(..)
-    | SteerDropped(..)
-    | AutoCompactionFinished(_)
-    | CompactionStarted
-    | CompactionFinished(_)
-    | CompactionFailed(_)
-    | ApprovalRequested(..)
-    | ApprovalResolved(..)
-    | SessionAppendFailed(_)
-    | McpConfigFailed(..)
-    | McpServerFailed(..)
-    | McpToolsDropped(..) => false
-  }
 }
 
 ///|
@@ -1154,7 +1124,7 @@ fn apply_engine_event(
 ) -> (String?, Conversation) {
   // A retry notice lasts until the engine reports progress on the request it
   // is retrying; events about other work in the run leave it in place.
-  let conv = if ends_retry(event) {
+  let conv = if event.ends_retry() {
     { ..conv, turn: { ..conv.turn, retrying: None, }, }
   } else {
     conv
@@ -1504,27 +1474,34 @@ fn Model::active_checkout(self : Model) -> ActiveCheckout? {
 }
 
 ///|
-/// The file-editor package's read-only projection of the selected checkout.
+/// The selected file source. Cloud never inherits a previous Host checkout;
+/// the existing empty-session shell identity has no source on Cloud home.
 fn file_ctx(model : Model) -> @fileeditor.Ctx {
-  let active = model
-    .active_checkout()
-    .unwrap_or({
-      owner: { channel: model.focused, session: "", },
-      placement: None,
-    })
+  let active = (if model.cloud_selected() {
+    None
+  } else {
+    model.active_checkout()
+  }).unwrap_or({
+    owner: { channel: model.focused, session: "", },
+    placement: None,
+  })
   // A cwd-less Codex task has a valid scratch Terminal identity but app-server
   // exposes no path that Files or language services may address. Keep the one
   // typed placement in Codex state, then project this capability as absent at
   // the file-editor boundary rather than inventing a directory.
-  let file_placement = match active.placement {
-    Some(@interop.Scratch(root=None)) if model.screen is Codex => None
-    placement => placement
+  let file_placement = if model.cloud_selected() {
+    None
+  } else {
+    match active.placement {
+      Some(@interop.Scratch(root=None)) if model.screen is Codex => None
+      placement => placement
+    }
   }
   let engine_model = model
     .find_conversation(active.owner.channel, active.owner.session)
     .map(conv => conv.engine_model)
     .unwrap_or(model.default_model)
-  let file_body_visible = match model.dock.active {
+  let file_body_visible = match model.dock_state().active {
     Some(File(_)) | Some(GitDiff(_)) | Some(FilePicker) => true
     None | Some(Browser(_)) | Some(Workflows) | Some(Jobs) | Some(Github) =>
       false
@@ -1534,7 +1511,19 @@ fn file_ctx(model : Model) -> @fileeditor.Ctx {
     // Both panel packages use the typed checkout state to park host work; the
     // stable owner lets an interrupted changed-file review resume after Repair
     // without ever treating the project root as a fallback checkout.
-    owner: active.owner,
+    owner: model.dock_owner(),
+    cloud_files: if model.cloud_selected() &&
+      model.cloud_identity() is Some(@interop.Cloud(account~, ..)) &&
+      model.cloud.user_id == Some(account) {
+      model.account
+      .filter(credentials => credentials.user.user_id == account)
+      .map(credentials => @fileeditor.CloudFiles::{
+        epoch: model.cloud.epoch,
+        token: credentials.token,
+      })
+    } else {
+      None
+    },
     locale: model.locale,
     model: engine_model.wire(),
     thinking: engine_model.thinking(model.reasoning_for(engine_model)),
@@ -1555,12 +1544,12 @@ fn file_ctx(model : Model) -> @fileeditor.Ctx {
     // subsystem parks its workspace watches and Changes refreshes off-screen.
     panel_open: model.right_panel_open &&
     (model.screen is Codex || (model.screen is Chat && file_body_visible)),
-    open_files: @dock.file_paths(model.dock),
+    open_files: @dock.file_paths(model.dock_state()),
     preview_files: model.preview.local_files(),
     preview_rechecks: model.preview.files_to_check(),
-    active_file: @dock.active_file(model.dock),
-    open_history_diffs: @dock.history_diffs(model.dock),
-    active_history_diff: @dock.active_history_diff(model.dock),
+    active_file: @dock.active_file(model.dock_state()),
+    open_history_diffs: @dock.history_diffs(model.dock_state()),
+    active_history_diff: @dock.active_history_diff(model.dock_state()),
     github: model.github,
   }
 }
@@ -1583,6 +1572,17 @@ fn terminal_ctx(model : Model) -> @terminal.Ctx {
     None => false
   }
   @terminal.Ctx(
+    connection_notice?=match active.owner.channel {
+      Remote(id) if model.ssh_ui.hosts.any(host => host.id == id) =>
+        Some(ssh_connection_status(model, id))
+      _ => None
+    },
+    host_name?=model.ssh_ui.hosts
+      .iter()
+      .find_first(host => {
+        @interop.ChannelId::Remote(host.id) == active.owner.channel
+      })
+      .map(host => host.display_label()),
     channel=active.owner.channel,
     session=active.owner.session,
     placement=active.placement,
@@ -1592,22 +1592,13 @@ fn terminal_ctx(model : Model) -> @terminal.Ctx {
 }
 
 ///|
-/// Reconcile the dock strip, then the file subsystem, with the active
-/// conversation after every message (see `@dock.sync` /
-/// `@fileeditor.sync`). Order matters: the dock parks/restores the strip
-/// first, so the file sync sees the fresh projection and re-roots its
-/// document table from it. Centralizing it here keeps every
-/// conversation-switching handler from having to re-root the panel itself.
+/// Reconcile the file subsystem with the selected conversation's dock after
+/// every message. The dock map already retains every strip, so switching
+/// owners only changes this projection and re-roots the document table.
 fn sync_file_panel(
   dispatch : @cmd.Emit[Msg],
   model : Model,
 ) -> (Model, @cmd.Cmd) {
-  let ctx = file_ctx(model)
-  // Placement health is carried separately from identity, so a missing
-  // checkout keeps this conversation's strip while both content subsystems
-  // refuse host-backed work until Repair settles.
-  let dock = @dock.sync(model.dock, ctx.owner)
-  let model = { ..model, dock, }
   let (panel, cmd) = @fileeditor.sync(
     dispatch.map(msg => FileEditor(msg)),
     model.file_panel,
@@ -1632,8 +1623,10 @@ fn sync_file_panel(
 fn covering_overlay(model : Model) -> Bool {
   (model.narrow && model.sidebar_open) ||
   model.project_picker is Some(_) ||
-  model.session_search.is_open() ||
+  model.ssh_ui.editor_open ||
+  model.ssh_ui.details is Some(_) ||
   model.export_dialog.is_open() ||
+  model.session_import_dialog.is_open() ||
   model.workspace_settings_dialog is Some(_) ||
   model.archive_confirm is Some(_) ||
   model.delete_confirm is Some(_) ||
@@ -1665,12 +1658,13 @@ fn desired_browser_view(model : Model) -> Int32? {
     model.right_panel_open &&
     !model.right_panel_menu_open &&
     !model.dock_tab_menu_open &&
+    !model.conversation_transfer_menu_open &&
     model.select_menu is None &&
     !git_details_open &&
     !covering_overlay(model) else {
     return None
   }
-  guard @dock.active_browser(model.dock) is Some(id) &&
+  guard @dock.active_browser(model.dock_state()) is Some(id) &&
     @preview.page(model.preview, id) is Some(page) &&
     page.url is Some(_) else {
     return None
@@ -1829,6 +1823,7 @@ fn update(
     | CodexOpenThread(_)
     | OpenCodex
     | OpenSetup
+    | OpenLocalApiSettings
     | OpenSkills
     | OpenSchedules
     | Navigation(Back | Forward)
@@ -1858,6 +1853,17 @@ fn update(
   let (navigation_cmd, model) = reconcile_navigation(
     dispatch, msg, previous, model,
   )
+  // The empty composer has no durable conversation. Its temporary tabs do
+  // not reappear after leaving it, matching the old strip-switch behavior.
+  let previous_owner = previous.dock_owner()
+  let model = if previous_owner.session().is_empty() &&
+    previous_owner != model.dock_owner() {
+    let docks = model.docks.copy()
+    docks.remove(previous_owner)
+    { ..model, docks, }
+  } else {
+    model
+  }
   // The native dialog must not cover the desktop's connection-lost screen.
   // Detaching a workspace or losing its device also dismisses it.
   let model = {
@@ -1940,8 +1946,17 @@ fn update(
       { ..model, sidebar_mode, sidebar_revealed: revealed, }
     _ => model
   }
-  let sidebar_mode_cmd = if model.sidebar_mode != previous.sidebar_mode {
-    save_sidebar_mode(model.sidebar_mode)
+  let sidebar_mode_changed = model.sidebar_mode != previous.sidebar_mode
+  let model = if sidebar_mode_changed {
+    { ..model, session_search: @session_search.Model(), }
+  } else {
+    model
+  }
+  let sidebar_mode_cmd = if sidebar_mode_changed {
+    @cmd.batch([
+      save_sidebar_mode(model.sidebar_mode),
+      @session_search.clear_input(focus=false),
+    ])
   } else {
     @cmd.none
   }
@@ -1998,7 +2013,7 @@ fn update(
     model.right_panel_open &&
     msg.opens_file_before_panel_reconciliation() &&
     model.file_panel.error is None &&
-    @dock.active_file(model.dock) is Some(_)
+    @dock.active_file(model.dock_state()) is Some(_)
   let (panel_visibility_cmd, model) = if panel_visibility_changed &&
     !file_opened_with_panel {
     let (command, file_panel) = @fileeditor.panel_toggle_cmds(
@@ -2021,29 +2036,33 @@ fn update(
   }
   let ctx = file_ctx(model)
   let owns_panel = model.file_panel.owner == Some(ctx.owner)
-  let checkout = ctx.placement
-    .bind(placement => placement.checkout_root())
-    .map(root => {
-      let previous = model.github.scope.filter(checkout => {
-        checkout.channel == ctx.owner.channel && checkout.cwd == root.path
+  let checkout = ctx.owner
+    .host()
+    .bind(owner => {
+      ctx.placement
+      .bind(placement => placement.checkout_root())
+      .map(root => {
+        let previous = model.github.scope.filter(checkout => {
+          checkout.channel == owner.channel && checkout.cwd == root.path
+        })
+        @github.CheckoutScope::{
+          channel: owner.channel,
+          cwd: root.path,
+          head: if owns_panel {
+            model.file_panel.git_actual_head
+          } else {
+            previous.bind(checkout => checkout.head)
+          },
+          branch: match (owns_panel, model.file_panel.git_graph) {
+            (true, GitGraphReady(snapshot~, ..)) => snapshot.branch
+            _ => previous.bind(checkout => checkout.branch)
+          },
+        }
       })
-      @github.CheckoutScope::{
-        channel: ctx.owner.channel,
-        cwd: root.path,
-        head: if owns_panel {
-          model.file_panel.git_actual_head
-        } else {
-          previous.bind(checkout => checkout.head)
-        },
-        branch: match (owns_panel, model.file_panel.git_graph) {
-          (true, GitGraphReady(snapshot~, ..)) => snapshot.branch
-          _ => previous.bind(checkout => checkout.branch)
-        },
-      }
     })
   let github_visible = model.file_panel_visible() &&
     model.devices.any(dev => {
-      dev.channel == ctx.owner.channel &&
+      ctx.owner.host().map_or(false, owner => dev.channel == owner.channel) &&
       dev.bridge is Connected &&
       dev.reconnect_failures == 0
     })
@@ -2051,7 +2070,7 @@ fn update(
     dispatch.map(msg => Github(msg)),
     model.github,
     checkout,
-    github_visible && model.dock.active is Some(Github),
+    github_visible && model.dock_state().active is Some(Github),
     review_active=github_visible &&
       ctx.panel_open &&
       ctx.active_history_diff is None &&
@@ -2074,10 +2093,31 @@ fn update(
   // already explicit root transitions, so close it here instead of observing a
   // rendered owner marker through the DOM.
   let model = if model.right_panel_menu_open &&
-    model.dock.owner != previous.dock.owner {
+    model.dock_owner() != previous.dock_owner() {
     { ..model, right_panel_menu_open: false, }
   } else {
     model
+  }
+  // The overview's connectors and changes cards ask about their conversation
+  // whenever the overview comes on screen for one: shown, or another
+  // conversation arriving under it. What the engine holds and what another
+  // client attached change on their own and asking starts nothing, so every
+  // arrival asks.
+  let (overview_cmd, model) = match model.overview_conversation() {
+    Some(conversation) if previous.overview_conversation() != Some(conversation) => {
+      let (mcp_cmd, mcp) = @mcp.update(
+        dispatch.map(msg => Mcp(msg)),
+        Opened(conversation),
+        model.mcp,
+      )
+      let (changes_cmd, changes) = @session_changes.update(
+        dispatch.map(msg => Changes(msg)),
+        Opened(conversation),
+        model.changes,
+      )
+      (@cmd.batch([mcp_cmd, changes_cmd]), { ..model, mcp, changes, })
+    }
+    _ => (@cmd.none, model)
   }
   // Terminal input changes are reconciled as part of the root transition.
   // Host transport installation is declared separately by the root
@@ -2089,19 +2129,29 @@ fn update(
   )
   let model = { ..model, terminal, }
   let owner = model.jobs_owner()
-  let active = model.file_panel_visible() &&
-    model.dock.active is Some(Jobs) &&
-    owner is Some(owner) &&
+  let connected = owner is Some(owner) &&
     model.devices.any(dev => {
       dev.channel == owner.channel &&
       dev.bridge is Connected &&
       dev.reconnect_failures == 0
     })
+  // The Jobs panel reads the listing and the selected job's output; the
+  // overview's background tasks card reads only the listing.
+  let watch : @jobs.Watch = if !connected {
+    Unwatched
+  } else if model.file_panel_visible() &&
+    model.dock_state().active is Some(Jobs) {
+    Panel
+  } else if model.overview_jobs_owner() is Some(_) {
+    Summary
+  } else {
+    Unwatched
+  }
   let (jobs_cmd, jobs) = @jobs.reconcile(
     dispatch.map(msg => Jobs(msg)),
     model.jobs,
     owner,
-    active,
+    watch,
   )
   let model = { ..model, jobs, }
   let (preview, reloads) = model.preview.take_file_reloads()
@@ -2130,6 +2180,7 @@ fn update(
       panel_cmd,
       terminal_cmd,
       jobs_cmd,
+      overview_cmd,
       github_cmd,
       browser_cmd,
       preview_cmd,
@@ -2140,9 +2191,9 @@ fn update(
         @cmd.none
       },
       sync_dock_visibility(
-        model.dock.active != previous.dock.active ||
-        model.dock.tabs != previous.dock.tabs ||
-        model.dock.owner != previous.dock.owner ||
+        model.dock_state().active != previous.dock_state().active ||
+        model.dock_state().tabs != previous.dock_state().tabs ||
+        model.dock_owner() != previous.dock_owner() ||
         panel_visibility_changed ||
         msg.opens_file_before_panel_reconciliation() ||
         msg is Dock(TabActivated(_)),
@@ -2165,9 +2216,9 @@ fn close_dock_tabs(
   model : Model,
   selection : @dock.CloseSelection,
 ) -> (@cmd.Cmd, Model) {
-  let tabs = @dock.tabs_to_close(model.dock, selection)
+  let tabs = @dock.tabs_to_close(model.dock_state(), selection)
   guard !tabs.is_empty() else { return (@cmd.none, model) }
-  let active = model.dock.active
+  let active = model.dock_state().active
   let commands : Array[@cmd.Cmd] = []
   let mut next = model
   // Close background tabs first so the active tab does not promote and mount
@@ -2207,6 +2258,15 @@ fn update_msg(
   msg : Msg,
   model : Model,
 ) -> (@cmd.Cmd, Model) {
+  if ssh_open_target(msg, model) is Some(pending) {
+    let (focus, model) = focus_channel(dispatch, model, Remote(pending.host))
+    let (connect, model) = update_ssh(dispatch, Connect(pending.host), {
+      ..model,
+      screen: Chat,
+      ssh_ui: { ..model.ssh_ui, pending_open: Some(pending), },
+    })
+    return (@cmd.batch([focus, connect]), model)
+  }
   match msg {
     Init => {
       // Both pages boot the same console; they differ only in where its
@@ -2218,7 +2278,7 @@ fn update_msg(
       // subscriptions own their transcript and terminal DOM lifetimes.
       let device = if model.is_desktop {
         rotate_session(dispatch, model.focused, model.navigation.revision)
-      } else if @interop.page_query_param("device") == Some("host") {
+      } else if model.console.page_device == Some("host") {
         fetch_console_me(dispatch)
       } else {
         @cmd.none
@@ -2236,9 +2296,32 @@ fn update_msg(
         model,
       )
     }
+    DeleteCloudSession(account~, session~) => {
+      guard model.cloud.user_id == Some(account) &&
+        model.cloud.can_delete(session) &&
+        model.cloud.sessions.iter().find_first(item => item.id == session)
+        is Some(item) else {
+        return (@cmd.none, model)
+      }
+      (
+        @cmd.none,
+        {
+          ..model,
+          delete_confirm: Some(
+            CloudDelete(
+              account~,
+              session~,
+              title=item.title.unwrap_or(shell_text(model.locale, NewChatLabel)),
+            ),
+          ),
+          delete_pending: None,
+        },
+      )
+    }
     CloudAction(message) => update_cloud(dispatch, message, model)
     OpenCloudConversation(account~, session~) => {
-      guard model.cloud.user_id == Some(account) else {
+      guard model.cloud.user_id == Some(account) &&
+        !model.cloud.retired.contains(session) else {
         return (@cmd.none, model)
       }
       update_cloud(dispatch, @cloud.Open(session), {
@@ -2305,6 +2388,7 @@ fn update_msg(
       minimal_transcript~,
       model=stored,
       conversation_models=remembered,
+      conversation_approvals~,
       agent~,
       codex_model~,
       codex_effort~,
@@ -2378,6 +2462,9 @@ fn update_msg(
         default_agent,
         conversation_models: remembered
         .map(parse_conversation_models)
+        .unwrap_or([]),
+        reviewed_conversations: conversation_approvals
+        .map(parse_conversation_approvals)
         .unwrap_or([]),
         openseek_reasoning,
         glm_reasoning,
@@ -2509,10 +2596,41 @@ fn update_msg(
               @cloud.Submit(identity.owner, draft),
               model,
             )
+          @composer.DraftAttachmentsSubmitted(identity~, draft~, attachments~) =>
+            return update_cloud(
+              dispatch,
+              @cloud.SubmitAttachments(identity.owner, draft, attachments),
+              model,
+            )
+          @composer.MentionOpened(identity~, mention~) => {
+            if mention.ref_ is @mention_context.SemanticSearch(_) &&
+              model.cloud_identity() == Some(identity.owner) {
+              return open_semantic_selection(dispatch, model)
+            }
+            guard mention.ref_ is File(path~) else { return (@cmd.none, model) }
+            return open_cloud_file(
+              dispatch,
+              model,
+              identity.owner,
+              path,
+              mention.range,
+            )
+          }
+          @composer.FileIndexEnsured(identity~) => {
+            guard model.cloud_identity() == Some(identity.owner) else {
+              return (@cmd.none, model)
+            }
+            return update_msg(
+              dispatch,
+              FileEditor(@fileeditor.EnsureFileIndex),
+              model,
+            )
+          }
           _ => return (@cmd.none, model)
         }
       }
       match action {
+        @composer.DraftAttachmentsSubmitted(..) => (@cmd.none, model)
         @composer.ModelMenuToggled(..)
         | @composer.ReasoningMenuToggled(..)
         | @composer.SelectMenuDismissed(..)
@@ -2528,6 +2646,7 @@ fn update_msg(
         | @composer.PermissionSelected(..)
         | @composer.GitDetailsToggled(..)
         | @composer.WorktreeModeToggled(..)
+        | @composer.ApprovalModeToggled(..)
         | @composer.ApiSetupRequested(..)
         | @composer.QueuedInputEditRequested(..)
         | @composer.QueuedInputSteerRequested(..)
@@ -2667,6 +2786,29 @@ fn update_msg(
                 ArchiveSession(conv.device, conv.session_id),
                 model,
               )
+            @composer.ApprovalModeToggled(..) => {
+              // A running turn keeps the policy its engine started with; the
+              // switch is locked meanwhile, so a late click changes nothing.
+              guard !conv.is_running() else { return (@cmd.none, model) }
+              // The next start, compaction, or goal carries the choice, and
+              // the host gives the conversation a new engine when it differs.
+              let approval : @protocol.OpenSeekApproval = if model.approval_for(
+                  conv.device,
+                  conv.session_id,
+                )
+                is ApprovalReview {
+                ApprovalAsk
+              } else {
+                ApprovalReview
+              }
+              (
+                save_conversation_approval(
+                  conversation_model_key(conv.device, conv.session_id),
+                  approval,
+                ),
+                model.with_approval(conv.device, conv.session_id, approval),
+              )
+            }
             @composer.PermissionMenuToggled(..)
             | @composer.PermissionMenuDismissed(..)
             | @composer.PermissionSelected(..)
@@ -3028,7 +3170,7 @@ fn update_msg(
       (@cmd.batch([command, notice]), next)
     }
     FileEditor(@fileeditor.ReviewContextChanged(owner~, selection~, adding~)) => {
-      guard file_ctx(model).owner == owner &&
+      guard file_ctx(model).owner == @interop.Host(owner) &&
         model.file_panel.accepts_review_context(selection) else {
         return (@cmd.none, model)
       }
@@ -3212,7 +3354,11 @@ fn update_msg(
     // mention, and Quick Open navigation. An active picker is fulfilled in
     // place; an already-open file is activated.
     FileEditor(@fileeditor.SearchMatchSelected(path~, range~)) =>
-      request_open_path(dispatch, model, path, Some(range))
+      match model.cloud_identity() {
+        Some(owner) =>
+          open_cloud_file(dispatch, model, owner, path, Some(range))
+        None => request_open_path(dispatch, model, path, Some(range))
+      }
     SemanticSelectionMaterialized(owner~, submission_id~, artifact~) => {
       guard model.find_conversation(owner.channel, owner.session) is Some(conv) &&
         conv.pending_semantic_submission is Some(pending) &&
@@ -3557,7 +3703,21 @@ fn update_msg(
     }
     // The host classifies tree selections before the dock opens their viewer.
     FileEditor(FileSelected(path~, ..)) =>
-      request_open_path(dispatch, model, path.0, None)
+      if model.cloud_selected() {
+        guard file_ctx(model).root() is Some(root) else {
+          return (@cmd.none, model)
+        }
+        let model = model.begin_editor_navigation()
+        show_editor_resource(
+          dispatch,
+          model,
+          @resource.join_relative(root, path),
+          None,
+          file_link_generation=model.file_panel.file_link_generation,
+        )
+      } else {
+        request_open_path(dispatch, model, path.0, None)
+      }
     // A Changes row is the review action: open/activate the same ordinary file
     // tab, then let the file subsystem pair its working-tree document with the
     // row's HEAD path. Deleted rows have no working file but still use the
@@ -3572,13 +3732,13 @@ fn update_msg(
         return (@cmd.none, model)
       }
       let model = model.begin_editor_navigation()
-      let had_active = @dock.active_file(model.dock) is Some(_)
-      let dock = if model.dock.active is Some(FilePicker) {
-        @dock.resolve_pick(model.dock, File(path=resource))
+      let had_active = @dock.active_file(model.dock_state()) is Some(_)
+      let dock = if model.dock_state().active is Some(FilePicker) {
+        @dock.resolve_pick(model.dock_state(), File(path=resource))
       } else {
-        @dock.open_file(model.dock, resource)
+        @dock.open_file(model.dock_state(), resource)
       }
-      let model = { ..model, dock, }
+      let model = model.with_dock_state(dock)
       let (cmd, panel) = @fileeditor.open_changed_document(
         dispatch.map(msg => FileEditor(msg)),
         model.file_panel,
@@ -3611,8 +3771,8 @@ fn update_msg(
         return (@cmd.none, model)
       }
       let model = model.begin_editor_navigation()
-      let dock = @dock.open_history_diff(model.dock, diff)
-      let model = { ..model, dock, }
+      let dock = @dock.open_history_diff(model.dock_state(), diff)
+      let model = model.with_dock_state(dock)
       let (cmd, panel) = @fileeditor.open_history_diff(
         dispatch.map(msg => FileEditor(msg)),
         model.file_panel,
@@ -3625,8 +3785,8 @@ fn update_msg(
     // stamp rejects a language reply that outlived a conversation switch.
     FileEditor(OpenNavigationLocation(owner~, path~, range~)) => {
       guard model.file_panel.owner is Some(panel_owner) &&
-        panel_owner == owner &&
-        file_ctx(model).owner == owner else {
+        panel_owner == @interop.Host(owner) &&
+        file_ctx(model).owner == @interop.Host(owner) else {
         return (@cmd.none, model)
       }
       request_open_path(dispatch, model, path.0, Some(range))
@@ -3637,8 +3797,8 @@ fn update_msg(
     // toasts: one user gesture can cause Viewer to ask more than once.
     FileEditor(@fileeditor.LanguageRequestFailed(owner~, message~)) => {
       guard model.file_panel.owner is Some(panel_owner) &&
-        panel_owner == owner &&
-        file_ctx(model).owner == owner else {
+        panel_owner == @interop.Host(owner) &&
+        file_ctx(model).owner == @interop.Host(owner) else {
         return (@cmd.none, model)
       }
       if model.notifications.any(toast => toast.message == message) {
@@ -4281,6 +4441,18 @@ fn update_msg(
       (cmd, { ..next, update_ux, })
     }
     UpdateApplied => (close_window(), model)
+    OpenLocalApiSettings => {
+      let (cmd, focused) = focus_channel(dispatch, model, Local)
+      (
+        cmd,
+        {
+          ..focused,
+          screen: Settings,
+          setup_api_key: "",
+          api_setup_open: false,
+        },
+      )
+    }
     OpenSetup =>
       (
         @cmd.none,
@@ -4405,10 +4577,14 @@ fn update_msg(
     ToggleSidebar =>
       (@cmd.none, { ..model, sidebar_open: !model.sidebar_open, })
     SidebarModeSelected(sidebar_mode) => (@cmd.none, { ..model, sidebar_mode, })
-    // A conversation already on screen has claimed the list; the stored pick
-    // only decides what an empty page shows.
+    DeviceChosen(id) => (@nav.load(@routes.device_entry_path(id)), model)
+    // A conversation already on screen has claimed the list, and a Cloud
+    // destination shows the Chat list; the stored pick only decides what any
+    // other empty page shows.
     SidebarModeLoaded(sidebar_mode) =>
-      if model.sidebar_revealed is None {
+      if model.sidebar_revealed is None &&
+        !(model.navigation.location is Some(location) &&
+        location.target.is_cloud()) {
         (@cmd.none, { ..model, sidebar_mode, })
       } else {
         (@cmd.none, model)
@@ -4437,7 +4613,7 @@ fn update_msg(
       // resizes included (a rotation changes the host without crossing the
       // breakpoint).
       let cmds = if model.right_panel_open &&
-        @dock.active_file(model.dock) is Some(_) {
+        @dock.active_file(model.dock_state()) is Some(_) {
         [@fileeditor.request_viewer_remeasure()]
       } else {
         []
@@ -4750,6 +4926,7 @@ fn update_msg(
             model.max_steps,
             conv.session_id,
             workspace,
+            approval=model.approval_for(conv.device, conv.session_id),
             images=conv.images.map(image => image.url),
           )
         } else {
@@ -4763,6 +4940,7 @@ fn update_msg(
             model.max_steps,
             conv.session_id,
             workspace=conv.project(),
+            approval=model.approval_for(conv.device, conv.session_id),
             images=conv.images.map(image => image.url),
           )
         }
@@ -4861,7 +5039,10 @@ fn update_msg(
         .map(selection => (selection.channel, selection.workspace))
       }
       let mode : @sidebar.Mode = if !model.codex_work_selected() &&
-        model.cloud_identity() is Some(_) {
+        (
+          model.cloud_identity() is Some(_) ||
+          model.cloud_draft_identity() is Some(_)
+        ) {
         ChatMode
       } else if target is Some((channel, project)) {
         if model
@@ -4891,9 +5072,20 @@ fn update_msg(
       update_msg(dispatch, OpenFile(path), model)
     }
     TranscriptLocationOpened(slot~, target) => {
-      guard !model.cloud_selected() &&
-        model.transcript_slot().map(current => current.key()) == Some(slot) else {
+      guard model.transcript_slot().map(current => current.key()) == Some(slot) else {
         return (@cmd.none, model)
+      }
+      if model.cloud_selected() {
+        guard model.cloud_identity() is Some(owner) else {
+          return (@cmd.none, model)
+        }
+        return open_cloud_file(
+          dispatch,
+          model,
+          owner,
+          target.file,
+          target.range,
+        )
       }
       update_msg(
         dispatch,
@@ -5069,7 +5261,16 @@ fn update_msg(
     CancelArchiveDiscard => (@cmd.none, { ..model, archive_confirm: None, })
     ConfirmDeleteSession =>
       match model.delete_confirm {
-        Some(confirm) => {
+        Some(CloudDelete(account~, session~, ..)) => {
+          guard model.cloud.user_id == Some(account) else {
+            return (@cmd.none, { ..model, delete_confirm: None, })
+          }
+          update_cloud(dispatch, @cloud.Delete(session), {
+            ..model,
+            delete_confirm: None,
+          })
+        }
+        Some(HostDelete(confirm)) => {
           guard model.device_state(confirm.channel) is Some(dev) else {
             return (@cmd.none, { ..model, delete_confirm: None, })
           }
@@ -5083,6 +5284,12 @@ fn update_msg(
                   delete_confirm: None,
                   // The delete can still come back to be confirmed again.
                   delete_pending: Some((confirm.channel, confirm.key)),
+                  deletes_in_flight: model.confirm_delete(
+                    confirm.channel,
+                    confirm.key,
+                    LiveRecord,
+                    dev.sessions,
+                  ),
                 },
               )
             ArchivedChat(sessions~) => sessions
@@ -5100,6 +5307,14 @@ fn update_msg(
             {
               ..model.replace_device({ ..dev, archived_request_generation, }),
               delete_confirm: None,
+              // The host can announce the deletion before this reply, which
+              // the announcement then makes stale.
+              deletes_in_flight: model.confirm_delete(
+                confirm.channel,
+                confirm.key,
+                ArchivedRecord,
+                dev.archived,
+              ),
             },
           )
         }
@@ -5110,7 +5325,15 @@ fn update_msg(
     // backdrop: that second message must not drop the delete's own answer.
     CancelDeleteSession => (@cmd.none, { ..model, delete_confirm: None, })
     SessionRotated(owner) => {
-      guard model.cloud_identity() is None else { return (@cmd.none, model) }
+      guard model.cloud_identity() is None &&
+        (
+          model.navigation.new_chat_requested ||
+          !model.navigation.location.map_or(false, location => {
+            location.target.is_cloud()
+          })
+        ) else {
+        return (@cmd.none, model)
+      }
       // A delayed rotation is owned by the channel that requested it. A focus
       // switch overtakes it; activating the old owner's id here would yank the
       // user back to the host they already left.
@@ -5157,6 +5380,7 @@ fn update_msg(
         },
       )
     }
+    Ssh(msg) => update_ssh(dispatch, msg, model)
     PickProject(channel) => {
       // Focus moves for the surrounding UI, while the picker itself keeps
       // `channel` as its owner through every later navigation and confirm.
@@ -5195,7 +5419,27 @@ fn update_msg(
       } else {
         update(dispatch, PickProject(model.focused), model)
       }
-    ProjectPicker(msg) =>
+    ProjectPicker(msg) => {
+      // A suspended picker still owns its outstanding browse reply. Retain
+      // that reply so cancelling SSH returns to a usable directory listing.
+      if model.project_picker is None &&
+        model.ssh_ui.return_picker is Some(picker) {
+        let (cmd, next, _) = @project_picker.State::handle(
+          locale=model.locale,
+          picker,
+          dispatch.map(msg => ProjectPicker(msg)),
+          msg,
+        )
+        return (
+          cmd,
+          { ..model, ssh_ui: { ..model.ssh_ui, return_picker: next, }, },
+        )
+      }
+      let model = if msg is @project_picker.Close {
+        { ..model, ssh_ui: { ..model.ssh_ui, pick_after_connect: None, }, }
+      } else {
+        model
+      }
       match model.project_picker {
         Some(picker) => {
           let (cmd, next, outcome) = @project_picker.State::handle(
@@ -5204,7 +5448,18 @@ fn update_msg(
             dispatch.map(msg => ProjectPicker(msg)),
             msg,
           )
-          let model = { ..model, project_picker: next, }
+          let model = {
+            ..model,
+            project_picker: next,
+            ssh_ui: {
+              ..model.ssh_ui,
+              pick_after_connect: if next is None {
+                None
+              } else {
+                model.ssh_ui.pick_after_connect
+              },
+            },
+          }
           match outcome {
             None => (cmd, model)
             // A failed browse or create leaves the previous listing usable.
@@ -5226,6 +5481,7 @@ fn update_msg(
         }
         None => (@cmd.none, model)
       }
+    }
     RemoveProject(channel, path) =>
       // The row itself leaves with the registry commit broadcast; its open
       // "…" menu is component state and leaves with the keyed row.
@@ -5431,12 +5687,14 @@ fn update_msg(
         @cmd.none,
         {
           ..model,
-          delete_confirm: Some({
-            channel,
-            key,
-            title: session_item_label(item),
-            target: ArchivedChat(sessions~),
-          }),
+          delete_confirm: Some(
+            HostDelete({
+              channel,
+              key,
+              title: session_item_label(item),
+              target: ArchivedChat(sessions~),
+            }),
+          ),
           delete_pending: None,
         },
       )
@@ -5444,7 +5702,14 @@ fn update_msg(
     ConversationRenameRequested(id~, label~) =>
       // One edit at a time: a save still in flight keeps its field, so its
       // failure has somewhere to be shown.
-      if id.source() is (@conversation.OpenSeekLive | @conversation.CodexLive) &&
+      if (
+          id.source() is (@conversation.OpenSeekLive | @conversation.CodexLive) ||
+          (
+            id.source() is @conversation.CloudLive &&
+            model.cloud.user_id == Some(id.channel()) &&
+            model.cloud.can_edit(id.conversation(), @cloud.Rename(label))
+          )
+        ) &&
         !(model.conversation_rename is Some({ saving: true, .. })) {
         (
           focus_conversation_rename(),
@@ -5666,16 +5931,15 @@ fn update_msg(
     }
     OpenFile(path) => {
       if model.cloud_selected() {
-        return (
-          if path.has_prefix("https://") ||
-            path.has_prefix("http://") ||
-            path.has_prefix("mailto:") {
-            open_external_link(dispatch, path)
-          } else {
-            @cmd.none
-          },
-          model,
-        )
+        if path.has_prefix("https://") ||
+          path.has_prefix("http://") ||
+          path.has_prefix("mailto:") {
+          return (open_external_link(dispatch, path), model)
+        }
+        guard model.cloud_identity() is Some(owner) else {
+          return (@cmd.none, model)
+        }
+        return open_cloud_file(dispatch, model, owner, path, None)
       }
       request_open_path(dispatch, model, path, None)
     }
@@ -5725,6 +5989,21 @@ fn update_msg(
       )
     }
     CloseGitDetails => (@cmd.none, { ..model, git_details_open: false, })
+    // Showing the overview reads its conversation's connectors; the root
+    // transition notices the overview arriving and asks.
+    ToggleOverview => {
+      let overview_open = !model.overview_open
+      (save_overview_open(overview_open), { ..model, overview_open, })
+    }
+    OverviewLoaded(overview_open) => (@cmd.none, { ..model, overview_open, })
+    Overview(msg) =>
+      (
+        @cmd.none,
+        {
+          ..model,
+          overview: @conversation_overview.update(msg, model.overview),
+        },
+      )
     TranscriptLeft(slot~, scroll~) =>
       (
         @cmd.none,
@@ -5738,7 +6017,7 @@ fn update_msg(
       // A direct visibility toggle has no later semantic action to fence old
       // editor replies. Actions such as OpenFile and JumpToLocation spend
       // their own navigation generation before opening the panel.
-      let model = if !opening || model.dock.active is Some(_) {
+      let model = if !opening || model.dock_state().active is Some(_) {
         model.begin_editor_navigation()
       } else {
         model
@@ -5768,7 +6047,7 @@ fn update_msg(
         right_panel_expanded: !model.right_panel_expanded,
         sidebar_open: model.right_panel_expanded && model.sidebar_open,
       }
-      let cmd = if @dock.active_file(model.dock) is Some(_) {
+      let cmd = if @dock.active_file(model.dock_state()) is Some(_) {
         @fileeditor.request_viewer_remeasure()
       } else {
         @cmd.none
@@ -5777,6 +6056,8 @@ fn update_msg(
     }
     CloseRightPanelMenu =>
       (@cmd.none, { ..model, right_panel_menu_open: false, })
+    ConversationTransferMenuChanged(open) =>
+      (@cmd.none, { ..model, conversation_transfer_menu_open: open, })
     DockTabMenuChanged(open) =>
       (
         @cmd.none,
@@ -5911,9 +6192,41 @@ fn update_msg(
       update_msg(dispatch, Github(@github.UpdatePullRequest(review.url)), model)
     }
     FileEditor(msg) => {
+      // Download handoffs and errors belong to the account, even after
+      // navigation leaves the initiating file panel.
+      if msg
+        is (@fileeditor.FileDownloadReady(owner~, auth_epoch~, ..)
+        | @fileeditor.FileDownloaded(owner~, auth_epoch~, ..)) {
+        guard owner is @interop.Cloud(account~, ..) &&
+          model.cloud.epoch == auth_epoch &&
+          model.account is Some(credentials) &&
+          credentials.user.user_id == account else {
+          return (@cmd.none, model)
+        }
+      }
+      if msg
+        is @fileeditor.FileDownloadReady(
+          owner~,
+          auth_epoch~,
+          generation~,
+          path~,
+          bytes~
+        ) {
+        return (
+          @fileeditor.browser_download(
+            dispatch.map(next => FileEditor(next)),
+            owner,
+            auth_epoch,
+            generation,
+            path,
+            bytes,
+          ),
+          model,
+        )
+      }
       let preview = if msg
         is @fileeditor.StatsLoaded(owner~, epoch~, stats~, ..) &&
-        model.file_panel.owner == Some(owner) &&
+        model.file_panel.owner == Some(@interop.Host(owner)) &&
         model.file_panel.request_epoch == epoch {
         let mut preview = model.preview
         for stat in stats {
@@ -5930,6 +6243,12 @@ fn update_msg(
         model.file_panel,
         file_ctx(model),
       )
+      if msg is @fileeditor.FileDownloaded(result=Err(message), ..) {
+        let (notice, next) = { ..model, file_panel: panel, }.notify_error(
+          dispatch, message,
+        )
+        return (@cmd.batch([cmd, notice]), next)
+      }
       // The host can discover a closed/replaced PR while loading comments.
       // Feed that observation back through the one discovery owner. A retired
       // comment request must never invalidate a newer checkout's status.
@@ -5950,7 +6269,7 @@ fn update_msg(
       )
       if model.github.review_pending &&
         msg is @fileeditor.ChangesLoaded(owner~, generation~, files~, ..) &&
-        model.file_panel.owner == Some(owner) &&
+        model.file_panel.owner == Some(@interop.Host(owner)) &&
         model.file_panel.changes_generation == generation &&
         panel.changes_generation == generation &&
         panel.changes is ChangeListReady(refreshing=false, ..) {
@@ -5960,7 +6279,7 @@ fn update_msg(
         }
         // Only the Review navigation initiated by checkout may open a file.
         // A newer user selection wins while the snapshot is being fetched.
-        if next.dock.active is Some(FilePicker) &&
+        if next.dock_state().active is Some(FilePicker) &&
           next.file_panel.explorer_mode is ExplorerChanges &&
           files
           .iter()
@@ -5985,7 +6304,7 @@ fn update_msg(
       // The strip machine is pure; the cross-package effects of the
       // transition — showing or dropping documents, mounting hosts — are
       // commanded here off the before/after difference.
-      let before = model.dock
+      let before = model.dock_state()
       let dock = @dock.update(msg, before)
       // Only a real non-empty -> empty strip transition closes the panel.
       // An already-empty panel is the launcher surface, so a stale close must
@@ -5994,13 +6313,12 @@ fn update_msg(
       let model = if !before.tabs.is_empty() && dock.tabs.is_empty() {
         {
           ..model,
-          dock,
           right_panel_open: false,
           right_panel_menu_open: false,
           right_panel_expanded: false,
-        }
+        }.with_dock_state(dock)
       } else {
-        { ..model, dock, }
+        model.with_dock_state(dock)
       }
       let femit = dispatch.map(msg => FileEditor(msg))
       match msg {
@@ -6240,7 +6558,11 @@ fn update_msg(
     }
     BrowserTabRequested => {
       let model = model.begin_editor_navigation()
-      let (cmd, model) = open_browser_tab(dispatch, model, model.dock.owner)
+      let (cmd, model) = open_browser_tab(
+        dispatch,
+        model,
+        model.dock_owner().host(),
+      )
       (@cmd.batch([cmd, focus_browser_address()]), model)
     }
     ExplorerRequested(mode) => open_explorer(dispatch, model, mode)
@@ -6274,6 +6596,22 @@ fn update_msg(
         model.jobs,
       )
       (cmd, { ..model, jobs, })
+    }
+    Mcp(msg) => {
+      let (cmd, mcp) = @mcp.update(
+        dispatch.map(msg => Mcp(msg)),
+        msg,
+        model.mcp,
+      )
+      (cmd, { ..model, mcp, })
+    }
+    Changes(msg) => {
+      let (cmd, changes) = @session_changes.update(
+        dispatch.map(msg => Changes(msg)),
+        msg,
+        model.changes,
+      )
+      (cmd, { ..model, changes, })
     }
     Github(msg) => {
       let completed = msg is @github.CheckedOut(epoch, _) &&
@@ -6339,35 +6677,26 @@ fn update_msg(
     GithubRequested =>
       (
         @cmd.none,
-        {
-          ..model,
-          dock: @dock.open_github(model.dock),
-          right_panel_open: true,
-          right_panel_menu_open: false,
-        },
+        { ..model, right_panel_open: true, right_panel_menu_open: false, }.with_dock_state(
+          @dock.open_github(model.dock_state()),
+        ),
       )
     JobsRequested =>
       (
         @cmd.none,
-        {
-          ..model,
-          dock: @dock.open_jobs(model.dock),
-          right_panel_open: true,
-          right_panel_menu_open: false,
-        },
+        { ..model, right_panel_open: true, right_panel_menu_open: false, }.with_dock_state(
+          @dock.open_jobs(model.dock_state()),
+        ),
       )
     WorkflowsRequested =>
       (
         @cmd.none,
-        {
-          ..model,
-          dock: @dock.open_workflows(model.dock),
-          right_panel_open: true,
-          right_panel_menu_open: false,
-        },
+        { ..model, right_panel_open: true, right_panel_menu_open: false, }.with_dock_state(
+          @dock.open_workflows(model.dock_state()),
+        ),
       )
     BrowserAddressEdited(value) =>
-      match @dock.active_browser(model.dock) {
+      match @dock.active_browser(model.dock_state()) {
         Some(id) =>
           (
             @cmd.none,
@@ -6382,7 +6711,7 @@ fn update_msg(
         None => (@cmd.none, model)
       }
     BrowserNavigateSubmitted => {
-      guard @dock.active_browser(model.dock) is Some(id) &&
+      guard @dock.active_browser(model.dock_state()) is Some(id) &&
         @preview.page(model.preview, id) is Some(page) &&
         @preview.normalize_url(page.input) is Some(url) else {
         return (@cmd.none, model)
@@ -6406,7 +6735,7 @@ fn update_msg(
             id,
             url,
             model.theme.is_dark(model.system_dark),
-            model.dock.owner,
+            model.dock_owner().host(),
           ),
           { shown: None, rect: None, geo: None, },
         )
@@ -6419,7 +6748,7 @@ fn update_msg(
             id,
             url,
             model.theme.is_dark(model.system_dark),
-            model.dock.owner,
+            model.dock_owner().host(),
           ),
           model.browser_pane,
         )
@@ -6449,7 +6778,7 @@ fn update_msg(
         model,
       )
     BrowserOpenExternal => {
-      guard @dock.active_browser(model.dock) is Some(id) &&
+      guard @dock.active_browser(model.dock_state()) is Some(id) &&
         @preview.page(model.preview, id) is Some(page) &&
         page.url is Some(url) else {
         return (@cmd.none, model)
@@ -6494,7 +6823,7 @@ fn update_msg(
     }
     CloseActiveDockTab => {
       guard model.is_desktop else { return (@cmd.none, model) }
-      match model.dock.active {
+      match model.dock_state().active {
         Some(tab) => {
           let (cmd, model) = update_msg(dispatch, Dock(TabClosed(tab)), model)
           (@cmd.batch([cmd, focus_dock_after_render()]), model)
@@ -6584,69 +6913,16 @@ fn update_msg(
       let (cmd, export_dialog) = model.export_dialog.open(source, channel~)
       (cmd, { ..model, export_dialog, })
     }
-    OpenSessionSearch =>
-      update_msg(dispatch, SessionSearch(Open(model.focused)), model)
     SessionSearch(msg) => {
+      let results = model.sidebar_component_input().search_results()
       let (cmd, session_search, selected) = model.session_search.update(
-        dispatch.map(msg => SessionSearch(msg)),
-        msg,
+        msg, results,
       )
-      let model = { ..model, session_search, }
-      if selected is Some(selected) {
-        let hit = selected.hit
-        guard @resource.of_path(selected.channel, hit.workspace)
-          is Some(workspace) &&
-          model.device_state(selected.channel) is Some(dev) else {
-          return (cmd, model)
-        }
-        let item : @transcript.SessionListItem = {
-          id: hit.session,
-          title: Some(hit.title),
-          workspace,
-          workspace_name: hit.workspace,
-          updated_at_ms: hit.updated_at_ms,
-        }
-        // Search can find a record created since the last sidebar refresh.
-        // Seed its placement before using the ordinary conversation loader.
-        let dev = if hit.archived {
-          {
-            ..dev,
-            archived: [
-              item,
-              ..dev.archived.filter(existing => {
-                existing.id != hit.session || existing.workspace != workspace
-              }),
-            ],
-          }
-        } else {
-          {
-            ..dev,
-            sessions: [
-              item,
-              ..dev.sessions.filter(existing => {
-                existing.id != hit.session || existing.workspace != workspace
-              }),
-            ],
-          }
-        }
-        let model = model.replace_device(dev)
-        let (open_cmd, model) = update_msg(
-          dispatch,
-          if hit.archived {
-            OpenArchivedSession(
-              selected.channel,
-              session=hit.session,
-              workspace~,
-            )
-          } else {
-            OpenSession(selected.channel, hit.session)
-          },
-          model,
-        )
-        (@cmd.batch([cmd, open_cmd]), model)
-      } else {
-        (cmd, model)
+      let command = match selected {
+        Some(id) => SidebarDispatcher::{ emit: dispatch, }.conversation_open(id)
+        None => @cmd.none
       }
+      (@cmd.batch([cmd, command]), { ..model, session_search, })
     }
     OpenCloudExport => {
       guard model.cloud_identity() is Some(identity) else {
@@ -6654,9 +6930,72 @@ fn update_msg(
       }
       let (command, export_dialog) = model.export_dialog.open_cloud(
         session=identity.session(),
-        title=model.cloud_title(),
       )
       (command, { ..model, export_dialog, })
+    }
+    OpenSessionImport => {
+      let selected = if model.screen is Chat {
+        model.conversation_selection()
+      } else {
+        None
+      }
+      let workspace = match selected {
+        Some(selected) => Some(selected.workspace.path)
+        None =>
+          if model.sidebar_mode is WorkMode {
+            model
+            .device_state(model.focused)
+            .bind(dev => dev.active_project.map(p => p.path))
+          } else {
+            None
+          }
+      }
+      // Let the host's current registry choose placement even if this
+      // client's worktree inventory has not arrived yet.
+      let worktree_of = selected.map(selected => selected.session)
+      let (cmd, session_import_dialog) = model.session_import_dialog.open({
+        channel: model.focused,
+        connection_generation: model.focused_connection_generation(),
+        workspace: workspace.map_or(@session_import.Unplaced, path => {
+          @session_import.Registered(path)
+        }),
+        worktree_of,
+      })
+      (cmd, { ..model, session_import_dialog, })
+    }
+    SessionImport(msg) => {
+      let (cmd, session_import_dialog, imported) = model.session_import_dialog.update(
+        dispatch.map(msg => SessionImport(msg)),
+        msg,
+      )
+      let model = { ..model, session_import_dialog, }
+      guard imported is Some((target, session_id)) &&
+        model.device_state(target.channel) is Some(dev) &&
+        dev.connection_generation == target.connection_generation &&
+        model.console.page_device is Some(device) else {
+        return (cmd, model)
+      }
+      let (focus, model) = focus_channel(dispatch, model, target.channel)
+      let (sessions, model) = request_sessions_refresh(
+        dispatch,
+        target.channel,
+        model,
+      )
+      let (visit, model) = navigation_visit(
+        model,
+        { device: Some(device), target: Session(session_id), },
+        replace=false,
+      )
+      // The ordinary navigation resolver opens the session once its catalog
+      // row arrives. Workspace and worktree notifications use their existing
+      // handlers; the import reply carries no inventory snapshot.
+      (
+        @cmd.batch([cmd, focus, sessions, visit]),
+        {
+          ..model,
+          navigation: { ..model.navigation, phase: Waiting, sessions: None, },
+        },
+      )
     }
     ExportDialog(msg) => {
       let (login, model) = if msg is @export_dialog.SignIn {
@@ -6708,7 +7047,7 @@ fn update_msg(
         // The scan is over this strip's tabs, not the global page map: a
         // parked conversation may hold the same URL, and matching its page
         // first would shadow this strip's own tab forever.
-        let reuse = for tab in model.dock.tabs {
+        let reuse = for tab in model.dock_state().tabs {
           if tab is Browser(id~) &&
             @preview.page(model.preview, id) is Some(page) &&
             page.url is Some(page_url) &&
@@ -6720,7 +7059,7 @@ fn update_msg(
         }
         match reuse {
           Some(id) => {
-            let dock = @dock.open_browser(model.dock, id)
+            let dock = @dock.open_browser(model.dock_state(), id)
             // The reuse matched this page's optimistic URL mirror, which can
             // drift from what the native view actually shows — a host op that
             // failed, or a reload's `close_all` that swept the view. Focusing
@@ -6734,19 +7073,19 @@ fn update_msg(
                 id,
                 url,
                 model.theme.is_dark(model.system_dark),
-                model.dock.owner,
+                model.dock_owner().host(),
               ),
               {
                 ..model,
                 preview: @preview.navigate(model.preview, id, url),
-                dock,
                 browser_pane: { shown: None, rect: None, geo: None, },
                 right_panel_open: true,
                 right_panel_menu_open: false,
-              },
+              }.with_dock_state(dock),
             )
           }
-          None => open_browser_tab(dispatch, model, model.dock.owner, url~)
+          None =>
+            open_browser_tab(dispatch, model, model.dock_owner().host(), url~)
         }
       } else {
         (open_external_link(dispatch, url), model)
@@ -7023,6 +7362,9 @@ fn update_device_msg(
           dispatch, channel, connection_generation, projects_request_generation,
         ),
       ]
+      if channel == Local && model.is_desktop {
+        commands.push(ssh_load(dispatch))
+      }
       // The focused-scoped half: the host-settings mirror and installed
       // skills (they feed the composer's `$` completion, so
       // they load on connect rather than when the Skills page opens) follow
@@ -7137,6 +7479,33 @@ fn update_device_msg(
       } else {
         model
       }
+      // MCP reports are not replayed across a connection gap either: a panel
+      // holding a conversation on this device asks about it again.
+      let model = if model.mcp.conversation is Some(conversation) &&
+        conversation.channel == channel {
+        let (cmd, mcp) = @mcp.update(
+          dispatch.map(msg => Mcp(msg)),
+          Changed(conversation),
+          model.mcp,
+        )
+        commands.push(cmd)
+        { ..model, mcp, }
+      } else {
+        model
+      }
+      // Nor are attached-list changes.
+      let model = if model.changes.conversation is Some(conversation) &&
+        conversation.channel == channel {
+        let (cmd, changes) = @session_changes.update(
+          dispatch.map(msg => Changes(msg)),
+          Changed(conversation),
+          model.changes,
+        )
+        commands.push(cmd)
+        { ..model, changes, }
+      } else {
+        model
+      }
       guard channel == model.focused else {
         return (@cmd.batch(commands), model)
       }
@@ -7157,6 +7526,14 @@ fn update_device_msg(
     }
     BridgeUnavailable(message) =>
       (@cmd.none, model.replace_device({ ..dev, bridge: BridgeLost(message), }))
+    // Only the desktop window's local host ships with its frontend. SSH hosts
+    // can use an explicitly selected executable from a different build.
+    HostMismatched =>
+      if model.is_desktop && channel is Local {
+        update_device_msg(dispatch, channel, BridgeReady, model)
+      } else {
+        (@cmd.none, model.replace_device({ ..dev, bridge: HostIncompatible, }))
+      }
     ChannelDown(websocket_epoch~) => {
       // A close callback may already be queued when sign-out retires a
       // device. If the same relay id is later re-added, it owns a new epoch
@@ -7168,7 +7545,7 @@ fn update_device_msg(
       // comes back through this function, a removed or re-added device fails
       // the state/epoch guards and its old loop simply ends.
       let failures = dev.reconnect_failures + 1
-      let bridge = if failures == WsLostAfter {
+      let bridge = if failures >= WsLostAfter {
         BridgeLost(
           match model.locale {
             SimplifiedChinese =>
@@ -7184,7 +7561,7 @@ fn update_device_msg(
           },
         )
       } else {
-        dev.bridge
+        Connecting
       }
       (
         @cmd.delay(
@@ -8057,6 +8434,13 @@ fn update_device_msg(
         @cmd.none,
         { ..model, archive_confirm: Some({ channel, session, refusal, }), },
       )
+    DeleteStopped(key~, checkout~) =>
+      update_device_msg(
+        dispatch,
+        channel,
+        DeleteChecked(key~, checkout=Some(checkout)),
+        model.settle_delete(channel, key),
+      )
     DeleteChecked(key~, checkout~) => {
       // Only the question still outstanding opens a dialog, and only for a
       // chat still listed, titled from the record as it is listed now.
@@ -8070,12 +8454,14 @@ fn update_device_msg(
         @cmd.none,
         {
           ..model,
-          delete_confirm: Some({
-            channel,
-            key,
-            title: session_item_label(item),
-            target: LiveChat(checkout~),
-          }),
+          delete_confirm: Some(
+            HostDelete({
+              channel,
+              key,
+              title: session_item_label(item),
+              target: LiveChat(checkout~),
+            }),
+          ),
           delete_pending: None,
         },
       )
@@ -8251,7 +8637,11 @@ fn update_device_msg(
       )
       (@cmd.batch([refresh, archived, toast]), model)
     }
-    DeleteFailed(message) => {
+    DeleteFailed(message, deleting~) => {
+      let model = match deleting {
+        Some(key) => model.settle_delete(channel, key)
+        None => model
+      }
       // Either list may be what this page had wrong: the delete targets a
       // live row as well as an archived one.
       let (sessions, model) = request_sessions_refresh(dispatch, channel, model)
@@ -8263,11 +8653,16 @@ fn update_device_msg(
       (@cmd.batch([sessions, archived, toast]), model)
     }
     WorktreeFailed(message) => model.notify_error(dispatch, message)
-    SessionsFailed(message) =>
+    SessionsFailed(message~, connection_generation~, request_generation~) => {
+      guard connection_generation == dev.connection_generation &&
+        request_generation == dev.sessions_request_generation else {
+        return (@cmd.none, model)
+      }
       model.notify_error(
         dispatch,
         notice_text(model.locale, ListSessions(message.to_string())),
       )
+    }
     // Another client archived, restored, or deleted a conversation. Both
     // sidebar lists are stale, but this identity-bearing fact takes effect
     // immediately and remains authoritative over in-flight replies.
@@ -8321,14 +8716,25 @@ fn update_device_msg(
           conv.project() != key.workspace
         })
         let confirm = match changed.delete_confirm {
-          Some(confirm) if confirm.channel == channel && confirm.key == key =>
-            None
+          Some(HostDelete(confirm)) if confirm.channel == channel &&
+            confirm.key == key => None
           other => other
         }
         let next = changed
           .replace_device({ ..dev, sessions, archived, })
           .with_archive_override(channel, key, ArchiveDeleted)
-        return (commands, { ..next, conversations, delete_confirm: confirm, })
+        return (
+          commands,
+          {
+            ..next,
+            conversations,
+            delete_confirm: confirm,
+            // Every delete of this chat is settled by its removal.
+            deletes_in_flight: next.deletes_in_flight.filter(entry => {
+              entry.channel != channel || entry.key != key
+            }),
+          },
+        )
       }
       if change == "unarchived" {
         let mut restored : @transcript.SessionListItem? = None
@@ -9221,6 +9627,22 @@ fn update_device_msg(
       })
       (@cmd.none, { ..model, conversations: settled, })
     }
+    McpChanged(session) => {
+      let (cmd, mcp) = @mcp.update(
+        dispatch.map(msg => Mcp(msg)),
+        Changed({ channel, session, }),
+        model.mcp,
+      )
+      (cmd, { ..model, mcp, })
+    }
+    ArtifactsChanged(session) => {
+      let (cmd, changes) = @session_changes.update(
+        dispatch.map(msg => Changes(msg)),
+        Changed({ channel, session, }),
+        model.changes,
+      )
+      (cmd, { ..model, changes, })
+    }
     JobsChanged(session) => {
       let (jobs_cmd, model) = if model.jobs.owner is Some(owner) &&
         owner.channel == channel &&
@@ -9721,7 +10143,11 @@ fn update_device_msg(
         if first_finish {
           let (panel_cmd, panel_next) = update_msg(
             dispatch,
-            FileEditor(RunSettled(owner={ channel, session: conv.session_id, })),
+            FileEditor(
+              RunSettled(
+                owner=@interop.Host({ channel, session: conv.session_id, }),
+              ),
+            ),
             next,
           )
           commands.push(panel_cmd)
@@ -10143,6 +10569,7 @@ fn encoded_start_workspace(conv : Conversation) -> String? {
     conv.session_id,
     "test-submission",
     workspace=conv.project(),
+    approval=ApprovalAsk,
   )
   let json = payload.to_json()
   guard json is Object(fields) else { return None }
@@ -11707,7 +12134,15 @@ test "sessions failure pops a toast without touching the transcript" {
       { kind: User(content=Content([Text("hi")])), ts: None, sequence: None, },
     ],
   })
-  let (_, next) = update_dev(dispatch, SessionsFailed("engine exploded"), model)
+  let (_, next) = update_dev(
+    dispatch,
+    SessionsFailed(
+      message="engine exploded",
+      connection_generation=model.dev().connection_generation,
+      request_generation=model.dev().sessions_request_generation,
+    ),
+    model,
+  )
   inspect(next.notifications.length(), content="1")
   inspect(
     next.notifications[0].message,
@@ -11956,7 +12391,7 @@ test "a reconnect retires the file index watcher until placement returns" {
   }
   let panel = {
     ..model.file_panel,
-    owner: Some(owner),
+    owner: Some(@interop.Host(owner)),
     placement: @fileeditor.PlacementLive(@interop.WorkspaceRoot(root~)),
     watching: Some(watched),
     watch_generation: 7,
@@ -11972,7 +12407,7 @@ test "a reconnect retires the file index watcher until placement returns" {
   let (_, ready) = @fileeditor.update(
     file_emit,
     @fileeditor.FilesIndexed(
-      owner~,
+      owner=@interop.Host(owner),
       epoch=loading.request_epoch,
       files=[],
       truncated=false,
@@ -12021,7 +12456,7 @@ test "device focus retires the outgoing watcher and file index" {
   )
   let panel = {
     ..model.file_panel,
-    owner: Some(owner),
+    owner: Some(@interop.Host(owner)),
     placement: @fileeditor.PlacementLive(@interop.WorkspaceRoot(root~)),
     watching: Some({ owner, root, files: [], directories: [], recursive: true, }),
     watch_generation: 7,
@@ -12043,7 +12478,8 @@ test "device focus retires the outgoing watcher and file index" {
   // the new remote conversation starts without either resource.
   assert_eq(next.focused, remote)
   assert_true(
-    next.file_panel.owner is Some({ channel: Remote("remote-device"), .. }),
+    next.file_panel.owner
+    is Some(@interop.Host({ channel: Remote("remote-device"), .. })),
   )
   assert_true(next.file_panel.watching is None)
   assert_eq(next.file_panel.watch_generation, 8)
@@ -12119,6 +12555,18 @@ test "socket losses mark the bridge lost at the third consecutive drop" {
     one,
   )
   inspect(due.dev().reconnect_attempt, content="1")
+  let (_, again) = update(
+    dispatch,
+    FromDevice(channel, ChannelDown(websocket_epoch=0)),
+    model,
+  )
+  assert_true(
+    one.bridge_state() is Connecting && again.bridge_state() is Connecting,
+  )
+  assert_eq(one.dev().reconnect_failures, again.dev().reconnect_failures)
+  assert_eq(one.dev().reconnect_attempt, again.dev().reconnect_attempt)
+  assert_true(model.bridge_state() is Connected)
+  assert_eq(model.dev().reconnect_failures, 0)
   // Terminal retirement is covered by the terminal component's disconnect
   // test; the application state owns only the reconnect policy now.
   let (_, two) = update(
@@ -12127,13 +12575,21 @@ test "socket losses mark the bridge lost at the third consecutive drop" {
     due,
   )
   inspect(two.dev().reconnect_failures, content="2")
-  assert_true(two.bridge_state() is Connected)
+  assert_true(one.bridge_state() is Connecting)
+  assert_true(two.bridge_state() is Connecting)
   let (_, three) = update(
     dispatch,
     FromDevice(channel, ChannelDown(websocket_epoch=0)),
     two,
   )
   assert_true(three.bridge_state() is BridgeLost(_))
+  let (_, four) = update(
+    dispatch,
+    FromDevice(channel, ChannelDown(websocket_epoch=0)),
+    three,
+  )
+  assert_true(four.bridge_state() is BridgeLost(_))
+  assert_true(four.display_status() is Reconnecting)
 }
 
 ///|
@@ -14969,6 +15425,7 @@ test "loaded UI preferences parse their wire names" {
       conversation_models=Some(
         "[{\"key\":\"local/desktop-test\",\"model\":\"deepseek-v4-pro\"}]",
       ),
+      conversation_approvals=Some("[\"local/desktop-test\", 7]"),
       agent=Some("codex"),
       codex_model=Some("gpt-5.4-codex"),
       codex_effort=Some("xhigh"),
@@ -14986,6 +15443,14 @@ test "loaded UI preferences parse their wire names" {
   assert_true(restored.glm_reasoning is ReasoningMax)
   // The stored conversation outranks the stored default for its own chat.
   assert_true(restored.active().engine_model is DsPro)
+  // Its stored approval choice comes back too; a malformed row is skipped.
+  assert_true(
+    restored.approval_for(@interop.ChannelId::Local, "desktop-test")
+    is ApprovalReview,
+  )
+  assert_true(
+    restored.approval_for(@interop.ChannelId::Local, "other") is ApprovalAsk,
+  )
   // Unknown stored values fall back to the defaults.
   let (_, unknown) = update(
     dispatch,
@@ -14998,6 +15463,7 @@ test "loaded UI preferences parse their wire names" {
       minimal_transcript=false,
       model=None,
       conversation_models=Some("not json"),
+      conversation_approvals=None,
       agent=Some("broken"),
       codex_model=None,
       codex_effort=None,
@@ -15930,6 +16396,7 @@ test "the GLM provider aligns only a fresh chat to its model family" {
       minimal_transcript=false,
       model=Some("deepseek-v4-pro"),
       conversation_models=None,
+      conversation_approvals=None,
       agent=None,
       codex_model=None,
       codex_effort=None,
@@ -17011,23 +17478,13 @@ test "right-panel menu closes without reopening on a second dismissal" {
 
 ///|
 test "right-panel menu closes when the dock owner changes" {
-  let dispatch = test_dispatch()
   let model = desktop_model()
-  let stale_owner : @interop.ConversationKey = {
-    channel: @interop.Local,
-    session: "stale-panel-owner",
-  }
-  let stale = {
-    ..model,
-    right_panel_open: true,
-    right_panel_menu_open: true,
-    dock: { ..model.dock, owner: Some(stale_owner), },
-  }
-  // Any root message runs the centralized dock synchronization. The owner
-  // transition closes the menu directly, with no rendered marker or observer.
-  let (_, synced) = update(dispatch, CloseGitDetails, stale)
-  assert_false(synced.right_panel_menu_open)
-  assert_true(synced.dock.owner != Some(stale_owner))
+    .with_listed(["desktop-test", "other"])
+    .test_open_dock_conversation("desktop-test")
+  let menued = { ..model, right_panel_open: true, right_panel_menu_open: true, }
+  let switched = menued.test_open_dock_conversation("other")
+  assert_eq(switched.dock_owner().session(), "other")
+  assert_false(switched.right_panel_menu_open)
 }
 
 ///|
@@ -17401,7 +17858,7 @@ test "archived deletion confirmation owns one visible conversation family" {
     ),
     model,
   )
-  guard staged.delete_confirm is Some(confirm) else {
+  guard staged.delete_confirm is Some(HostDelete(confirm)) else {
     fail("delete confirmation was not staged")
   }
   assert_true(
@@ -17479,7 +17936,7 @@ test "deleting a live chat asks the host first and confirms what it reported" {
     DeleteChecked(key~, checkout=Some(clean)),
     asked,
   )
-  guard staged.delete_confirm is Some(confirm) else {
+  guard staged.delete_confirm is Some(HostDelete(confirm)) else {
     fail("the host's answer staged no confirmation")
   }
   assert_true(confirm.key == key)
@@ -17501,7 +17958,7 @@ test "deleting a live chat asks the host first and confirms what it reported" {
     DeleteChecked(key~, checkout=Some(dirty)),
     bubbled,
   )
-  guard refused.delete_confirm is Some(again) else {
+  guard refused.delete_confirm is Some(HostDelete(again)) else {
     fail("a refused delete staged no second confirmation")
   }
   assert_true(again.target == LiveChat(checkout=Some(dirty)))
@@ -17526,7 +17983,7 @@ test "deleting a live chat asks the host first and confirms what it reported" {
     DeleteChecked(key=other, checkout=None),
     late,
   )
-  guard current.delete_confirm is Some(latest) else {
+  guard current.delete_confirm is Some(HostDelete(latest)) else {
     fail("the latest question staged no confirmation")
   }
   assert_true(latest.key == other)
@@ -17659,7 +18116,7 @@ test "archived deletion keeps same-id rows in other stores" {
     DeleteSession(@interop.ChannelId::Local, key, ArchivedRecord),
     model,
   )
-  guard staged.delete_confirm is Some(confirm) else {
+  guard staged.delete_confirm is Some(HostDelete(confirm)) else {
     fail("delete confirmation was not staged")
   }
   assert_true(confirm.key == key)
@@ -18570,7 +19027,15 @@ test "an archive failure pops a toast that a click or its timer dismisses" {
 test "toast ids only ever grow, so timers and toasts stay paired" {
   let dispatch = test_dispatch()
   let (_, first) = update_dev(dispatch, ArchiveFailed("one"), test_model())
-  let (_, second) = update_dev(dispatch, SessionsFailed("two"), first)
+  let (_, second) = update_dev(
+    dispatch,
+    SessionsFailed(
+      message="two",
+      connection_generation=first.dev().connection_generation,
+      request_generation=first.dev().sessions_request_generation,
+    ),
+    first,
+  )
   inspect(second.notifications.length(), content="2")
   assert_true(second.notifications[0].id != second.notifications[1].id)
   inspect(second.notification_seq, content="2")
@@ -18669,7 +19134,7 @@ test "Codex sidebar selection uses the main conversation screen" {
   assert_true(opened.codex.active_id() is Some("codex-thread-1"))
   assert_true(
     opened.file_panel.owner
-    is Some({ channel: Local, session: "codex-thread-1", }),
+    is Some(@interop.Host({ channel: Local, session: "codex-thread-1", })),
   )
   let workspace = @interop.ChannelId::Local.test_resource("/work/codex-project")
   guard opened.active_checkout() is Some(active) else {
@@ -18710,7 +19175,7 @@ test "Codex sidebar selection uses the main conversation screen" {
   assert_true(opened_again.codex.active_id() is Some("codex-thread-1"))
   assert_true(
     opened_again.file_panel.owner
-    is Some({ channel: Local, session: "codex-thread-1", }),
+    is Some(@interop.Host({ channel: Local, session: "codex-thread-1", })),
   )
 }
 
@@ -18737,7 +19202,7 @@ test "cwd-less Codex tasks keep Files unavailable and use scratch Terminal" {
   })
   let model = { ..test_model(), codex, screen: Codex, }
   let files = file_ctx(model)
-  inspect(files.owner.session, content="codex-scratch-1")
+  inspect(files.owner.session(), content="codex-scratch-1")
   assert_true(files.placement is None)
 
   // The owner remains stable for async fencing. Terminal identifies the
@@ -18836,6 +19301,7 @@ test "installed skills replies are scoped to their source device" {
       description: "",
       source: "old/source@1.0.0",
       registry: Some({ module_name: "old/source", package_path: "", }),
+      enabled: true,
     },
   ]
   let (_, ignored) = update(
@@ -18851,6 +19317,7 @@ test "installed skills replies are scoped to their source device" {
       description: "",
       source: "new/source@1.0.0",
       registry: Some({ module_name: "new/source", package_path: "", }),
+      enabled: true,
     },
   ]
   let (_, applied) = update(
@@ -18866,35 +19333,23 @@ test "installed skills replies are scoped to their source device" {
 test "file editor context reports the file body actual visibility" {
   let model = test_model()
   let path = @pathx.Relative("src/main.mbt")
-  let file_model = {
-    ..model,
-    right_panel_open: true,
-    dock: {
-      ..model.dock,
-      tabs: [File(path=model.test_file(path.0))],
-      active: Some(File(path=model.test_file(path.0))),
-    },
-  }
+  let file_model = { ..model, right_panel_open: true, }.with_dock_state({
+    tabs: [File(path=model.test_file(path.0))],
+    active: Some(File(path=model.test_file(path.0))),
+  })
   assert_true(file_ctx(file_model).panel_open)
   assert_false(file_ctx({ ..file_model, right_panel_open: false, }).panel_open)
-  let picker_model = {
-    ..file_model,
-    dock: { ..file_model.dock, tabs: [FilePicker], active: Some(FilePicker), },
-  }
+  let picker_model = file_model.with_dock_state({
+    tabs: [FilePicker],
+    active: Some(FilePicker),
+  })
   assert_true(file_ctx(picker_model).panel_open)
-  let browser_model = {
-    ..file_model,
-    dock: {
-      ..file_model.dock,
-      tabs: [Browser(id=1)],
-      active: Some(Browser(id=1)),
-    },
-  }
+  let browser_model = file_model.with_dock_state({
+    tabs: [Browser(id=1)],
+    active: Some(Browser(id=1)),
+  })
   assert_false(file_ctx(browser_model).panel_open)
-  let launcher_model = {
-    ..file_model,
-    dock: { ..file_model.dock, tabs: [], active: None, },
-  }
+  let launcher_model = file_model.with_dock_state(@dock.DockState::empty())
   assert_false(file_ctx(launcher_model).panel_open)
   assert_false(file_ctx({ ..file_model, screen: Skills, }).panel_open)
   assert_false(file_ctx({ ..file_model, screen: Settings, }).panel_open)
@@ -18958,7 +19413,7 @@ test "JumpToMention opens the editor panel and selects the mention's file" {
   })
   let (_, next) = update(dispatch, JumpToMention(0), model)
   assert_false(next.right_panel_open)
-  assert_true(next.dock.tabs.is_empty())
+  assert_true(next.dock_state().tabs.is_empty())
   let next = next.test_resolve_editor("src/main.mbt")
   assert_true(next.right_panel_open)
   assert_true(next.active_workspace_file() is Some(Relative("src/main.mbt")))
@@ -18984,7 +19439,7 @@ test "JumpToMention opens the editor panel and selects the mention's file" {
     )
     let response = OpenPathResolved(
       FileOpenContext::new(
-        file_ctx(pending).owner,
+        file_ctx(pending).owner.host().unwrap(),
         pending.file_panel.file_link_generation,
         range?,
         annotation?,
@@ -19036,7 +19491,10 @@ test "directory reveal opens a picker without changing the manual tree preferenc
     let (_, revealed) = update(
       dispatch,
       OpenPathResolved(
-        FileOpenContext::new(owner, pending.file_panel.file_link_generation),
+        FileOpenContext::new(
+          owner.host().unwrap(),
+          pending.file_panel.file_link_generation,
+        ),
         Directory({ path: "src/nested", }),
       ),
       pending,
@@ -19046,7 +19504,7 @@ test "directory reveal opens a picker without changing the manual tree preferenc
     assert_true(revealed.file_panel.expanded.contains(Relative("src")))
     assert_true(revealed.file_panel.expanded.contains(Relative("src/nested")))
     assert_false(revealed.file_panel.tree_open)
-    assert_true(revealed.dock.active is Some(FilePicker))
+    assert_true(revealed.dock_state().active is Some(FilePicker))
     let (_, settled) = update(dispatch, file_loaded, revealed)
     assert_true(settled.file_panel.docs[file].state is @fileeditor.TabPdf(..))
     assert_false(settled.file_panel.tree_open)
@@ -19080,7 +19538,7 @@ test "resolved transcript files and directories stay in the right panel" {
   )
   let (_, directory) = update(dispatch, directory_msg, directory_pending)
   assert_true(directory.right_panel_open)
-  assert_true(directory.dock.active is Some(FilePicker))
+  assert_true(directory.dock_state().active is Some(FilePicker))
   assert_true(
     @fileeditor.editor_classes(directory.file_panel, file_ctx(directory)).contains(
       "tree-open",
@@ -19108,7 +19566,7 @@ test "resolved transcript files and directories stay in the right panel" {
   )
   let (_, browser) = update(dispatch, browser_msg, pending)
   assert_true(browser.right_panel_open)
-  assert_true(@dock.active_browser(browser.dock) is Some(_))
+  assert_true(@dock.active_browser(browser.dock_state()) is Some(_))
   assert_eq(browser.preview.pages.length(), 1)
   let (_, reused) = update(dispatch, browser_msg, browser)
   assert_eq(reused.preview.pages.length(), 1)
@@ -19142,17 +19600,17 @@ test "resolved transcript files and directories stay in the right panel" {
       pending.file_panel.file_link_generation,
       repeated.file_panel.file_link_generation,
     )
-    assert_true(pending.dock == picker.dock)
+    assert_true(pending.dock_state() == picker.dock_state())
     let response = OpenPathResolved(
       FileOpenContext::new(owner, pending.file_panel.file_link_generation),
       Browser("/work/project/" + name),
     )
     let (_, opened) = update(dispatch, response, pending)
     let (_, replayed) = update(dispatch, response, pending)
-    assert_true(opened.dock == replayed.dock)
-    assert_false(opened.dock.tabs.contains(@dock.DockTab::FilePicker))
-    assert_eq(opened.dock.tabs.length(), 1)
-    assert_true(@dock.active_browser(opened.dock) is Some(_))
+    assert_true(opened.dock_state() == replayed.dock_state())
+    assert_false(opened.dock_state().tabs.contains(@dock.DockTab::FilePicker))
+    assert_eq(opened.dock_state().tabs.length(), 1)
+    assert_true(@dock.active_browser(opened.dock_state()) is Some(_))
   }
   // A mention from another conversation parks its result under that owner.
   let target_owner : @interop.ConversationKey = {
@@ -19186,11 +19644,11 @@ test "resolved transcript files and directories stay in the right panel" {
   let (_, parked) = update(dispatch, response, pending)
   let (_, replayed) = update(dispatch, response, pending)
   assert_eq(parked.active_session, background.active_session)
-  assert_true(parked.dock == replayed.dock)
-  assert_eq(parked.dock.owner, Some(owner))
-  assert_true(parked.dock.active is None)
+  assert_true(parked.dock_state() == replayed.dock_state())
+  assert_true(parked.dock_owner() == @interop.Host(owner))
+  assert_true(parked.dock_state().active is None)
   assert_true(
-    parked.dock.remembered.get(target_owner)
+    parked.docks.get(@interop.Host(target_owner))
     is Some({ active: Some(Browser(..)), .. }),
   )
   let (_, obsolete) = update(
@@ -19273,14 +19731,12 @@ test "update is pure: a resolved transcript position opens its owning file" {
     panel_closed,
   )
   assert_false(after_closed_reply.right_panel_open)
-  assert_true(after_closed_reply.dock.active is None)
+  assert_true(after_closed_reply.dock_state().active is None)
   // Revealing an existing tab is also a newer dock navigation. The pending
   // reply cannot replace the file the user chose to bring back on screen.
-  let hidden_pending = {
-    ..latest_pending,
-    dock: @dock.open_file(latest_pending.dock, model.test_file("README.md")),
-    right_panel_open: false,
-  }
+  let hidden_pending = { ..latest_pending, right_panel_open: false, }.with_dock_state(
+    @dock.open_file(latest_pending.dock_state(), model.test_file("README.md")),
+  )
   let (_, panel_opened) = update(dispatch, ToggleRightPanel, hidden_pending)
   assert_true(panel_opened.right_panel_open)
   assert_eq(panel_opened.file_panel.file_link_generation, 3)
@@ -19299,7 +19755,9 @@ test "update is pure: a resolved transcript position opens its owning file" {
     after_opened_reply.active_workspace_file() is Some(Relative("README.md")),
   )
   assert_false(
-    after_opened_reply.dock.tabs.contains(@dock.DockTab::File(path=main_file)),
+    after_opened_reply.dock_state().tabs.contains(
+      @dock.DockTab::File(path=main_file),
+    ),
   )
   // The first host reply is stale as soon as the second click happens.
   let (_, old_host_reply) = update(
@@ -19310,7 +19768,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     ),
     latest_pending,
   )
-  assert_true(old_host_reply.dock.active is None)
+  assert_true(old_host_reply.dock_state().active is None)
   let msg = OpenPathResolved(
     FileOpenContext::new(owner, 2),
     Editor({ path: "src/main.mbt", line: Some(2738), column: Some(17), }),
@@ -19342,7 +19800,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     dispatch,
     FileEditor(
       @fileeditor.FileFailed(
-        owner~,
+        owner=@interop.Host(owner),
         epoch=ordinary_pending.file_panel.request_epoch,
         path=main_file,
         file_link_generation=Some(3),
@@ -19362,7 +19820,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     dispatch,
     FileEditor(
       @fileeditor.FileLoaded(
-        owner~,
+        owner=@interop.Host(owner),
         epoch=ordinary_failed.file_panel.request_epoch,
         path=main_file,
         name="main.mbt",
@@ -19383,7 +19841,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     dispatch,
     FileEditor(
       @fileeditor.FileLoaded(
-        owner~,
+        owner=@interop.Host(owner),
         epoch=first.file_panel.request_epoch,
         path=main_file,
         name="main.mbt",
@@ -19406,7 +19864,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     dispatch,
     FileEditor(
       @fileeditor.FileFailed(
-        owner~,
+        owner=@interop.Host(owner),
         epoch=first.file_panel.request_epoch,
         path=main_file,
         file_link_generation=Some(1),
@@ -19427,7 +19885,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     dispatch,
     FileEditor(
       @fileeditor.FileFailed(
-        owner~,
+        owner=@interop.Host(owner),
         epoch=first.file_panel.request_epoch,
         path=main_file,
         file_link_generation=Some(2),
@@ -19446,7 +19904,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     dispatch,
     FileEditor(
       @fileeditor.FileLoaded(
-        owner~,
+        owner=@interop.Host(owner),
         epoch=first.file_panel.request_epoch,
         path=main_file,
         name="main.mbt",
@@ -19488,7 +19946,9 @@ test "update is pure: a resolved transcript position opens its owning file" {
     pending_generation + 1,
   )
   assert_false(
-    inactive_closed.dock.tabs.contains(@dock.DockTab::File(path=main_file)),
+    inactive_closed.dock_state().tabs.contains(
+      @dock.DockTab::File(path=main_file),
+    ),
   )
   let (_, after_inactive_reply) = update(
     dispatch,
@@ -19499,7 +19959,9 @@ test "update is pure: a resolved transcript position opens its owning file" {
     inactive_closed,
   )
   assert_false(
-    after_inactive_reply.dock.tabs.contains(@dock.DockTab::File(path=main_file)),
+    after_inactive_reply.dock_state().tabs.contains(
+      @dock.DockTab::File(path=main_file),
+    ),
   )
   // A later tree pick competes with the transcript request just like a newer
   // transcript click: it advances the same token before opening its document.
@@ -19536,7 +19998,7 @@ test "update is pure: a resolved transcript position opens its owning file" {
     ),
     latest_pending,
   )
-  assert_true(stale.dock.active is None)
+  assert_true(stale.dock_state().active is None)
   assert_false(stale.file_panel.docs.contains(main_file))
 }
 
@@ -19550,7 +20012,7 @@ test "JumpToMention is a no-op for a chip without a resolved location" {
   })
   let (_, next) = update(dispatch, JumpToMention(0), model)
   assert_false(next.right_panel_open)
-  assert_true(next.dock.active is None)
+  assert_true(next.dock_state().active is None)
 }
 
 ///|
@@ -19769,7 +20231,7 @@ test "original-revision diff comment chip does not navigate into the working fil
   })
   let (_, next) = update(dispatch, JumpToMention(0), model)
   assert_false(next.right_panel_open)
-  assert_true(next.dock.active is None)
+  assert_true(next.dock_state().active is None)
 }
 
 ///|
@@ -19926,10 +20388,12 @@ test "chip jumps relativize legacy absolute paths against the roots" {
     ..model,
     file_panel: {
       ..model.file_panel,
-      owner: Some({
-        channel: @interop.ChannelId::Remote("previous"),
-        session: "previous-session",
-      }),
+      owner: Some(
+        @interop.Host({
+          channel: @interop.ChannelId::Remote("previous"),
+          session: "previous-session",
+        }),
+      ),
       tree_open: false,
       explorer_mode: @fileeditor.ExplorerChanges,
       changes_generation: 7,
@@ -19990,7 +20454,7 @@ test "chip jumps relativize legacy absolute paths against the roots" {
   )
   let outside = outside.test_resolve_editor("/elsewhere/note.md")
   let external = @interop.ChannelId::Local.test_resource("/elsewhere/note.md")
-  assert_true(@dock.active_file(outside.dock) == Some(external))
+  assert_true(@dock.active_file(outside.dock_state()) == Some(external))
   assert_true(outside.file_panel.docs.contains(external))
   assert_true(outside.active_workspace_file() is None)
   assert_true(outside.file_panel.error is None)
@@ -20004,20 +20468,19 @@ test "RevealDirectory(\"\") opens the workspace breadcrumb picker" {
     channel: Local,
     session: "desktop-test",
   }
-  let dock = {
-    ..@dock.open_file(model.dock, model.test_file("README.md")),
-    owner: Some(owner),
-  }
+  let dock = @dock.open_file(model.dock_state(), model.test_file("README.md"))
   let panel = {
     ..model.file_panel,
-    owner: Some(owner),
+    owner: Some(@interop.Host(owner)),
     tree_open: false,
     highlighted: Some(Relative("src")),
   }
   let (_, next) = update(
     dispatch,
     FileEditor(RevealDirectory(@pathx.Relative::root())),
-    { ..model, dock, file_panel: panel, right_panel_open: true, },
+    { ..model, file_panel: panel, right_panel_open: true, }.with_dock_state(
+      dock,
+    ),
   )
   // The active tab and docked explorer stay put while the picker opens.
   assert_true(next.active_workspace_file() is Some(Relative("README.md")))
@@ -20031,7 +20494,7 @@ test "RevealDirectory loads an uncached breadcrumb directory" {
   let model = test_model()
   let panel = {
     ..model.file_panel,
-    owner: Some({ channel: Local, session: "desktop-test", }),
+    owner: Some(@interop.Host({ channel: Local, session: "desktop-test", })),
   }
   let (_, next) = update(
     dispatch,
@@ -20052,7 +20515,7 @@ test "RevealDirectory on an already-cached directory needs no reload" {
   ])
   let panel = {
     ..model.file_panel,
-    owner: Some({ channel: Local, session: "desktop-test", }),
+    owner: Some(@interop.Host({ channel: Local, session: "desktop-test", })),
     children,
   }
   let (_, next) = update(
@@ -20073,7 +20536,7 @@ test "HighlightCleared only clears a highlight that still matches" {
   // panel and clears the highlight itself.
   let panel = {
     ..model.file_panel,
-    owner: Some({ channel: Local, session: "desktop-test", }),
+    owner: Some(@interop.Host({ channel: Local, session: "desktop-test", })),
     highlighted: Some(Relative("src")),
   }
   let (_, stale) = update(
@@ -21687,18 +22150,19 @@ test "launcher rows open Browser and all Explorer destinations" {
   assert_true(model.right_panel_menu_open)
   let (_, model) = update(dispatch, BrowserTabRequested, model)
   assert_false(model.right_panel_menu_open)
-  assert_true(@dock.active_browser(model.dock) == Some(1))
+  assert_true(@dock.active_browser(model.dock_state()) == Some(1))
   let page = @preview.page(model.preview, 1).unwrap()
   assert_true(page.url is None)
   assert_false(page.loading)
   let (_, model) = update(dispatch, ExplorerRequested(ExplorerFiles), model)
-  assert_true(model.dock.active == Some(@dock.DockTab::FilePicker))
+  assert_true(model.dock_state().active == Some(@dock.DockTab::FilePicker))
   assert_true(model.file_panel.explorer_mode is ExplorerFiles)
   assert_true(
-    model.dock.tabs == [@dock.DockTab::Browser(id=1), @dock.DockTab::FilePicker],
+    model.dock_state().tabs ==
+    [@dock.DockTab::Browser(id=1), @dock.DockTab::FilePicker],
   )
   let (_, model) = update(dispatch, ExplorerRequested(ExplorerChanges), model)
-  assert_true(model.dock.active == Some(@dock.DockTab::FilePicker))
+  assert_true(model.dock_state().active == Some(@dock.DockTab::FilePicker))
   assert_true(model.file_panel.explorer_mode is ExplorerChanges)
   assert_true(model.file_panel.changes is ChangeListLoading(_))
   // Files is an explicit destination even after Review selected Changes.
@@ -21723,11 +22187,12 @@ test "CloseDockTabs All keeps the empty launcher at the chosen panel size" {
     right_panel_expanded: true,
   }
   assert_true(
-    mixed.dock.tabs == [@dock.DockTab::Browser(id=1), @dock.DockTab::FilePicker],
+    mixed.dock_state().tabs ==
+    [@dock.DockTab::Browser(id=1), @dock.DockTab::FilePicker],
   )
   let (_, closed) = update(dispatch, CloseDockTabs(All), mixed)
-  assert_true(closed.dock.tabs.is_empty())
-  assert_true(closed.dock.active is None)
+  assert_true(closed.dock_state().tabs.is_empty())
+  assert_true(closed.dock_state().active is None)
   assert_true(@preview.page(closed.preview, 1) is None)
   assert_true(closed.right_panel_open)
   assert_false(closed.right_panel_menu_open)
@@ -21749,22 +22214,24 @@ test "relative tab close preserves survivors and tears down only selected pages"
   let mixed = { ..second, right_panel_expanded: true, }
   let (_, left) = update(dispatch, CloseDockTabs(ToLeft(FilePicker)), mixed)
   assert_true(
-    left.dock.tabs == [@dock.DockTab::FilePicker, @dock.DockTab::Browser(id=2)],
+    left.dock_state().tabs ==
+    [@dock.DockTab::FilePicker, @dock.DockTab::Browser(id=2)],
   )
-  assert_true(left.dock.active == Some(@dock.DockTab::Browser(id=2)))
+  assert_true(left.dock_state().active == Some(@dock.DockTab::Browser(id=2)))
   assert_true(@preview.page(left.preview, 1) is None)
   assert_true(@preview.page(left.preview, 2) is Some(_))
   assert_true(left.right_panel_expanded)
   let (_, right) = update(dispatch, CloseDockTabs(ToRight(FilePicker)), mixed)
   assert_true(
-    right.dock.tabs == [@dock.DockTab::Browser(id=1), @dock.DockTab::FilePicker],
+    right.dock_state().tabs ==
+    [@dock.DockTab::Browser(id=1), @dock.DockTab::FilePicker],
   )
-  assert_true(right.dock.active == Some(@dock.DockTab::FilePicker))
+  assert_true(right.dock_state().active == Some(@dock.DockTab::FilePicker))
   assert_true(@preview.page(right.preview, 1) is Some(_))
   assert_true(@preview.page(right.preview, 2) is None)
   let (_, others) = update(dispatch, CloseDockTabs(Others(FilePicker)), mixed)
-  assert_true(others.dock.tabs == [@dock.DockTab::FilePicker])
-  assert_true(others.dock.active == Some(@dock.DockTab::FilePicker))
+  assert_true(others.dock_state().tabs == [@dock.DockTab::FilePicker])
+  assert_true(others.dock_state().active == Some(@dock.DockTab::FilePicker))
   assert_true(@preview.page(others.preview, 1) is None)
   assert_true(@preview.page(others.preview, 2) is None)
   assert_true(others.right_panel_open)
@@ -21784,11 +22251,12 @@ test "a tree pick fulfills the active picker in place" {
   )
   let model = model.test_resolve_editor("src/main.mbt")
   assert_true(
-    model.dock.tabs ==
+    model.dock_state().tabs ==
     [@dock.DockTab::File(path=model.test_file("src/main.mbt"))],
   )
   assert_true(
-    @dock.active_file(model.dock) == Some(model.test_file("src/main.mbt")),
+    @dock.active_file(model.dock_state()) ==
+    Some(model.test_file("src/main.mbt")),
   )
 }
 
@@ -21813,9 +22281,12 @@ test "a changed row opens the file tab in review mode" {
     model,
   )
   assert_true(
-    model.dock.tabs == [@dock.DockTab::File(path=model.test_file(path.0))],
+    model.dock_state().tabs ==
+    [@dock.DockTab::File(path=model.test_file(path.0))],
   )
-  assert_true(@dock.active_file(model.dock) == Some(model.test_file(path.0)))
+  assert_true(
+    @dock.active_file(model.dock_state()) == Some(model.test_file(path.0)),
+  )
   assert_true(
     model.file_panel.docs.get(model.test_file(path.0))
     is Some(
@@ -21863,7 +22334,9 @@ test "file rows and location jumps cannot open while checkout placement is missi
     FileEditor(FileSelected(path~, name="main.mbt")),
     model,
   )
-  assert_false(ordinary.dock.tabs.contains(@dock.DockTab::File(path=file)))
+  assert_false(
+    ordinary.dock_state().tabs.contains(@dock.DockTab::File(path=file)),
+  )
   assert_false(ordinary.file_panel.docs.contains(file))
   let (_, review) = update(
     dispatch,
@@ -21878,7 +22351,9 @@ test "file rows and location jumps cannot open while checkout placement is missi
     ),
     model,
   )
-  assert_false(review.dock.tabs.contains(@dock.DockTab::File(path=file)))
+  assert_false(
+    review.dock_state().tabs.contains(@dock.DockTab::File(path=file)),
+  )
   assert_false(review.file_panel.docs.contains(file))
   let (_, jumped) = update(
     dispatch,
@@ -21889,20 +22364,24 @@ test "file rows and location jumps cannot open while checkout placement is missi
     ),
     model,
   )
-  assert_false(jumped.dock.tabs.contains(@dock.DockTab::File(path=file)))
+  assert_false(
+    jumped.dock_state().tabs.contains(@dock.DockTab::File(path=file)),
+  )
   assert_false(jumped.file_panel.docs.contains(file))
   let (_, navigation) = update(
     dispatch,
     FileEditor(
       OpenNavigationLocation(
-        owner=file_ctx(model).owner,
+        owner=file_ctx(model).owner.host().unwrap(),
         path~,
         range=@common.Range(1, 1, 1, 1),
       ),
     ),
     model,
   )
-  assert_false(navigation.dock.tabs.contains(@dock.DockTab::File(path=file)))
+  assert_false(
+    navigation.dock_state().tabs.contains(@dock.DockTab::File(path=file)),
+  )
   assert_false(navigation.file_panel.docs.contains(file))
 }
 
@@ -21913,7 +22392,7 @@ test "language request failures toast once and remain conversation fenced" {
   let owner = file_ctx(model).owner
   let msg = FileEditor(
     @fileeditor.LanguageRequestFailed(
-      owner~,
+      owner=owner.host().unwrap(),
       message="Go to definition failed: workspace index is unavailable",
     ),
   )
@@ -21952,7 +22431,13 @@ test "file watcher failures toast once and retain lifecycle state" {
     ..model.file_panel,
     owner: Some(owner),
     placement: @fileeditor.PlacementLive(@interop.WorkspaceRoot(root~)),
-    watching: Some({ owner, root, files: [], directories: [], recursive: true, }),
+    watching: Some({
+      owner: owner.host().unwrap(),
+      root,
+      files: [],
+      directories: [],
+      recursive: true,
+    }),
     watch_generation: generation,
   }
   let model = { ..model, file_panel: panel, }
@@ -21980,7 +22465,7 @@ test "file watcher failures toast once and retain lifecycle state" {
   let message = "File watching stopped: too many open files"
   let failure = FileEditor(
     @fileeditor.FileWatchFailed(
-      channel=owner.channel,
+      channel=owner.host().unwrap().channel,
       root~,
       generation="\{file_ctx(model).watch_namespace}:\{generation}",
       message~,
@@ -22001,7 +22486,7 @@ test "file watcher failures toast once and retain lifecycle state" {
     dispatch,
     FileEditor(
       @fileeditor.FileWatchFailed(
-        channel=owner.channel,
+        channel=owner.host().unwrap().channel,
         root~,
         generation="\{file_ctx(model).watch_namespace}:\{generation - 1}",
         message="stale watcher failure",
@@ -22019,9 +22504,7 @@ test "a tab the host asks for opens in its conversation's strip, on screen or no
   let model = desktop_model()
   // The root update keeps the dock on the active conversation, so the
   // conversation on screen is the model's to name.
-  guard model.dock.owner is Some(on_screen) else {
-    fail("the test model shows a conversation")
-  }
+  let on_screen = model.dock_owner().host().unwrap()
   let away : @interop.ConversationKey = { channel: Local, session: "s-away", }
   // The conversation on screen shows its agent's page the way a followed
   // link is shown.
@@ -22035,7 +22518,7 @@ test "a tab the host asks for opens in its conversation's strip, on screen or no
     model,
   )
   assert_true(shown.right_panel_open)
-  assert_true(@dock.active_browser(shown.dock) == Some(1))
+  assert_true(@dock.active_browser(shown.dock_state()) == Some(1))
   assert_true(
     @preview.page(shown.preview, 1).unwrap().url == Some("https://example.com/"),
   )
@@ -22050,17 +22533,17 @@ test "a tab the host asks for opens in its conversation's strip, on screen or no
     ),
     shown,
   )
-  assert_true(elsewhere.dock.tabs == shown.dock.tabs)
-  assert_true(@dock.active_browser(elsewhere.dock) == Some(1))
+  assert_true(elsewhere.dock_state().tabs == shown.dock_state().tabs)
+  assert_true(@dock.active_browser(elsewhere.dock_state()) == Some(1))
   assert_true(
     @preview.page(elsewhere.preview, 2).unwrap().url ==
     Some("https://example.org/"),
   )
-  let returned = @dock.sync(elsewhere.dock, away)
+  let returned = elsewhere.dock_state_for(@interop.Host(away))
   assert_true(returned.tabs == [Browser(id=2)])
   assert_true(@dock.active_browser(returned) == Some(2))
   // And the first conversation's strip is intact when it comes back.
-  let back = @dock.sync(returned, on_screen)
+  let back = elsewhere.dock_state_for(@interop.Host(on_screen))
   assert_true(@dock.active_browser(back) == Some(1))
 }
 
@@ -22068,9 +22551,7 @@ test "a tab the host asks for opens in its conversation's strip, on screen or no
 test "user and agent tab creation share placement without sharing navigation priority" {
   let dispatch = test_dispatch()
   let model = desktop_model()
-  guard model.dock.owner is Some(owner) else {
-    fail("the test model shows a conversation")
-  }
+  let owner = model.dock_owner().host().unwrap()
   let url = "https://example.com/shared"
   let agent_open = BrowserOpenRequested(
     request="r-shared",
@@ -22080,7 +22561,7 @@ test "user and agent tab creation share placement without sharing navigation pri
   let (_, agent) = update(dispatch, agent_open, model)
   let (_, user) = update(dispatch, ExternalLinkClicked(url), model)
   assert_true(agent.preview == user.preview)
-  assert_true(agent.dock == user.dock)
+  assert_true(agent.dock_state() == user.dock_state())
   assert_true(agent.browser_pane == user.browser_pane)
   assert_eq(agent.right_panel_open, user.right_panel_open)
   assert_eq(agent.right_panel_menu_open, user.right_panel_menu_open)
@@ -22098,7 +22579,7 @@ test "user and agent tab creation share placement without sharing navigation pri
     let (_, first) = update(dispatch, msg, model)
     let (_, second) = update(dispatch, msg, model)
     assert_true(first.preview == second.preview)
-    assert_true(first.dock == second.dock)
+    assert_true(first.dock_state() == second.dock_state())
     assert_true(first.browser_pane == second.browser_pane)
     assert_eq(first.right_panel_open, second.right_panel_open)
     assert_eq(first.right_panel_menu_open, second.right_panel_menu_open)
@@ -22107,8 +22588,8 @@ test "user and agent tab creation share placement without sharing navigation pri
   // User links reuse a matching tab; an explicit MCP open still creates one.
   let (_, reused) = update(dispatch, ExternalLinkClicked(url), user)
   let (_, added) = update(dispatch, agent_open, user)
-  assert_eq(reused.dock.tabs.length(), 1)
-  assert_eq(added.dock.tabs.length(), 2)
+  assert_eq(reused.dock_state().tabs.length(), 1)
+  assert_eq(added.dock_state().tabs.length(), 2)
 }
 
 ///|
@@ -22148,7 +22629,7 @@ test "web links open (and reuse) a dock browser tab; other schemes do not" {
   )
   assert_true(model.right_panel_open)
   assert_eq(model.file_panel.file_link_generation, generation + 1)
-  assert_true(@dock.active_browser(model.dock) == Some(1))
+  assert_true(@dock.active_browser(model.dock_state()) == Some(1))
   assert_true(
     @preview.page(model.preview, 1).unwrap().url ==
     Some("http://127.0.0.1:5173/"),
@@ -22160,9 +22641,9 @@ test "web links open (and reuse) a dock browser tab; other schemes do not" {
     ExternalLinkClicked("https://terminal.example/docs"),
     model,
   )
-  assert_eq(model.dock.tabs.length(), 2)
+  assert_eq(model.dock_state().tabs.length(), 2)
   assert_eq(model.file_panel.file_link_generation, generation + 2)
-  assert_true(@dock.active_browser(model.dock) == Some(2))
+  assert_true(@dock.active_browser(model.dock_state()) == Some(2))
   assert_true(
     @preview.page(model.preview, 2).unwrap().url ==
     Some("https://terminal.example/docs"),
@@ -22174,9 +22655,9 @@ test "web links open (and reuse) a dock browser tab; other schemes do not" {
     ExternalLinkClicked("http://127.0.0.1:5173/"),
     model,
   )
-  assert_eq(model.dock.tabs.length(), 2)
+  assert_eq(model.dock_state().tabs.length(), 2)
   assert_eq(model.preview.pages.length(), 2)
-  assert_true(@dock.active_browser(model.dock) == Some(1))
+  assert_true(@dock.active_browser(model.dock_state()) == Some(1))
   assert_true(
     @preview.page(model.preview, 1).unwrap().url ==
     Some("http://127.0.0.1:5173/"),
@@ -22189,8 +22670,8 @@ test "web links open (and reuse) a dock browser tab; other schemes do not" {
     ExternalLinkClicked("https://github.com/moonbit"),
     model,
   )
-  assert_eq(model.dock.tabs.length(), 3)
-  assert_true(@dock.active_browser(model.dock) == Some(3))
+  assert_eq(model.dock_state().tabs.length(), 3)
+  assert_true(@dock.active_browser(model.dock_state()) == Some(3))
   assert_eq(model.file_panel.file_link_generation, generation + 4)
   // A non-web scheme keeps the system handler: no tab appears.
   let (_, model) = update(
@@ -22198,7 +22679,7 @@ test "web links open (and reuse) a dock browser tab; other schemes do not" {
     ExternalLinkClicked("mailto:someone@example.com"),
     model,
   )
-  assert_eq(model.dock.tabs.length(), 3)
+  assert_eq(model.dock_state().tabs.length(), 3)
   assert_eq(model.file_panel.file_link_generation, generation + 4)
   // So does a link clicked on another screen, where the dock is not on
   // screen to show a tab — Settings' device-page link wants the browser the
@@ -22208,7 +22689,7 @@ test "web links open (and reuse) a dock browser tab; other schemes do not" {
     ExternalLinkClicked("https://openseek.test/d/abc"),
     { ..model, screen: Settings, },
   )
-  assert_eq(settings.dock.tabs.length(), 3)
+  assert_eq(settings.dock_state().tabs.length(), 3)
   assert_eq(settings.preview.pages.length(), 3)
   assert_eq(settings.file_panel.file_link_generation, generation + 4)
 }
@@ -22237,7 +22718,7 @@ test "Codex web links use the same dock browser route as OpenSeek" {
     model,
   )
   assert_true(model.right_panel_open)
-  assert_true(@dock.active_browser(model.dock) == Some(1))
+  assert_true(@dock.active_browser(model.dock_state()) == Some(1))
   assert_true(
     @preview.page(model.preview, 1).unwrap().url ==
     Some("https://github.com/moonbit-community/pty/pull/18"),
@@ -22254,12 +22735,12 @@ test "same-URL reuse scans this strip, not the global page map" {
   let (foreign, _) = @preview.open_page(@preview.State::empty(), url~)
   let model = { ..desktop_model(), preview: foreign, }
   let (_, model) = update(dispatch, ExternalLinkClicked(url), model)
-  assert_eq(model.dock.tabs.length(), 1)
+  assert_eq(model.dock_state().tabs.length(), 1)
   assert_eq(model.preview.pages.length(), 2)
   // A repeat click re-activates this strip's tab instead of stacking a
   // duplicate per click.
   let (_, model) = update(dispatch, ExternalLinkClicked(url), model)
-  assert_eq(model.dock.tabs.length(), 1)
+  assert_eq(model.dock_state().tabs.length(), 1)
   assert_eq(model.preview.pages.length(), 2)
 }
 
@@ -22274,7 +22755,7 @@ test "a remote console routes loopback links to the system browser too" {
     ExternalLinkClicked("http://127.0.0.1:5173/"),
     model,
   )
-  assert_true(model.dock.tabs.is_empty())
+  assert_true(model.dock_state().tabs.is_empty())
   assert_true(model.preview.pages.is_empty())
 }
 
@@ -22299,15 +22780,15 @@ test "re-clicking a chat link re-navigates the reused tab to the clicked URL" {
     ExternalLinkClicked("https://github.com/moonbit"),
     model,
   )
-  assert_true(@dock.active_browser(model.dock) == Some(2))
+  assert_true(@dock.active_browser(model.dock_state()) == Some(2))
   // Back to the first link: its tab re-activates AND re-navigates.
   let (_, model) = update(
     dispatch,
     ExternalLinkClicked("http://127.0.0.1:5173/"),
     model,
   )
-  assert_eq(model.dock.tabs.length(), 2)
-  assert_true(@dock.active_browser(model.dock) == Some(1))
+  assert_eq(model.dock_state().tabs.length(), 2)
+  assert_true(@dock.active_browser(model.dock_state()) == Some(1))
   let page = @preview.page(model.preview, 1).unwrap()
   assert_true(page.url == Some("http://127.0.0.1:5173/"))
   assert_eq(page.input, "http://127.0.0.1:5173/")
@@ -22404,8 +22885,8 @@ test "Search reuses the picker and keeps a request when its Explorer tab leaves"
     desktop_model(),
   )
   assert_true(opened.right_panel_open)
-  assert_true(opened.dock.active is Some(@dock.DockTab::FilePicker))
-  assert_true(opened.dock.tabs == [@dock.DockTab::FilePicker])
+  assert_true(opened.dock_state().active is Some(@dock.DockTab::FilePicker))
+  assert_true(opened.dock_state().tabs == [@dock.DockTab::FilePicker])
   assert_true(opened.file_panel.explorer_mode is ExplorerSearch)
   assert_false(opened.file_panel.tree_open)
   let (_, reopened_picker) = update(
@@ -22413,7 +22894,7 @@ test "Search reuses the picker and keeps a request when its Explorer tab leaves"
     ExplorerRequested(ExplorerSearch),
     opened,
   )
-  assert_true(reopened_picker.dock.tabs == [@dock.DockTab::FilePicker])
+  assert_true(reopened_picker.dock_state().tabs == [@dock.DockTab::FilePicker])
   let (_, edited) = update(
     dispatch,
     FileEditor(Search(@grep_search.QueryChanged("moon"))),
@@ -22430,7 +22911,7 @@ test "Search reuses the picker and keeps a request when its Explorer tab leaves"
     running,
   )
   let (_, reopened) = update(dispatch, ExplorerRequested(ExplorerSearch), files)
-  assert_true(reopened.dock.tabs == [@dock.DockTab::FilePicker])
+  assert_true(reopened.dock_state().tabs == [@dock.DockTab::FilePicker])
   assert_true(reopened.file_panel.explorer_mode is ExplorerSearch)
 }
 
@@ -22456,8 +22937,8 @@ test "a Search result fulfills the picker without pinning Search beside the file
     edited,
   )
   let selected = selected.test_resolve_editor(path.0)
-  assert_true(selected.dock.tabs == [@dock.DockTab::File(path=file)])
-  assert_true(@dock.active_file(selected.dock) == Some(file))
+  assert_true(selected.dock_state().tabs == [@dock.DockTab::File(path=file)])
+  assert_true(@dock.active_file(selected.dock_state()) == Some(file))
   assert_true(selected.file_panel.explorer_mode is ExplorerSearch)
   assert_false(selected.file_panel.tree_open)
   assert_true(
@@ -22473,7 +22954,7 @@ test "a Search result fulfills the picker without pinning Search beside the file
     selected,
   )
   assert_true(
-    picker.dock.tabs ==
+    picker.dock_state().tabs ==
     [@dock.DockTab::File(path=file), @dock.DockTab::FilePicker],
   )
   let (_, reused) = update(
@@ -22482,8 +22963,8 @@ test "a Search result fulfills the picker without pinning Search beside the file
     picker,
   )
   let reused = reused.test_resolve_editor(path.0)
-  assert_true(reused.dock.tabs == [@dock.DockTab::File(path=file)])
-  assert_true(@dock.active_file(reused.dock) == Some(file))
+  assert_true(reused.dock_state().tabs == [@dock.DockTab::File(path=file)])
+  assert_true(@dock.active_file(reused.dock_state()) == Some(file))
   assert_true(reused.file_panel.explorer_mode is ExplorerSearch)
 }
 
@@ -22609,7 +23090,7 @@ test "the launcher popup and final tab close both retire the shown view" {
   assert_true(closed_again == closed)
   assert_true(closed.browser_pane.shown is None)
   assert_true(@preview.page(closed.preview, 1) is None)
-  assert_true(closed.dock.tabs.is_empty())
+  assert_true(closed.dock_state().tabs.is_empty())
   assert_false(closed.right_panel_open)
   assert_false(closed.right_panel_menu_open)
   assert_false(closed.right_panel_expanded)
@@ -23084,7 +23565,7 @@ fn PendingReviewContext::is_current(
   model : Model,
 ) -> Bool {
   let ctx = file_ctx(model)
-  self.owner == ctx.owner &&
+  @interop.Host(self.owner) == ctx.owner &&
   self.navigation == model.file_panel.file_link_generation &&
   ctx.placement
   .bind(placement => placement.checkout_root())
@@ -23099,7 +23580,8 @@ fn open_review_context(
   selection : @mention_context.ReviewChanges,
 ) -> (@cmd.Cmd, Model) {
   let ctx = file_ctx(model)
-  guard ctx.placement
+  guard ctx.owner is @interop.Host(owner) &&
+    ctx.placement
     .bind(placement => placement.checkout_root())
     .map(root => root.path) ==
     Some(selection.source.workspace) else {
@@ -23120,7 +23602,7 @@ fn open_review_context(
     {
       ..opened,
       pending_review_context: Some({
-        owner: ctx.owner,
+        owner,
         navigation: opened.file_panel.file_link_generation,
         selection,
       }),
@@ -23147,7 +23629,7 @@ fn finish_review_context_load(
   }
   // A coalesced refresh is still loading. Stale/duplicate replies cannot
   // complete a newer jump, and an intermediate empty list is not deletion.
-  guard before.owner == Some(owner) &&
+  guard before.owner == Some(@interop.Host(owner)) &&
     pending.owner == owner &&
     before.changes_generation == generation &&
     model.file_panel.changes_generation == generation &&
@@ -23203,7 +23685,10 @@ fn Model::test_resolve_editor(self : Model, path : String) -> Model {
   let (_, model) = update(
     test_dispatch(),
     OpenPathResolved(
-      FileOpenContext::new(owner, self.file_panel.file_link_generation),
+      FileOpenContext::new(
+        owner.host().unwrap(),
+        self.file_panel.file_link_generation,
+      ),
       Editor({ path, line: None, column: None, }),
     ),
     self,

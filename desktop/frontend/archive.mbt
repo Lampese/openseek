@@ -21,6 +21,12 @@ priv struct DeleteConfirm {
 } derive(Eq)
 
 ///|
+priv enum DeletePrompt {
+  HostDelete(DeleteConfirm)
+  CloudDelete(account~ : String, session~ : String, title~ : String)
+} derive(Eq)
+
+///|
 /// Which record a confirmation is about, with what only that kind carries.
 priv enum DeleteTarget {
   // The parent plus every descendant visible in the same archived snapshot.
@@ -30,6 +36,106 @@ priv enum DeleteTarget {
   // archived chat has none: its checkout went when it was archived.
   LiveChat(checkout~ : @protocol.CheckoutRemoval?)
 } derive(Eq)
+
+///|
+/// One confirmed delete still out with the host: the conversation the user
+/// chose and the family it removes, captured when the user confirmed.
+priv struct ConfirmedDelete {
+  channel : @interop.ChannelId
+  key : ArchiveRecordKey
+  // The chosen session and every sub-run descendant this page listed beside
+  // it in the same store. The host deletes those together and announces them
+  // one by one; a catalog refresh between the removal and its announcement
+  // must not make a member look foreign.
+  family : Array[String]
+} derive(Eq)
+
+///|
+/// The conversation a sub-run or side chat was made from.
+fn family_parent(session : String) -> String? {
+  match @transcript.subrun_parent(session) {
+    Some(parent) => Some(parent)
+    None => @protocol.split_side_chat_id(session)
+  }
+}
+
+///|
+/// Whether `candidate` is in `ancestor`'s family: a sub-run or side chat
+/// descended from it. Walk the structural `-sr-N` and `-sc-<token>` suffixes
+/// as the host does, so an unrelated id that merely shares a prefix is not
+/// taken for a descendant.
+fn is_family_descendant(candidate : String, ancestor : String) -> Bool {
+  let mut current = candidate
+  while family_parent(current) is Some(parent) {
+    if parent == ancestor {
+      return true
+    }
+    current = parent
+  }
+  false
+}
+
+///|
+/// Whether this page confirmed a delete that removes `key`.
+fn Model::owns_deletion(
+  self : Model,
+  channel : @interop.ChannelId,
+  key : ArchiveRecordKey,
+) -> Bool {
+  self.deletes_in_flight.any(entry => {
+    entry.channel == channel &&
+    entry.key.workspace == key.workspace &&
+    entry.family.contains(key.session)
+  })
+}
+
+///|
+/// Record a confirmed delete of `key` from `record`'s store, whose rows
+/// `listed` holds. The host removes sub-run and side-chat descendants from that
+/// store only, so a child archived apart from a live parent is not part of the
+/// parent's delete. A descendant opened from a transcript link can be on screen before
+/// the catalog lists it, so opened conversations count as well.
+fn Model::confirm_delete(
+  self : Model,
+  channel : @interop.ChannelId,
+  key : ArchiveRecordKey,
+  record : ConversationRecord,
+  listed : Array[@transcript.SessionListItem],
+) -> Array[ConfirmedDelete] {
+  let family = [key.session]
+  for item in listed {
+    if item.workspace == key.workspace &&
+      is_family_descendant(item.id, key.session) {
+      family.push(item.id)
+    }
+  }
+  for conv in self.conversations {
+    if conv.device == channel &&
+      conv.project() == key.workspace &&
+      conv.record == record &&
+      is_family_descendant(conv.session_id, key.session) &&
+      !family.contains(conv.session_id) {
+      family.push(conv.session_id)
+    }
+  }
+  self.deletes_in_flight.copy()..push({ channel, key, family, })
+}
+
+///|
+/// End one confirmed delete of `key`. Deleting the same chat again while an
+/// earlier delete is out adds a separate entry, so each settles only itself.
+fn Model::settle_delete(
+  self : Model,
+  channel : @interop.ChannelId,
+  key : ArchiveRecordKey,
+) -> Model {
+  let deletes = self.deletes_in_flight.copy()
+  if deletes.search_by(entry => entry.channel == channel && entry.key == key)
+    is Some(index) {
+    deletes.remove(index) |> ignore
+  }
+  { ..self, deletes_in_flight: deletes, }
+}
 
 ///|
 fn fetch_archived(
@@ -201,7 +307,12 @@ fn delete_archived_session(
       ) catch {
         error => {
           scheduler.add(
-            device_dispatch(DeleteFailed(@interop.bridge_error_text(error))),
+            device_dispatch(
+              DeleteFailed(
+                @interop.bridge_error_text(error),
+                deleting=Some(key),
+              ),
+            ),
           )
           return
         }
@@ -247,7 +358,9 @@ fn check_delete_session(
       ) catch {
         error => {
           scheduler.add(
-            device_dispatch(DeleteFailed(@interop.bridge_error_text(error))),
+            device_dispatch(
+              DeleteFailed(@interop.bridge_error_text(error), deleting=None),
+            ),
           )
           return
         }
@@ -301,15 +414,18 @@ fn delete_session(
       ) catch {
         error => {
           scheduler.add(
-            device_dispatch(DeleteFailed(@interop.bridge_error_text(error))),
+            device_dispatch(
+              DeleteFailed(
+                @interop.bridge_error_text(error),
+                deleting=Some(key),
+              ),
+            ),
           )
           return
         }
       }
       if reply is Unconfirmed(checkout) {
-        scheduler.add(
-          device_dispatch(DeleteChecked(key~, checkout=Some(checkout))),
-        )
+        scheduler.add(device_dispatch(DeleteStopped(key~, checkout~)))
       }
     })
     |> ignore
@@ -348,12 +464,23 @@ fn DeleteConfirm::message(
 fn delete_modal(
   locale~ : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
-  confirm : DeleteConfirm,
+  confirm : DeletePrompt,
+  cloud : @cloud.State,
 ) -> @html.Html {
+  let message = match confirm {
+    HostDelete(confirm) => confirm.message(locale~)
+    CloudDelete(title~, ..) =>
+      dynamic_text(locale, DDeleteCloudConversation(title))
+  }
+  let enabled = match confirm {
+    HostDelete(_) => true
+    CloudDelete(account~, session~, ..) =>
+      cloud.user_id == Some(account) && cloud.can_delete(session)
+  }
   @html.div(class="modal-backdrop", on_click=dispatch(CancelDeleteSession), [
     @html.div(class="modal", [
       @html.div(class="modal-title", shell_text(locale, DeleteChatQuestion)),
-      @html.div(class="modal-body", confirm.message(locale~)),
+      @html.div(class="modal-body", message),
       @html.div(class="modal-actions", [
         @html.button(
           class="button secondary",
@@ -362,6 +489,7 @@ fn delete_modal(
         ),
         @html.button(
           class="button danger",
+          disabled=!enabled,
           on_click=dispatch(ConfirmDeleteSession),
           shell_text(locale, DeletePermanently),
         ),

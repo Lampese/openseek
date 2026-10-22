@@ -79,6 +79,8 @@ pub let browser_set_theme : Command[@protocol.BrowserThemePayload, @protocol.Emp
 
 pub let browser_set_visible : Command[@protocol.BrowserVisiblePayload, @protocol.EmptyReply]
 
+pub let cloud_file_download : Command[@protocol.CloudFileDownloadPayload, @protocol.CloudFileDownloadReply]
+
 pub let codex_account_login_cancel : Command[@protocol.CodexAccountLoginCancelPayload, @protocol.CodexCommandReply[@protocol.EmptyReply]]
 
 pub let codex_account_login_start : Command[@protocol.CodexAccountLoginStartPayload, @protocol.CodexCommandReply[@protocol.CodexLoginStartReply]]
@@ -195,6 +197,8 @@ pub let github_list : Command[@protocol.GithubListPayload, @protocol.GithubListR
 
 pub let github_pull_request : Command[@protocol.GithubPullRequestPayload, @protocol.GithubPullRequestDetail]
 
+pub let github_pull_request_summary : Command[@protocol.GithubPullRequestSummaryPayload, @protocol.GithubPullRequestSummaryReply]
+
 pub let github_review : Command[@protocol.GithubWorkspacePayload, @protocol.GithubReviewReply]
 
 pub let github_review_file : Command[@protocol.GithubReviewFilePayload, @protocol.GithubReviewFileReply]
@@ -223,6 +227,8 @@ pub let lsp_open : Command[@protocol.LspOpenPayload, @protocol.LspDiagnosticsRep
 
 pub let lsp_workspace_symbols : Command[@protocol.WorkspaceSymbolsPayload, @protocol.WorkspaceSymbolsReply]
 
+pub let mcp_status : Command[@protocol.McpStatusPayload, @protocol.McpStatusReply]
+
 pub let moon_package_graph : Command[@protocol.MoonPackageGraphPayload, @protocol.MoonPackageGraphReply]
 
 pub let moonide_codelens : Command[@protocol.MoonIdeCodeLensPayload, @protocol.MoonIdeCodeLensReply]
@@ -243,6 +249,10 @@ pub let schedules_save : Command[@protocol.ScheduleSavePayload, @protocol.Schedu
 
 pub let session_archive : Command[@protocol.SessionPayload, @protocol.ArchiveReply]
 
+pub let session_artifacts_list : Command[@protocol.SessionArtifactsChangedPayload, @protocol.SessionArtifacts]
+
+pub let session_artifacts_remove : Command[@protocol.SessionArtifactRemovePayload, @protocol.SessionArtifacts]
+
 pub let session_delete : Command[@protocol.SessionDeletePayload, @protocol.SessionDeleteReply]
 
 pub let session_delete_archived : Command[@protocol.ArchivedSessionPayload, @protocol.SessionsReply]
@@ -254,6 +264,8 @@ pub let session_edit : Command[@protocol.SessionEditPayload, @protocol.SessionFo
 pub let session_export : Command[@protocol.SessionExportPayload, @protocol.SessionExportReply]
 
 pub let session_fork : Command[@protocol.SessionForkPayload, @protocol.SessionForkReply]
+
+pub let session_import : Command[@protocol.SessionImportPayload, @protocol.SessionImportReply]
 
 pub let session_list : Command[@protocol.EmptyPayload, @protocol.SessionsReply]
 
@@ -291,7 +303,25 @@ pub let skills_installed : Command[@protocol.EmptyPayload, @protocol.InstalledSk
 
 pub let skills_installed_content : Command[@protocol.UninstallSkillPayload, @protocol.SkillContentReply]
 
+pub let skills_set_enabled : Command[@protocol.SetSkillEnabledPayload, @protocol.SetSkillEnabledReply]
+
 pub let skills_uninstall : Command[@protocol.UninstallSkillPayload, @protocol.UninstallSkillReply]
+
+pub let ssh_auth_respond : Command[@protocol.SshAuthResponse, @protocol.SshReply]
+
+pub let ssh_connect : Command[@protocol.SshConnect, @protocol.EmptyReply]
+
+pub let ssh_disconnect : Command[@protocol.SshConnect, @protocol.EmptyReply]
+
+pub let ssh_profiles : Command[@protocol.EmptyPayload, @protocol.SshProfiles]
+
+pub let ssh_projects_save : Command[@protocol.SshProjects, @protocol.EmptyReply]
+
+pub let ssh_remove : Command[@protocol.SshProfileTarget, @protocol.SshReply]
+
+pub let ssh_request : Command[@protocol.SshRequest, @protocol.SshReply]
+
+pub let ssh_save : Command[@protocol.SshProfile, @protocol.SshReply]
 
 pub let terminal_ack : Command[@protocol.TerminalAckPayload, @protocol.EmptyReply]
 

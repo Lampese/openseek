@@ -54,14 +54,16 @@ new subscription and resync. Paused subscriptions do not replay missed events.
 
 ## Transport
 
-All HTTP lives at the relay. Browser releases are versioned alongside Desktop
-releases. Public account, device, and share management APIs use `/v2`.
+All HTTP lives at the relay, which serves one current Browser bundle to every
+host. Public account, device, and share management APIs use `/v2`.
 The host control tunnel and the private local Dev console retain `/v1`:
 
 | Route | What |
 |---|---|
-| `GET /console/` | The server-selected Browser release |
-| `GET /console/releases/v<version>/index.html` | One published Browser bundle. Device consoles require `?device=<id>` to fix the page/tab to that device; optional `?workspace=<path>` selects where its first conversation lands. Cloud chats use the same console without requiring a device. Packaged Desktop links here with its installed version |
+| `GET /device/<device>/…`, `GET /cloud…` | Client page routes; each serves the current Browser document without redirecting the requested location. Packaged Desktop links a device to `/device/<device>/chat` |
+| `GET /assets/…` | The current Browser bundle's resources, at the same path as in the packaged Desktop host and local console |
+| `GET /console/` | Redirects to the current release's `/console/releases/v<version>/index.html`, preserving the query |
+| `GET /console/releases/v<version>/…` | One published release's own files, kept so links from older Desktop builds keep opening their release |
 | `GET /d/<device>/…` | Retired: `302` to `/console/?device=<device>` with the original query appended, so old deep links keep their device target |
 | `GET /healthz` | Relay liveness probe, `200 ok` |
 | `/v2/auth/account/*`, `/v2/auth/session`, `/v2/auth/login` | Account sign-in and browser session recovery (see Authentication) |
@@ -70,8 +72,15 @@ The host control tunnel and the private local Dev console retain `/v1`:
 Everything else — commands, queries, and host-pushed events — travels over
 `GET /v2/devices/<device>/ws`, upgraded from the same origin the bundle was
 served from and spliced through to the host. A browser page takes its one
-`<device>` from the required `?device=` query and verifies it against
-`GET /v2/devices`; other roster devices need their own page/tab. Frames are
+`<device>` from the page route (or the legacy `?device=` entry query) and verifies it against
+`GET /v2/devices`; other roster devices need their own page/tab. The host's
+first notification, `agent.connected`, carries its `protocol` revision. A page
+starts its automatic resync only once that revision matches its own; a host
+built for another revision (or one that predates the field) has its socket
+closed without retrying, and every page except Cloud shows it as unavailable.
+Requests are not gated at the transport, so a manual read made in the moment
+before `agent.connected` arrives can still reach such a host. There is no
+compatibility layer for older hosts. Frames are
 JSON text, shaped as **JSON-RPC 2.0**:
 
 ```jsonc
@@ -238,10 +247,10 @@ moment it exists; whatever a client missed while disconnected it recovers by
 re-reading state:
 
 1. Connect the WebSocket. The host sends `agent.connected` as the connection's
-   first notification — `{stage}`, where `stage` is `"accepted"` (the
-   transport took this client; the engine pump may still be between
-   generations) or `"serving"` (the pump entered a serving generation and
-   accepts runs). Both mean the same thing to a client: re-read your state.
+   first notification — `{protocol}`, its `HostProtocolRevision` — and again
+   when its engine pump enters a serving generation. Each means the same thing
+   to a client whose revision matches: re-read your state. Any other field is
+   ignored, so every host's `agent.connected` decodes.
    Every conversation belongs to a registered workspace, so a broadcast store
    root names its own project (`<project>/.openseek`) and needs no anchor
    value here. The host then starts forwarding the remote delivery stream.
@@ -332,11 +341,11 @@ This is lifecycle correlation only; durable transcript items still come from
 
 | method | params | result |
 |---|---|---|
-| `agent.start` | `{task, session, submission_id?, model?, thinking?, max_steps?, workspace?}` — `session` is a required non-blank durable conversation id. `thinking`, when present, is `no`, `high`, or `max`. No credentials or store path are accepted: the host resolves settings and durable placement; `workspace` is honored only when registered. A session bound to one of the workspace's worktrees (`worktree.create` binds at creation) runs in that checkout — the start never names or mutates worktrees | `{run_id, status, …}` — `accepted` after the complete prompt command is written; a post-`started` write failure returns `failed`, while pre-`started` failures use the error response. Every reply that returns names the run it opened; the host does not deduplicate a resent `submission_id` |
+| `agent.start` | `{task, session, submission_id?, model?, thinking?, approval?, max_steps?, workspace?}` — `session` is a required non-blank durable conversation id. `thinking`, when present, is `no`, `high`, or `max`; `approval`, when present, is `ask` or `review`. No credentials or store path are accepted: the host resolves settings and durable placement; `workspace` is honored only when registered. A session bound to one of the workspace's worktrees (`worktree.create` binds at creation) runs in that checkout — the start never names or mutates worktrees | `{run_id, status, …}` — `accepted` after the complete prompt command is written; a post-`started` write failure returns `failed`, while pre-`started` failures use the error response. Every reply that returns names the run it opened; the host does not deduplicate a resent `submission_id` |
 | `agent.cancel` | `{run_id?}` (absent = the latest run) | `{run_id?}` — the run the cancellation reached, absent when no turn was open. Absence is an answer, not a failure: a Stop racing a turn that just ended wanted the run over, and it is. The call fails only when the cancellation could not be delivered, which means the turn is still running and nobody asked it to stop. Delivery is not the end of the turn — the run ends through its own `agent.finished` |
 | `agent.steer` | `{text, run_id?, submission_id?}` | steer outcome |
-| `agent.compact` | `{session, model?, thinking?, max_steps?, workspace?}` — `agent.start` minus `task`: a conversation resumed after a restart has no live process, and compacting spawns one with these settings | compaction outcome |
-| `agent.goal` | `{session, text?, auto?, model?, thinking?, max_steps?, workspace?}` — sets the session's standing goal to `text`, or clears it when `text` is absent; the engine settings match `agent.compact`'s, and a blank `session` is refused before engine lookup. `auto` arms the engine's autonomous continuation and is **currently rejected**: serve announces the turns it starts with `goal_continue`, which this host does not yet fold into a run's lifecycle, so an autonomous turn would leave the engine looking idle to `agent.start` | `{delivered}` — delivery, not durability: the command reached a live engine's stdin. The goal itself is confirmed by the `[goal]` / `[goal cleared]` runtime-notice arriving as a `session.event` commit, which is also what clients should render from; the engine's `goal_updated` stream event duplicates it |
+| `agent.compact` | `{session, model?, thinking?, approval?, max_steps?, workspace?}` — `agent.start` minus `task`: a conversation resumed after a restart has no live process, and compacting spawns one with these settings | compaction outcome |
+| `agent.goal` | `{session, text?, auto?, model?, thinking?, approval?, max_steps?, workspace?}` — sets the session's standing goal to `text`, or clears it when `text` is absent; the engine settings match `agent.compact`'s, and a blank `session` is refused before engine lookup. `auto` arms the engine's autonomous continuation and is **currently rejected**: serve announces the turns it starts with `goal_continue`, which this host does not yet fold into a run's lifecycle, so an autonomous turn would leave the engine looking idle to `agent.start` | `{delivered}` — delivery, not durability: the command reached a live engine's stdin. The goal itself is confirmed by the `[goal]` / `[goal cleared]` runtime-notice arriving as a `session.event` commit, which is also what clients should render from; the engine's `goal_updated` stream event duplicates it |
 | `agent.runs` | `{known?: [{session, run_id?, submission_id?}]}` — each selector must carry a run or submission id; `{}` remains valid | `{runs: […], settled: […]}` — every in-flight run's `agent.started` params plus selector-matched `{run_id, session, submission_id?, status, exit_code?}` lifecycle settlements. Every settlement a selector names is replayed, whatever its status: how much the run committed is a question the transcript read answers. Active and settled state are captured atomically |
 
 All three engine-spawning requests use the same `thinking` setting. A present
@@ -344,6 +353,12 @@ value overrides `OPENSEEK_THINKING`; an older client that omits it inherits
 that environment value and then the `max` default. The setting is part of the
 host's process identity, so changing it replaces an idle process rather than
 silently continuing with the previous reasoning mode.
+
+`approval` works the same way and becomes the engine's `--approval`: `ask`
+sends each permission question to the client as `approval_requested`, and
+`review` lets a reviewer subagent decide first, so only the questions it
+cannot settle reach the client. An absent value is `ask`, which is what every
+host did before the field existed; an older host ignores it.
 
 Notifications:
 
@@ -363,16 +378,18 @@ Notifications:
 | `session.load` | `{session, workspace?}` — a non-blank workspace must still be registered; omitted/blank locates the session across registered stores, then the global store | `{session: <the durable session JSON>, watermark?}` — current hosts include `watermark`, the highest event `sequence` the snapshot contains (0 for an empty record); older hosts may omit it, in which case clients derive it from the stored events' own sequences. |
 | `session.load_archived` | `{session, workspace?}` — the same store selection rules as `session.load`, but reads only from that store's archived twin | `{session: <the durable session JSON>, watermark?}` without restoring or otherwise changing the archived record |
 | `session.list_archived` | `{}` | the archived index |
+| `session.artifacts_list` | `{session}` | `{artifacts: [{type, url}]}` — the saved PR and remote branch associations for the live OpenSeek session; no metadata lookup. An absent sidecar or a session with no live durable record returns an empty list; read/parse failures are errors |
+| `session.artifacts_remove` | `{session, artifact: {type, url}}` | `{artifacts: [{type, url}]}` — removes this exact type and URL from the latest saved list and returns the remainder. Requires a live durable record; does not close the PR, delete the branch, or change the checkout |
 | `session.rename` | `{session, workspace, title}` — all fields are required; `workspace` must name the registered store that owns the live record, and `title` must be non-blank | `{}` — atomically writes display metadata beside the append-only transcript, so a running conversation can be renamed without rewriting its history |
-| `session.edit` | `{session, workspace, through?, model, source_title, source_sequence, task, images, attachment_paths, thinking?, max_steps?}` | `{session, title}` — edits in a fork/new conversation, submits the message, then deletes the unchanged source after the message is saved |
-| `session.fork` | `{session, workspace, through, model, source_title}` — `workspace` must name the registered store that owns the live record; `through` is the `sequence` of the turn-ending event to copy up to; `model` is the model the fork's system prompt is written for; `source_title` is the title the client shows for the original | `{session, title}` — the new conversation's id, minted by the host, and its title. Runs the engine's `sessions fork`, which copies the conversation's own record up to `through` and gives the fork the system prompt a new conversation started in that directory would get. The fork works wherever the original works: a fork of a worktree conversation is bound to the same worktree (a `worktree.changed` broadcast lists it in that row's `sessions`) and shares its checkout, which goes with the last conversation holding it. A fork whose record was written is a fork that was made: the reply reports it even when the engine failed afterwards, and a request cancelled after that point still leaves the fork bound to its worktree, titled, and announced by `session.changed`. Subagent descendant transcripts, job logs, and scratch files are not copied. Refused for a `through` that is not the end of a turn, a subagent transcript, a worktree conversation whose checkout is gone, and a conversation that is archived or moving |
-| `session.archive` | `{session, force?}` | success returns the archived session index (the legacy `{groups}` shape) and moves the conversation plus every sibling `<session>-sr-N` descendant transcript as one family. A dirty checkout returns `{kind:"needs_force", worktree, dirty_paths, dirty_path_count}` without changing durable state; `dirty_paths` previews up to 8 paths and `dirty_path_count` counts all status rows. Clients show a discard-confirmation dialog and retry with `force` only after explicit confirmation. On success the conversation's checkout goes with it, but its name/branch/session placement remains registered (the branch survives; a `worktree.changed` broadcast reports `present: false`). A checkout another bound conversation still works in is left untouched — no dirty check, no broadcast — and goes with the last conversation holding it; the archived conversation keeps its placement there. "Dirty" means tracked modifications or non-ignored untracked files; ignored files count as disposable and are removed with the checkout, matching `git worktree remove`'s own semantics |
+| `session.edit` | `{session, workspace, through?, model, source_title, source_sequence, task, images, attachment_paths, thinking?, approval?, max_steps?}` | `{session, title}` — edits in a fork/new conversation, submits the message, then deletes the unchanged source after the message is saved |
+| `session.fork` | `{session, workspace, through, model, source_title, side_chat?}` — `workspace` must name the registered store that owns the live record; `through` is the `sequence` of the turn-ending event to copy up to; `model` is the model the fork's system prompt is written for; `source_title` is the title the client shows for the original; `side_chat: true` makes the fork a side chat of `session` | `{session, title}` — the new conversation's id, minted by the host, and its title. A side chat is named `<session>-sc-<token>`, `<token>` being 8 random lowercase hex digits, shares the source's checkout, and belongs to the source's family: it is archived, restored, and deleted with it, and clients show it beside the source rather than as a conversation of its own. A side chat cannot open side chats of its own, and is refused once the source has been archived or deleted — also by another host attached to the same project, which takes the store's archive lock for the whole fork. Runs the engine's `sessions fork`, which copies the conversation's own record up to `through` and gives the fork the system prompt a new conversation started in that directory would get. A fork of a workspace-root conversation works in the workspace root. A fork of a worktree conversation gets a worktree of its own (a `worktree.changed` broadcast lists the new row, whose `sessions` is the fork alone): a detached checkout at the original checkout's HEAD, with the original's `base`. The original's uncommitted changes are not carried. The engine's `[session forked]` notice, which follows the copied history, tells the fork's model that its files were not copied; for a fork in a new worktree the host adds (through `sessions fork --notice`) how that checkout was made and up to 20 paths the original had uncommitted. A fork whose record was written is a fork that was made: the reply reports it even when the engine failed afterwards, and a request cancelled after that point still leaves the fork with its worktree, titled, and announced by `session.changed`. Subagent descendant transcripts, job logs, and scratch files are not copied. Refused for a `through` that is not the end of a turn, a subagent transcript, a worktree conversation whose checkout is gone, and a conversation that is archived or moving |
+| `session.archive` | `{session, force?}` | success returns the archived session index (the legacy `{groups}` shape) and moves the conversation plus every sibling `<session>-sr-N` descendant transcript and `<session>-sc-<token>` side chat as one family. If another host attached to the project opened a side chat of the conversation after this archive found the family, the archive is refused with a message asking to try again, and nothing moves. A dirty checkout returns `{kind:"needs_force", worktree, dirty_paths, dirty_path_count}` without changing durable state; `dirty_paths` previews up to 8 paths and `dirty_path_count` counts all status rows. Clients show a discard-confirmation dialog and retry with `force` only after explicit confirmation. On success the conversation's checkout goes with it, but its name/branch/session placement remains registered (the branch survives; a `worktree.changed` broadcast reports `present: false`). A checkout another bound conversation still works in is left untouched — no dirty check, no broadcast — and goes with the last conversation holding it; the archived conversation keeps its placement there. "Dirty" means tracked modifications or non-ignored untracked files; ignored files count as disposable and are removed with the checkout, matching `git worktree remove`'s own semantics |
 | `session.unarchive` | `{session}` | outcome — restores the conversation and every archived subagent descendant record together. A retained worktree placement whose checkout was removed returns as missing, so clients offer Repair before any agent, terminal, or file operation can continue |
 | `session.delete_check` | `{session, workspace}` | `{checkout?}` — read-only: what `session.delete` would remove besides the conversation's records. `checkout` is `{worktree, dirty_paths, dirty_path_count}` when the conversation is the last holder of a worktree whose checkout is on disk in that project, and absent otherwise; `dirty_paths` previews the checkout's uncommitted and untracked paths and is empty for a clean one, whose ignored files are removed all the same. A client asks before it shows its confirmation, so the dialog states what the host will do |
-| `session.delete` | `{session, workspace, worktree?, force?}` | permanently deletes the live conversation record from the exact host-listed project store, with every live subagent descendant record in that store, without a stop in the archive (a descendant archived on its own earlier stays archived as its own row). Success returns `{kind:"deleted"}` and carries no index: each removed identity is announced as `session.changed` with `change:"deleted"`. The conversation's checkout in that project is removed only when no other live conversation holds it; its own worktree placement is dropped and broadcast; project files and committed work remain. The request agrees to exactly what the caller's confirmation showed: `worktree` names the checkout it said would be removed, and `force:true` agrees to discard that checkout's uncommitted changes. If more would go — a checkout the request did not name, or changes it did not agree to discard — nothing changes and the reply is `{kind:"unconfirmed", checkout}` for the caller to confirm again. The operation refuses unknown stores and running/compacting family members |
+| `session.delete` | `{session, workspace, worktree?, force?}` | permanently deletes the live conversation record from the exact host-listed project store, with every live subagent descendant and side chat record in that store (refused with a message asking to try again if another host opened a side chat of it after the delete found the family), without a stop in the archive (a descendant archived on its own earlier stays archived as its own row). Success returns `{kind:"deleted"}` and carries no index: each removed identity is announced as `session.changed` with `change:"deleted"`. The conversation's checkout in that project is removed only when no other live conversation holds it; its own worktree placement is dropped and broadcast; project files and committed work remain. The request agrees to exactly what the caller's confirmation showed: `worktree` names the checkout it said would be removed, and `force:true` agrees to discard that checkout's uncommitted changes. If more would go — a checkout the request did not name, or changes it did not agree to discard — nothing changes and the reply is `{kind:"unconfirmed", checkout}` for the caller to confirm again. The operation refuses unknown stores and running/compacting family members |
 | `session.delete_archived` | `{session, workspace}` | permanently deletes the archived conversation record from the exact host-listed project store and every archived subagent descendant record in that store, then returns the archived index. Its retained worktree placement is removed and broadcast — the registry row itself only with its last bound conversation — but project files and the Git branch remain. The operation refuses unknown stores, live records, and running/compacting family members |
 
-- `session.edit` uses the existing completed-answer fork when `through` is present; editing the first message creates a new identity in the source checkout. Its title makes the identity discoverable before the first send, with no reservation marker or changes to the session log format. The host stages attachments and submits the revised prompt through the normal start path, then waits for that prompt's durable User receipt before deleting the source. The existing deletion claim excludes this host’s source activity, and the source record lock prevents another host from appending between sequence validation and the record move. Deletion reuses `session.delete`, including its existing family behavior, busy checks, follower drain, and checkout protection. Errors propagate normally; there is no automatic resubmission, idempotency cache, or cleanup retry protocol. The frontend disables editing while work is running and keeps the original transcript visible until the request completes. Ordinary `session.fork` remains unchanged and preserves its source.
+- `session.edit` uses the existing completed-answer fork when `through` is present, except that the edit is bound to the source's worktree instead of getting one of its own: it replaces the source, and takes over the checkout once the source is deleted. Editing the first message creates a new identity in the source checkout. Its title makes the identity discoverable before the first send, with no reservation marker or changes to the session log format. The host stages attachments and submits the revised prompt through the normal start path, then waits for that prompt's durable User receipt before deleting the source. The existing deletion claim excludes this host’s source activity, and the source record lock prevents another host from appending between sequence validation and the record move. Deletion reuses `session.delete`, including its existing family behavior, busy checks, follower drain, and checkout protection. Errors propagate normally; there is no automatic resubmission, idempotency cache, or cleanup retry protocol. The frontend disables editing while work is running and keeps the original transcript visible until the request completes. Ordinary `session.fork` remains unchanged and preserves its source.
 
 
 Notifications:
@@ -380,7 +397,33 @@ Notifications:
 | method | params |
 |---|---|
 | `session.event` | `{session, sequence, session_root, event: {sequence, ts, item}}` — one durably **committed** store event, `event` verbatim as `session.load` carries it in `events`. `session_root` is the durable store root the commit was read from: session ids are not globally unique across stores, so the durable identity is `(session_root, session)` and a client must never merge same-id records from different stores; see *The durable transcript* below |
+| `session.artifacts_changed` | `{session}` — broadcast to connected clients of the writing host after an artifact attachment or removal is saved. Re-read `session.artifacts_list`; this notification carries neither the new list nor PR metadata |
 | `session.changed` | `{change: "archived" \| "unarchived" \| "deleted" \| "renamed" \| "created", session, workspace}` — broadcast to every client (the requester included) when a record moves between stores, is permanently deleted, changes display title, or is created by `session.fork` (`session` is then the new fork); `workspace` is the owning project path, so same-ID records in other project stores remain untouched. A family operation emits one fact for the parent and each descendant subagent record. Recipients apply each store-qualified fact immediately, keep placement facts authoritative over already-in-flight unversioned list replies, and re-read both lists. A new connection starts a fresh list round. |
+
+#### Session artifacts
+
+The `session.artifacts_*` commands above serve authenticated Desktop frontends.
+The agent-facing [host MCP tools](../desktop/backend/mcp/README.md#session-artifacts)
+are `artifacts_list({})` and `artifacts_attach({type, url})`; their session
+identity comes from the bearer grant, never from tool arguments. MCP exposes
+only listing and attachment. Frontends can list and remove artifacts. Each
+attach or UI removal edits the latest saved list under a shared lock, so
+concurrent callers preserve unrelated additions. Neither interface exposes
+whole-list replacement.
+
+Entries in `artifacts.json` beside the transcript contain a required `type`
+(`pull_request` or `branch`) and `url`, under an `artifacts` array. Saving
+normalizes surrounding whitespace and trailing slashes, preserves insertion
+order, and deduplicates by `(type, normalized URL)`. The host validates basic
+HTTPS syntax without remote lookup or checkout changes. Invalid arguments
+leave the list unchanged. Archive/restore moves the sidecar with the session;
+writes share the archive lock and revalidate the live record before committing.
+
+Clients can re-read `session.artifacts_list` after `session.artifacts_changed`.
+The notification carries no metadata; a client that wants an attached pull
+request's title and state asks `github.pull_request_summary` for its URL. Removing an
+artifact changes only the association: it does not close a PR, delete a
+branch, or change a checkout.
 
 #### The durable transcript: snapshots + commits
 
@@ -472,8 +515,10 @@ still signs out a session whose issuer no longer matches the origin.
 
 | method | params | result |
 |---|---|---|
+| `app.info` | `{}` | `{version, console_url?}` — the installed package version and a development build's loopback console URL |
 | `settings.get` | `{}` | the status shape below |
 | `settings.set` | `{provider?, custom_api_url?, deepseek_api_key?, glm_api_key?, custom_api_key?}` — absent fields stay unchanged; a present string field is trimmed and, when empty, **clears** the stored value; an unknown `provider` is refused. | the status shape below, post-write |
+| `mcp.status` | `{session}` | what that conversation's engine holds of its MCP servers: `{engine:"stopped"}` when it has no engine running, `{engine:"connecting"}` when its engine is running and has not reported yet, else `{engine:"running", status}`. `status` is the engine's latest `mcp_status` event on the serve protocol, kept by the host and returned unchanged: `{configs, servers}`, each config `{path, state:"loaded"}` or `{path, state:"failed", error}` in the order the engine was given them, each server `{name, transport:"stdio"\|"http", target, state, …}` with `state:"connected"` or `"lost"` plus `tools:[{name, description}]`, `"no_tools"`, `"failed"` plus `error`, or `"skipped"`; no configuration at all is `{configs:[], servers:[]}`. The request reads what the host kept: it starts nothing and does not ask the engine. An engine reports when it has connected its servers and again on every change — a connected server exiting. Each report also reaches connected clients as an `agent.event` carrying `mcp_status`, which is transient like every notification — a client that shows this state re-reads `mcp.status` when one arrives, and on reconnect. An engine that exits sends nothing more, so a client re-reading later gets `stopped` |
 
 The status shape, also the params of every `settings.changed` notification:
 
@@ -555,6 +600,12 @@ Notifications:
 |---|---|---|
 | `git.branch` | `{session, cwd?, base_hint?}` | `{branch?, diffstat?}` — the checked-out branch of the conversation's working directory (detached HEAD reads as its short hash), and the branch's whole line delta. `base_hint` is the branch this work merges into: the host measures from `origin/<base_hint>` when that ref exists, otherwise from `origin/HEAD`, and clients that know a pull request's base send it because nothing local can derive one. `diffstat` is `{added, removed, files, base?, partial}`, measured from where the branch left that ref all the way to the working tree — committed and uncommitted alike, untracked files included. `base` names the ref actually measured from and is absent when the repository offered none, leaving the count to cover uncommitted work alone; `partial` marks a count that stopped short of every untracked file, so it reads as a floor rather than a total. Both fields are absent when the directory is not a git repository or git is unavailable, and `diffstat` alone is absent when the diff itself failed |
 | `git.pull_request` | `{session, cwd?}` | `{pull_request?, compare_url?, branch?}` — what GitHub says about the branch that working directory has checked out, read through the user's own `gh` CLI. No `gh`, no authentication, no GitHub remote, and a detached HEAD all answer with nothing rather than an error. `branch` is the branch the host read from `HEAD`, so a checkout that moved mid-request is detectable. `pull_request` is `{number, title, state, draft, url, base, additions, deletions, changed_files, checks?}`, where `base` is the branch it merges into (the exact value for `git.branch`'s `base_hint`) and `checks` is `{passed, failed, pending}` over the head commit's rollup. `compare_url` is offered instead, for a branch with no pull request that the resolved repository already has |
+
+### github.*
+
+| method | params | result |
+|---|---|---|
+| `github.pull_request_summary` | `{url}` | `{pull_request?}` — what GitHub says about the pull request at `url`, read through the user's own `gh` CLI against the repository the URL names, with no checkout or session involved. `pull_request` has the shape `git.pull_request` answers with, without `checks`. The URL is untrusted data (an agent may have attached it), so the lookup drops `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` unless the URL's host is `GH_HOST`. A URL that is not a pull request's answers `{}`; a missing `gh`, a failed or timed-out lookup, and unreadable output are errors |
 
 ### fs.* — host file access
 
@@ -707,10 +758,13 @@ these are ordinary command replies, with no transport-level wrapper.
 | `skills.installed_content` | `{id}` | `{content}` — the installed SKILL.md |
 | `skills.install` | `{module_name, version, package_path?}` | `{installed}` |
 | `skills.uninstall` | `{id}` | `{removed}` |
+| `skills.set_enabled` | `{id, enabled: boolean}` | `{ok: true}` — move an installed entry into or out of `skills/.disabled/` |
 
 Installed entries include an optional `registry: {module_name, package_path}`
 identifying the installed registry skill. Root packages use `package_path: ""`;
-non-registry skills omit `registry`.
+non-registry skills omit `registry`. Every installed entry includes a required
+`enabled: boolean`, derived from its location. Both enabled and disabled entries
+are listed and can be previewed; hand-written entries can also be toggled.
 
 The Installed update action reuses `skills.install` with the catalog's module,
 package, and displayed version. The trusted registry guarantees that published
@@ -718,13 +772,16 @@ versions do not move backwards. After matching module and package, clients compa
 the installed `source` with the catalog entry's source label: equal means no
 update; different means an update is available. No version parsing is needed.
 The existing install operation replaces the complete directory and provenance
-through its recoverable transaction.
+through its recoverable transaction in the entry's current enabled or disabled
+directory. The location is resolved after downloading, so toggling while an
+update is in flight preserves the latest enablement state. New installations
+default to enabled. These operations do not refresh saved session prompts.
 
 Notification:
 
 | method | params |
 |---|---|
-| `skills.changed` | `{}` — broadcast after an install, update, or uninstall commits; every client re-reads `skills.installed`, including clients that did not make the request |
+| `skills.changed` | `{}` — broadcast after an install, update, uninstall, or enablement change commits; every client re-reads `skills.installed`, including clients that did not make the request |
 
 ### auth.* — account and independent remote access
 
@@ -785,7 +842,7 @@ The status shape, also the params of every `auth.changed` notification:
   "connected": false,            // control WS currently registered
   "managed_by_env": true,        // present only under the OPENSEEK_RELAY_URL override
   "user":   {"login": "…", "avatar_url": "…"},   // absent when signed out
-  "device": {"id": "d_…", "name": "…", "url": "…/console/releases/v0.1.16/index.html?device=d_…"}  // absent when ordinary remote access is disabled
+  "device": {"id": "d_…", "name": "…", "url": "…/device/d_…/chat"}  // absent when ordinary remote access is disabled
 }
 ```
 
@@ -967,3 +1024,12 @@ selection. The final send submits all answers together. The close button skips
 the entire request. Requests live for the host process, surviving frontend
 reconnects but not host shutdown. A
 failed delayed delivery emits a session error and is not automatically retried.
+
+## Native SSH working hosts
+
+Desktop SSH uses the same command catalog over WebSocket on a local loopback
+port forwarded with `ssh -L` to `openseek-app-server` on remote loopback TCP.
+The native bridge forwards host-qualified requests and notifications; the
+renderer never connects a remote resource to its local host by fallback.
+See [SSH working hosts](../desktop/backend/ssh/README.md) for bootstrap,
+initialization, process lifetime, installation and validation details.

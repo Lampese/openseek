@@ -9,10 +9,12 @@
   /* The full-scroll-height .view-lines plane is z-index 1. Keep caller-owned
    * Markdown input above it, but below editor cursors (4) and widgets (50+). */
   z-index: 2;
-  color: var(--vscode-editor-foreground);
+  /* Prose annotates the code below it; the signature stays the brightest
+   * element on the row. */
+  color: var(--vscode-descriptionForeground, var(--vscode-editor-foreground));
   background: var(--vscode-editor-background);
   font-family: var(--ui-font-family, var(--editor-font-family));
-  font-size: calc(var(--editor-font-size) * 0.92);
+  font-size: var(--editor-font-size);
   line-height: 1.5;
 }
 
@@ -24,7 +26,15 @@
   box-sizing: border-box;
   /* The pinned outer already ends at the vertical scrollbar rail. */
   width: 100%;
-  padding: 4px 40px 5px 0;
+  /* The trailing reserve varies with the block's controls; the item divider
+   * always ends at the base reserve so every divider has the same length. */
+  --moonbit-markdown-comment-base-reserve: 40px;
+  --moonbit-markdown-comment-trailing-reserve: var(
+    --moonbit-markdown-comment-base-reserve
+  );
+  /* The leading separator's air lives in padding, not margins, so the
+   * measured offsetHeight carries it. */
+  padding: 6px var(--moonbit-markdown-comment-trailing-reserve) 4px 0;
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
@@ -47,7 +57,7 @@
   .moonbit-viewer-markdown-comment-content {
   /* Keep the ellipsized preview clear of the hover/focus-revealed accessible
    * toggle pinned to the top-right corner. */
-  padding-right: 68px;
+  --moonbit-markdown-comment-trailing-reserve: 68px;
 }
 
 .moonbit-viewer-markdown-comment[data-documentation-foldable="true"][data-documentation-expanded="false"]
@@ -69,6 +79,11 @@
   white-space: nowrap;
 }
 
+.moonbit-viewer-markdown-comment-preview > :not(hr):last-child::after {
+  content: " \2026";
+  color: var(--vscode-editor-foldPlaceholderForeground, currentColor);
+}
+
 .moonbit-viewer-markdown-comment[data-source-visible="true"][data-documentation-foldable]
   :is(
     .moonbit-viewer-markdown-comment-full,
@@ -84,7 +99,9 @@
 
 .moonbit-viewer-markdown-comment[data-source-visible="true"]
   .moonbit-viewer-markdown-comment-content {
-  padding-right: 40px;
+  --moonbit-markdown-comment-trailing-reserve: var(
+    --moonbit-markdown-comment-base-reserve
+  );
 }
 
 /* Source mode temporarily suppresses documentation folding controls while
@@ -189,7 +206,8 @@
 
 .moonbit-viewer-markdown-comment-margin-toggle.codicon {
   position: absolute;
-  top: 4px;
+  /* Centered on the first prose line below the leading divider. */
+  top: 12px;
   right: 8px;
   /* The later `.margin-view-overlays` sibling otherwise paints above the
    * zones container and intercepts the click. */
@@ -207,10 +225,9 @@
   transition: opacity 0.5s;
 }
 
-/* Match the code-folding reveal: collapsed chevrons stay visible, expanded
- * chevrons surface while the pointer is over the gutter. */
-.margin:hover .moonbit-viewer-markdown-comment-margin-toggle,
-.moonbit-viewer-markdown-comment-margin-toggle.codicon-folding-collapsed {
+/* Match the code-folding reveal: chevrons surface while the pointer is over
+ * the gutter. A collapsed preview's trailing ellipsis carries its state. */
+.margin:hover .moonbit-viewer-markdown-comment-margin-toggle {
   opacity: 1;
 }
 
@@ -312,16 +329,27 @@
   background: color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent);
 }
 
-/* Leading item anchors separate blocks through whitespace. Interior Markdown
- * rules keep their stroke; preserve the anchor's measured source geometry. */
+/* A leading item anchor is the item divider. It stands in for the hidden
+ * `///|` marker and the blank lines above it, so it draws a fainter stroke
+ * than interior rules and keeps only a compact gap before the prose. */
 .moonbit-viewer-markdown-comment-body > hr:first-child {
-  background: transparent;
+  /* Extend through any extra control reserve so a foldable block's divider
+   * is as long as every other item's. */
+  margin-right: calc(
+    var(--moonbit-markdown-comment-base-reserve) -
+      var(--moonbit-markdown-comment-trailing-reserve)
+  );
+  margin-bottom: 6px;
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 7%, transparent);
 }
 
-/* An item separator replaces one source line. Its content box is otherwise
- * 10px tall (4px + 1px + 5px), so retain the configured line geometry. */
+.moonbit-viewer-markdown-comment-body > hr:first-child + * {
+  margin-top: 0;
+}
+
+/* An undocumented item is the divider alone. */
 .moonbit-viewer-markdown-comment-body > hr:only-child {
-  margin-bottom: calc(var(--editor-line-height, 18px) - 10px);
+  margin-bottom: 0;
 }
 
 .moonbit-viewer-markdown-comment-content a {
@@ -346,9 +374,16 @@
 }
 
 .moonbit-viewer-markdown-comment-content :not(pre) > code {
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--vscode-textCodeBlock-background);
+  /* Monospace and a step above the muted prose set identifiers apart without
+   * a chip that disturbs the baseline. Halfway to the full foreground, and a
+   * notch smaller (monospace runs larger than sans at the same size), keeps
+   * them below the signature they describe. */
+  color: color-mix(
+    in srgb,
+    var(--vscode-editor-foreground) 50%,
+    var(--vscode-descriptionForeground, var(--vscode-editor-foreground))
+  );
+  font-size: 0.92em;
 }
 
 .moonbit-viewer-markdown-comment-content pre,

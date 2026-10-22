@@ -14,6 +14,8 @@ fn Input::fixture(task : String) -> Input {
     shell_available: false,
     history: [],
     root: Some(@common.Uri::file("/workspace")),
+    cloud_access: None,
+    staged_attachments: [],
     installed_skills: [],
     context_generation: 0,
     submission_sequence: 0,
@@ -169,6 +171,96 @@ test "file completion accepts a local candidate inside the component" {
     draft.mentions ==
     [{ ref_: @mention_context.File(path="src/main.mbt"), range: None, }],
   )
+}
+
+///|
+test "a prompt slash command stays a command until sent, then sends its prompt" {
+  let input = {
+    ..Input::fixture(""),
+    slash_commands: [
+      {
+        label: "/review",
+        detail: "",
+        command: "review",
+        prompt: Some("Review it.\nFocus:"),
+      },
+    ],
+  }
+  let emitted : Array[Action] = []
+  let actions = @cmd.Emit(action => {
+    emitted.push(action)
+    @cmd.none
+  })
+  let (typed, _) = Model(input).update(
+    input,
+    TextChanged("/rev"),
+    Msg::test_emit(),
+    actions,
+  )
+  let (accepted, _) = typed.update(
+    input,
+    CompletionAccept,
+    Msg::test_emit(),
+    actions,
+  )
+  inspect(accepted.active(input).draft.task, content="/review ")
+  // Nothing runs on accepting it: the user adds a focus and sends.
+  assert_true(emitted.all(action => !(action is SlashCommand(..))))
+  fn sent(task) raise {
+    emitted.clear()
+    let (focused, _) = accepted.update(
+      input,
+      TextChanged(task),
+      Msg::test_emit(),
+      actions,
+    )
+    let (_, _) = focused.update(
+      input,
+      SubmitRequested,
+      Msg::test_emit(),
+      actions,
+    )
+    guard emitted is [DraftSubmitted(draft~, ..)] else {
+      fail("one prompt submission expected")
+    }
+    draft.task
+  }
+  inspect(sent("/review the parser "), content="Review it.\nFocus: the parser")
+  inspect(sent("/review"), content="Review it.\nFocus:")
+  // Only the whole command word expands.
+  inspect(sent("/reviewer"), content="/reviewer")
+}
+
+///|
+test "disabled installed skills stay out of skill completion" {
+  let available : @skills.InstalledItem = {
+    id: "available",
+    name: "available",
+    description: "",
+    source: "",
+    registry: None,
+    enabled: true,
+  }
+  let disabled = {
+    ..available,
+    id: "disabled",
+    name: "disabled",
+    enabled: false,
+  }
+  let input = { ..Input::fixture(""), installed_skills: [available, disabled], }
+  let (typing, _) = Model(input).update(
+    input,
+    TextChanged("$"),
+    Msg::test_emit(),
+    Action::test_emit(),
+  )
+  let entry = typing.active(input)
+  guard entry.completion is Some(menu) else {
+    fail("the skill token should open completion")
+  }
+  assert_true(menu.kind is SkillMentions)
+  assert_eq(menu.menu.length(), 1)
+  assert_eq(menu.menu.items[0].label, "$available")
 }
 
 ///|
@@ -388,6 +480,12 @@ test "the heartbeat reports only the detail it actually has" {
     tokens: 12_345,
   }
   assert_eq(full.label(clock_ms~), "Thinking… (2m 14s · 12.3k tokens)")
+  // The spent-tokens unit is localized, never a bare English word left in
+  // otherwise translated text.
+  assert_eq(
+    full.label(locale=@i18n.SimplifiedChinese, clock_ms~),
+    "正在思考… (2m 14s · 12.3k 个词元)",
+  )
   // A run adopted from a reconnect has no start this page witnessed. Its age
   // is omitted, never guessed from the moment we noticed it.
   assert_eq(
@@ -713,6 +811,90 @@ test "image-only drafts submit and preserve pictures until acknowledged" {
   assert_eq(once.active(base).draft.images, input.draft.images)
   let acknowledged = { ..base, submission_sequence: 1, }
   assert_true(once.active(acknowledged).draft.images.is_empty())
+}
+
+///|
+test "draft acknowledgement removes its snapshot once and retains later image reads for Local and Cloud" {
+  for cloud in [false, true] {
+    let base = Input::fixture("")
+    let input = if cloud {
+      {
+        ..base,
+        identity: {
+          owner: @interop.Cloud(account="account", session="session"),
+          archive_generation: 0,
+        },
+      }
+    } else {
+      base
+    }
+    let image : Image = { name: "same.png", url: "data:image/png;base64,YQ==", }
+    let submitted : Draft = {
+      task: "sent",
+      images: [image],
+      mentions: [{ ref_: File(path="sent.pdf"), range: None, }],
+    }
+    let model = Model(input).with_entry({ ..Entry(input), draft: submitted, })
+    let (sending, _) = model.update(
+      input,
+      SubmitRequested,
+      Msg::test_emit(),
+      Action::test_emit(),
+    )
+    let edited = sending.update(
+        input,
+        TextChanged("text-only next draft"),
+        Msg::test_emit(),
+        Action::test_emit(),
+      ).0
+    let text_only = edited.active({ ..input, submission_sequence: 1, }).draft
+    assert_eq(text_only.task, "text-only next draft")
+    assert_true(text_only.images.is_empty() && text_only.mentions.is_empty())
+    for
+      event in [
+        @image_input.Ready([("same.png", image.url)]),
+        @image_input.DocumentsReady(images=[("same.png", image.url)], documents=[]),
+      ] {
+      let (reading, _) = sending.update(
+        input,
+        ImageRead(input.identity, input.root, @image_input.Reading),
+        Msg::test_emit(),
+        Action::test_emit(),
+      )
+      let (added, _) = reading.update(
+        input,
+        ImageRead(input.identity, input.root, event),
+        Msg::test_emit(),
+        Action::test_emit(),
+      )
+      assert_eq(added.active(input).draft.images.length(), 2)
+      let acknowledged = { ..input, submission_sequence: 1, }
+      for edit_text in [false, true] {
+        let changed = if edit_text {
+          added.update(
+            input,
+            TextChanged("next draft"),
+            Msg::test_emit(),
+            Action::test_emit(),
+          ).0
+        } else {
+          added
+        }
+        let next = changed.active(acknowledged).draft
+        assert_eq(next.task, if edit_text { "next draft" } else { "" })
+        assert_true(next.mentions.is_empty())
+        assert_eq(next.images, [image])
+      }
+      let retired = { ..input, retirements: [input.identity.owner], }
+      let (ignored, _) = reading.update(
+        retired,
+        ImageRead(input.identity, input.root, event),
+        Msg::test_emit(),
+        Action::test_emit(),
+      )
+      assert_true(ignored.active(retired).draft.is_empty())
+    }
+  }
 }
 
 ///|

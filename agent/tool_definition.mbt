@@ -7,11 +7,10 @@ fn background_notice_text(snapshot : @bgjobs.BgJobSnapshot) -> String {
       Some(outcome) => @agent_subagent.describe_outcome(outcome)
       None => "ended"
     }
-    let worktree = match info.workspace {
-      Worktree(worktree) => "; \{@agent_subagent.brief_worktree(worktree)}"
-      InPlace => ""
-    }
-    return "subagent job \{snapshot.id} (\{info.kind}: \{info.label}) \{ended}\{worktree} — read its outcome, its report and what to do with its change with job_output (job_id=\"\{snapshot.id}\")."
+    let change = @agent_subagent.brief_workspace(info.workspace).map_or("", change => {
+      "; \{change}"
+    })
+    return "subagent job \{snapshot.id} (\{info.kind}: \{info.label}) \{ended}\{change} — read its outcome, its report and what to do with its change with job_output (job_id=\"\{snapshot.id}\")."
   }
   let status = if snapshot.cleanup_error is Some(error) {
     "cleanup failed: \{error}"
@@ -67,9 +66,11 @@ fn background_notice_text(snapshot : @bgjobs.BgJobSnapshot) -> String {
 /// subagent job with its outcome and report.
 ///
 /// `extra_tools` are appended to the registry after the built-ins — the seam for
-/// dynamically discovered tools (e.g. MCP servers' tools, namespaced so they do
-/// not collide with the built-ins). The caller builds them (keeping this package
-/// free of MCP dependencies); `Tools` still raises on any duplicate name.
+/// tools the caller builds; `Tools` still raises on any duplicate name.
+///
+/// `mcp_service`, when supplied, is the session's MCP host, whose handoff
+/// `mbtx` gives every sandboxed script. The caller starts it over the servers
+/// it connected, keeping this package free of MCP clients.
 pub async fn[X] build_tools(
   runtime : @agent_runtime.AgentRuntime,
   scope : @agent_runtime.AgentTaskScope[X],
@@ -78,6 +79,7 @@ pub async fn[X] build_tools(
   session_scratch_dir? : String,
   extra_tools~ : Array[@agent_tool.AgentToolDefinition] = [],
   subagents? : @subagent.Subagents,
+  mcp_service? : @mcphost.Service,
 ) -> @agent_tool.Tools {
   let workspace_root = runtime.workspace_root()
   // One session-scoped file-state map, shared by the file-writing tools so they
@@ -189,6 +191,25 @@ pub async fn[X] build_tools(
   // The session's subagent launcher, when this session may delegate: its
   // children are jobs of this same runtime.
   let launcher = subagents.map(spec => (spec.launcher)(bg_runtime))
+  // A directory worker an earlier engine of this session ran stopped with it,
+  // and left its change in place; the transcript may never have heard how it
+  // ended. Say so before the next model request, as its end notice would.
+  if (subagents, job_log_dir) is (Some(spec), Some(root)) {
+    let own = match spill_dir.rev_split_once("/") {
+      Some((_, generation)) => generation.to_owned()
+      None => spill_dir
+    }
+    let unreported = @agent_subagent.unreported_directory_workers(
+      @bgjobs.earlier_job_records(root, own~),
+      notified=spec.notified,
+    )
+    for text in unreported {
+      runtime.queue_steer(Notice(text))
+    }
+    if !unreported.is_empty() && on_background_wake is Some(wake) {
+      wake()
+    }
+  }
   let image_input_supported = Ref(false)
   let file_tools = [
     @read_image.definition(workspace_root~),
@@ -264,6 +285,7 @@ pub async fn[X] build_tools(
         program_service~,
         on_program_trace=data => program_trace.val = Some(data),
         on_program_output=content => program_output.val = Some(content),
+        mcp_service?,
       ),
       // Deliberately NOT told about escalation. It reports a job that already
       // ran — a policy refusal reaches it after minutes of real work — and the

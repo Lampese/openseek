@@ -39,6 +39,25 @@ The native `backend` and JS `frontend` modules both depend on the root
 `desktop` module. They do not depend on each other; backend packaging builds
 the frontend workspace member separately and consumes its generated bundle.
 
+## Importing conversations
+
+The **⋯** button at the left of the top-right controls opens an **Export and import** menu. **Export** opens
+the existing sharing/download dialog; **Import** accepts an OpenSeek conversation
+export `.json` file or an OpenSeek share URL. The imported conversation opens in
+the normal chat view and appears in the sidebar under the current project or
+worktree. From an unplaced chat, Desktop creates a chat workspace. Imports persist
+across restarts, including exported subruns, and repeated imports get new ids.
+
+Imported conversations are ordinary writable sessions under `.openseek/sessions`.
+They support continuing, editing, forking, renaming and archiving through the
+existing session APIs. The imported system prompt and historical messages are
+preserved; original workspace files, processes and filesystem attachments are not
+restored. Continuing uses the target checkout's files.
+
+Files and downloaded JSON are limited to 16 MiB. Share imports fetch the public
+JSON resource without account credentials or redirects; expired/revoked shares
+report an error and retain the link for retry.
+
 ## Sessions and streaming
 
 Each conversation is served by one persistent `openseek serve` engine
@@ -139,6 +158,19 @@ the pipes) surfaces a notice asking to resubmit, so the text never vanishes
 silently. A turn that is being cancelled cannot be steered; the text stays in
 the composer.
 
+## Conversation overview
+
+The titlebar's overview control shows or hides a column of cards about the
+OpenSeek conversation on screen: its **Environment** — the device it runs
+on, its project, the checked-out branch and whether the conversation has a
+worktree of its own — and its **Connectors** (see MCP servers).
+Showing it is a window preference kept across conversations and launches.
+Where the main pane has room for a 600px conversation beside it, the
+overview is a rail to the right of the transcript and the composer; where it
+does not — a narrow window, a wide sidebar, an open file panel — the same
+overview is a panel over the transcript's right edge that stops above the
+composer. The stylesheet decides between the two from the main pane's width.
+
 ## Skills
 
 The sidebar's **Skills** button opens a browser over the
@@ -153,10 +185,17 @@ advertises the library in the system prompt of every **new** session — so
 installed skills apply to new chats, and to the CLI/TUI as well, since the
 library is shared.
 
+Installed skills can be disabled without uninstalling them. Disabling moves
+the complete entry to `skills/.disabled/`; enabling moves it back. Disabled
+entries remain visible in the Skills page, but are omitted from the engine's
+skill discovery and the composer's skill completion. Updates replace the
+entry in its current location, preserving its enabled state. Existing chats
+keep their saved system prompt; toggling does not refresh that prompt.
+
 The panel also lists what is already in the library. Hand-written skills are
-shown but never touched: installs refuse to overwrite a same-named entry that
-has no provenance marker, and only entries the app itself installed get an
-Uninstall button.
+shown and can be enabled or disabled, including flat `.md` files. Installs
+refuse to overwrite a same-named entry that has no provenance marker, and
+only entries the app itself installed can be updated or uninstalled.
 
 ## MCP servers
 
@@ -183,6 +222,26 @@ which costs one more engine start than was needed on the next prompt; only an
 edit that is also undone in that moment goes unnoticed until the file changes
 again.
 
+The conversation overview's **Connectors** card shows what that
+conversation's engine holds of its MCP servers, the host's own among them.
+Folded, it is one line — how many servers connected and how many failed;
+unfolded, each server is listed connected with its tool count, disconnected
+since it connected, no tools, failed with the reason, or skipped over the
+tool limit, after any configuration file the engine could not load; how a
+server is reached and its tools are on hover. The host holds no MCP
+connections of its own. Each engine reports what it holds once it has
+connected its servers, and again whenever that changes (`mcp_status` on the
+serve protocol); the host keeps a conversation's latest report and the card
+shows it. Reading it starts nothing, so the card reads each time the
+overview comes on screen for a conversation, again whenever its
+conversation's engine reports — a server that exits turns to disconnected
+without a refresh — and again when the host reconnects. A conversation whose
+engine is not running — before its first message, or after a restart — is
+shown as that; its servers connect when its next message starts one. One
+whose engine has started and not reported yet is shown as still connecting.
+An engine that exits while the overview is shown reports nothing more; the
+card's refresh button shows it stopped.
+
 A configuration the engine cannot load, and a server that fails to start, to
 list its tools, or to fit under the tool limit, raise an error toast naming
 the cause; the conversation continues without those tools. A broken file is
@@ -193,8 +252,8 @@ read this file — Codex takes its MCP servers from its own `config.toml`.
 
 ### The app's own tools
 
-The app offers tools of its own to the agents it runs, starting with the
-dock's browser. An agent works with the Browser tabs of its own conversation:
+The app offers browser tools and session artifacts to the OpenSeek agents
+it runs. An agent works with the Browser tabs of its own conversation:
 `browser_tabs` lists them, `browser_open` opens a new one on an address, and
 `browser_navigate` loads an address in one, steps back or forward in its
 history, or reloads it. The engine connects directly to the host over MCP
@@ -215,7 +274,8 @@ override like this in `~/.openseek/mcp.json`:
 }
 ```
 
-The tools reach the agent as `mcp__seekmoon__<tool>`. The host supplies the
+The agent's scripts reach the tools as `@mcp.call("seekmoon", tool, arguments)`
+and find them with `@mcp.search(server="seekmoon")`. The host supplies the
 address and conversation token in the engine's environment; no relay process
 or credentials on disk are needed. The generated configuration stores only the
 placeholders shown above. Outside a desktop-launched engine the variables are
@@ -224,7 +284,35 @@ tools, add
 `"X-SeekMoon-Tool-Groups": "browser"` to `headers`; multiple groups are comma
 separated. Replace older `"command": "seekmoon", "args": ["mcp"]` entries
 with the HTTP entry above; the relay executable is no longer packaged.
-See `backend/mcp/README.md`.
+To include session artifacts with browser tools, use
+`"X-SeekMoon-Tool-Groups": "browser,artifacts"`; omitting the header exposes all
+available groups. See the [host MCP reference](backend/mcp/README.md).
+
+### Attach pull requests and remote branches
+
+With the host MCP entry configured, an OpenSeek agent can attach PR and
+remote branch URLs to its current conversation:
+
+- `artifacts_list({})` reads the saved `{ "artifacts": [{ "type": "pull_request", "url": "…" }] }` list.
+- `artifacts_attach({ "type": "pull_request", "url": "https://github.com/example/project/pull/42" })`
+  appends one artifact and returns the saved list. Use `"type": "branch"` for
+  remote branch URLs. Both fields are required.
+
+Scripts call them as `@mcp.call("seekmoon", "artifacts_list", {})` and
+`@mcp.call("seekmoon", "artifacts_attach", …)`. The host's token selects the
+conversation.
+Attach checks basic HTTPS syntax and deduplicates by type and normalized URL,
+without checking remote existence or changing the checkout. Concurrent
+attachments append to the latest saved list under a shared lock. A conversation
+must already have a durable record to attach artifacts. Agents cannot detach,
+clear, or replace the list. Unpublished local branches cannot be attached by name.
+
+Artifacts are stored in `artifacts.json` beside the transcript, survive
+restart, and follow the conversation through archive and restore. This
+feature applies to OpenSeek conversations; the Codex MCP configuration is
+unchanged. Authenticated frontend clients can list and remove artifacts
+through the separate
+[session protocol commands](../docs/remote-protocol.md#session-artifacts).
 
 ## API endpoint
 
@@ -291,8 +379,11 @@ git clone <this-repo>
 ```
 
 Proton is an ordinary registry dependency (`moonbit-community/proton` in
-`backend/moon.mod`), so a plain clone is complete — `moon` resolves it like
-any other package.
+`app/moon.mod`), so a plain clone is complete — `moon` resolves it like
+any other package. Only the window host depends on it, and that module builds
+in its own `app/moon.work` instead of the root workspace, so the root gates
+never run Proton's prebuild. Check and test the host with
+`just desktop-app-check` and `just desktop-app-test`.
 
 The desktop frontend imports the `moonbitlang/editor` workspace member from
 `../editor`. Packaging reads its reusable CSS and codicon font from that same
@@ -309,11 +400,17 @@ Existing `.docx`, `.xlsx`, and `.pdf` paths open in the file panel and are read
 as bounded binary payloads (up to 20 MiB). DOCX/XLSX use the standalone viewer's
 `office.mbt` reader/layout pipeline. PDFs use its asynchronous PDF.js surface,
 with page navigation, zoom, fit to width, rotation, search, and password prompts.
+In Word and PDF previews, the **Page thumbnails** toolbar button opens a
+collapsible page navigator, initially closed. Click a thumbnail to jump to its
+page; the highlight follows document scrolling. Office Viewer provides preview
+generation, page synchronization, navigation, caching, and cleanup. OpenSeek owns its
+container and open/closed state. The navigator floats over narrow previews, and
+supports arrow keys, Home, and End for page navigation.
 The Office/PDF controls and password prompts follow the application's language
 setting. Preview and selection failures show a short message with retry guidance.
 DOCX, XLSX, and PDF previews support trackpad pinch zoom and Ctrl+wheel, with
 the toolbar percentage following the document's zoom. Ordinary two-finger
-scrolling remains available. DOCX/XLSX use the existing 50–200% range and PDFs
+scrolling remains available. DOCX/XLSX use a 10–200% range and PDFs
 use 25–400%; zooming keeps the document position under the pointer when the
 scroll range permits it. Selecting content continues to work after zooming.
 
@@ -327,6 +424,14 @@ Selecting text in DOCX/PDF or a cell range in XLSX opens a preview showing its
 content and page or sheet/range. **Add to context** keeps the quotation in the
 active conversation; **Cancel** leaves the draft unchanged. Further selections
 update the pending preview, while separately confirmed quotations accumulate.
+Excel range selections also expose **Copy table** (TSV) and **Markdown** in
+the document toolbar. They copy the complete displayed values independently of
+the Agent preview's excerpt limit. Blank and merged-cell positions are retained;
+merged values occupy one cell and the covered positions remain empty. TSV quotes
+embedded tabs, line breaks, and quotes. Markdown uses the first selected row as
+its header, escapes literal markup, and represents line breaks with `<br>`.
+Copying does not add context or change the workbook. Ranges over one million
+cells must be reduced before copying.
 Each quotation chip shows its file, location, and content excerpt, with the
 selected text in its tooltip. PDF quotations retain a complete
 file/hash/parser-bound PDF text-range reference. Image-only pages display
@@ -342,18 +447,33 @@ carried into a new task worktree when necessary. Click a file reference to
 preview it and select the content to quote; attaching a document creates no
 extracted-text or JSON sidecar.
 Browser and desktop packages copy the metric-compatible Office fonts and the
-accompanying copyright, license and modification notices from the published
-`Lampese/office-viewer@0.1.3` package into the final web resource tree. The
+accompanying copyright, license and modification notices from the pinned
+`Lampese/office-viewer@0.2.3` package into the final web resource tree. The
 browser-ready fonts retain the layout engine's glyphs and metrics and use
 distinct internal names for the modified font programs. No separate font
 checkout or duplicated font assets are needed.
 
-Moon resolves the viewer from the published module declared in `moon.mod`;
+Moon resolves the viewer from the module declared in `moon.mod`;
 packaging reads its PDF runtime and font assets from the resolved package.
 The runtime and pinned PDF.js engine, worker, stylesheet, CMaps,
 standard fonts, codecs, ICC profiles, and license are packaged in both hosts;
 PDF previews do not fetch runtime resources from a CDN or require a sibling
 Office Viewer checkout.
+
+Answer citation links can navigate to a verified Office location and highlight
+it without creating a composer annotation. Both inline citation numbers and
+Sources cards use the same local-file route. Supported fragments are PDF
+`#page=2` (one-based physical page), DOCX `#heading=Revenue` (unique complete
+paragraph text) or `#paragraph=%2Fdocx%2Fbody%2Fp%5B3%5D` (canonical source
+selector), and XLSX `#sheet=Revenue&range=B2:D8`. Encode each fragment value
+separately; filenames retain the usual Markdown path encoding. Saved citations
+using explicit `— p. 2` or `— 第 2 页` metadata also navigate to that PDF page.
+Navigation waits for file/PDF loading, including password prompts. Missing or
+ambiguous locations and cells outside the rendered preview show a notice while
+keeping the file open. PDF page citations outline the page; Word highlights
+the matched paragraph's rendered text; Excel switches sheets and highlights
+the cited cells. These are navigation highlights rather than Office edits or
+persisted annotations.
 
 What still needs preparing, beyond the MoonBit packages:
 
@@ -592,3 +712,12 @@ requires GTK3 and
 `libwebkit2gtk-4.1` installed on the host system, which is the standard
 arrangement for webview-based AppImages. If your system lacks FUSE2, run it
 with `APPIMAGE_EXTRACT_AND_RUN=1`.
+
+### Office width fitting
+
+The fit-width integration requires the `Lampese/office-viewer@0.2.3`
+package for width measurement, observation, document rendering, selections,
+fonts, and PDF.js. A local Office Viewer checkout is not required.
+
+DOCX opens in Fit width. Explicit zoom and fit choices are retained per file;
+Excel opens at 100% and keeps horizontal scrolling unless Fit width is chosen.

@@ -13,6 +13,7 @@ pub fn text(@i18n.Locale, Message) -> String
 // Types and methods
 pub(all) enum Message {
   SearchConversations
+  NoMatchingConversations
   Chats
   Cloud
   Local
@@ -20,7 +21,7 @@ pub(all) enum Message {
   Projects
   NewChat
   AddProject
-  ArchivedChats(Int)
+  ArchivedChats(Int32)
   ShowMore
   ShowMoreChats
   MoreActions
@@ -40,6 +41,8 @@ pub(all) enum Message {
   Scheduled
   Settings
   RefreshDevices
+  ChooseDevice
+  NoDevicesOnline
   Refresh
   SignOut
 }

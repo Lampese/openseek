@@ -24,6 +24,8 @@ pub fn icon_book() -> @html.Html
 
 pub fn icon_chat_export() -> @html.Html
 
+pub fn icon_chat_import() -> @html.Html
+
 pub fn icon_check() -> @html.Html
 
 pub fn icon_chevron_down() -> @html.Html
@@ -68,6 +70,16 @@ pub fn icon_folder() -> @html.Html
 
 pub fn icon_folder_opened() -> @html.Html
 
+pub fn icon_git_branch() -> @html.Html
+
+pub fn icon_git_merge() -> @html.Html
+
+pub fn icon_git_pull_request() -> @html.Html
+
+pub fn icon_git_pull_request_closed() -> @html.Html
+
+pub fn icon_git_pull_request_draft() -> @html.Html
+
 pub fn icon_github() -> @html.Html
 
 pub fn icon_globe() -> @html.Html
@@ -81,6 +93,8 @@ pub fn icon_layout() -> @html.Html
 pub fn icon_layout_sidebar_left() -> @html.Html
 
 pub fn icon_layout_sidebar_right() -> @html.Html
+
+pub fn icon_lightbulb() -> @html.Html
 
 pub fn icon_link_external() -> @html.Html
 
@@ -100,6 +114,8 @@ pub fn icon_pin() -> @html.Html
 
 pub fn icon_play() -> @html.Html
 
+pub fn icon_preview() -> @html.Html
+
 pub fn icon_pull_request() -> @html.Html
 
 pub fn icon_question() -> @html.Html
@@ -114,7 +130,11 @@ pub fn icon_search() -> @html.Html
 
 pub fn icon_send() -> @html.Html
 
+pub fn icon_server() -> @html.Html
+
 pub fn icon_settings_gear() -> @html.Html
+
+pub fn icon_shield() -> @html.Html
 
 pub fn icon_sparkle() -> @html.Html
 
@@ -129,6 +149,8 @@ pub fn icon_terminal() -> @html.Html
 pub fn icon_tools() -> @html.Html
 
 pub fn icon_trash() -> @html.Html
+
+pub fn icon_vm() -> @html.Html
 
 pub fn icon_watch() -> @html.Html
 

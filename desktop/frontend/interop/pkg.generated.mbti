@@ -31,7 +31,11 @@ pub async fn[Payload : ToJson, Reply : @json.FromJson] bridge_request_in_order(C
 
 pub async fn[Payload : ToJson, Reply : @json.FromJson] codex_request(ChannelId, @commands.Command[Payload, @protocol.CodexCommandReply[Reply]], Payload) -> Reply
 
+pub fn current_ssh_epoch(ChannelId) -> Int32?
+
 pub async fn[T] in_ordered_lane(String, async () -> T) -> T
+
+pub fn is_native_ssh(ChannelId) -> Bool
 
 pub fn js_method_promise(@js.Value, String, @js.Value) -> @js_async.Promise[@js.Value] raise @js.Error_
 
@@ -49,9 +53,13 @@ pub fn page_query_param(String) -> String?
 
 pub fn page_ws_origin() -> String?
 
+pub fn register_ssh_profile(@protocol.SshProfile) -> Unit
+
 pub fn session_command_lane(ChannelId, String) -> String
 
-pub fn viewport_width() -> Int?
+pub fn set_ssh_epoch(ChannelId, Int32?) -> Unit
+
+pub fn viewport_width() -> Int32?
 
 pub fn ws_close(ChannelId) -> Unit
 
@@ -73,7 +81,7 @@ pub(all) enum ChannelId {
 pub fn ChannelId::device_id(Self) -> String
 pub fn ChannelId::equal(Self, Self) -> Bool
 pub fn ChannelId::from_uri_authority(String) -> Self?
-pub fn ChannelId::hash(Self) -> Int
+pub fn ChannelId::hash(Self) -> Int32
 pub fn ChannelId::hash_combine(Self, Hasher) -> Unit
 pub fn ChannelId::not_equal(Self, Self) -> Bool
 pub fn ChannelId::of_device(String) -> Self
@@ -100,7 +108,7 @@ pub(all) enum ConversationIdentity {
   Cloud(account~ : String, session~ : String)
 } derive(Eq, Hash, @debug.Debug)
 pub fn ConversationIdentity::equal(Self, Self) -> Bool
-pub fn ConversationIdentity::hash(Self) -> Int
+pub fn ConversationIdentity::hash(Self) -> Int32
 pub fn ConversationIdentity::hash_combine(Self, Hasher) -> Unit
 pub fn ConversationIdentity::host(Self) -> ConversationKey?
 pub fn ConversationIdentity::key(Self) -> String
@@ -113,7 +121,7 @@ pub(all) struct ConversationKey {
   session : String
 } derive(Eq, Hash, @debug.Debug)
 pub fn ConversationKey::equal(Self, Self) -> Bool
-pub fn ConversationKey::hash(Self) -> Int
+pub fn ConversationKey::hash(Self) -> Int32
 pub fn ConversationKey::hash_combine(Self, Hasher) -> Unit
 pub fn ConversationKey::not_equal(Self, Self) -> Bool
 pub fn ConversationKey::to_repr(Self) -> @debug.Repr

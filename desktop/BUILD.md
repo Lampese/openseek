@@ -49,7 +49,7 @@ moon run ./desktop/package/macos -- \
 
 # Windows; defaults to ZIP and installer
 moon run ./desktop/package/windows
-moon run ./desktop/package/windows --target native -- --release --target app --target installer
+moon run ./desktop/package/windows --target native -- --release --target installer
 
 # Linux AppImage
 moon run ./desktop/package/linux -- --release
@@ -62,9 +62,9 @@ moon run ./desktop/package/dev
 Windows installer builds require NSIS (`makensis.exe` on `PATH`). Only the
 release workflow installs NSIS 3.12.0 through Chocolatey; ordinary Windows CI
 builds and uploads the unpacked app. Both jobs set `CL=/bigobj` for MSVC.
-The release workflow retains the unpacked app for its version check and
-publishes `SeekMoon-windows-x64-setup.exe`; `--target zip` remains available
-for local portable builds.
+The release workflow builds the installer and publishes
+`SeekMoon-windows-x64-setup.exe`; `--target zip` remains available for local
+portable builds.
 
 Browser inputs and the standalone esbuild executable are fixed-version
 upstream distributions with checked-in SHA-256 digests. Builds cache only
@@ -102,13 +102,18 @@ All installed platforms receive the same application-owned tree:
 seekmoon/
   web/
     index.html
-    frontend.js
-    app.css
-    viewer.css
-    codicon.ttf
-    xterm.js
-    xterm.css
-    mermaid/
+    assets/
+      frontend.js
+      app.css
+      viewer.css
+      codicon.ttf
+      xterm.js
+      xterm.css
+      relative-time.js
+      fonts/
+      vendor/pdfjs/
+      pdf-runtime.js
+      mermaid/
     viz/
   bin/
     openseek[.exe]
@@ -125,8 +130,10 @@ directories remain Proton details:
 - Linux: `usr/Resources/seekmoon/`
 - Windows: `Resources/seekmoon/`
 
-On macOS, native package objects use `target/moonbuild/macos-12.0` so
-`MACOSX_DEPLOYMENT_TARGET=12.0` cannot reuse an incompatible Moon cache entry.
+On macOS, native package objects use `target/moonbuild/macos-12.0` (engine)
+and `target/moonbuild/macos-12.0-app` (window host, which builds in its own
+`app/moon.work`) so `MACOSX_DEPLOYMENT_TARGET=12.0` cannot reuse an
+incompatible Moon cache entry.
 On Windows, only the staged engine copy has its PE subsystem changed to GUI.
 
 Downloaded archives stay under `desktop/target/`. Generated browser assets are

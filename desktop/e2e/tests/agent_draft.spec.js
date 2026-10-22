@@ -39,7 +39,13 @@ test('one draft carries current text, file mentions and images through repeated 
   await (await chooser).setFiles({ name: 'screen.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
   await expect(page.locator('.composer-image img')).toHaveAttribute('src', imageURL);
 
+  const chatDraftPath = new URL(page.url()).pathname;
+  expect(chatDraftPath).toMatch(/\/chat\/draft\//);
+  const codexDraftPath = chatDraftPath.replace('/chat/draft/', '/codex/draft/');
+  const historyLength = await page.evaluate(() => history.length);
   await choose(page, 'Codex test');
+  await expect.poll(() => new URL(page.url()).pathname).toBe(codexDraftPath);
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
   await expect(task).toHaveValue(initialText);
   await expect(page.locator('.composer-image img')).toHaveAttribute('src', imageURL);
   await noDraftRows(page, initialRows);
@@ -48,6 +54,8 @@ test('one draft carries current text, file mentions and images through repeated 
   await task.pressSequentially(' Edited in Codex');
   const codexText = await task.inputValue();
   await choose(page, 'DS Pro');
+  await expect.poll(() => new URL(page.url()).pathname).toBe(chatDraftPath);
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
   await expect(task).toHaveValue(codexText);
   await expect(page.locator('.composer-image img')).toHaveAttribute('src', imageURL);
   await noDraftRows(page, initialRows);
@@ -142,6 +150,26 @@ test('editing a goal protects its text until the editor is closed', async ({ pag
   await page.locator('#goal-cancel').click();
   await expect(page.getByRole('button', { name: 'Model', exact: true })).toBeEnabled();
   await choose(page, 'Codex test');
+  expect(app.pageErrors).toEqual([]);
+});
+
+test('ultrareview stays a command in the composer and sends the swarm prompt', async ({ page }) => {
+  const app = await open(page);
+  const task = page.locator('#task');
+  await task.fill('/ultrareview');
+  await expect(page.locator('.completion-item').filter({ hasText: 'ultrareview' }).first()).toBeVisible();
+  await task.press('Enter');
+  await expect(task).toHaveValue('/ultrareview ');
+  await expect(task).toBeFocused();
+  await page.keyboard.type('the parser');
+  expect(app.requests.filter(r => r.method === 'agent.start')).toHaveLength(0);
+  await page.locator('#send').click();
+  await expect.poll(() => app.requests.find(r => r.method === 'agent.start')?.params.task).toContain('Focus: the parser');
+  const sent = app.requests.find(r => r.method === 'agent.start').params.task;
+  expect(sent).toContain('"@builtin/review.mbtx"');
+  expect(sent).toContain('"--swarm"');
+  // The composer clears as for any sent prompt; the expansion is not left behind.
+  await expect(task).toHaveValue('');
   expect(app.pageErrors).toEqual([]);
 });
 

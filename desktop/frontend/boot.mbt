@@ -155,7 +155,7 @@ fn Model::quote_screen(self : Model) -> QuoteScreen? {
     Codex => Some(CodexQuote)
     Chat =>
       match self.chat_column() {
-        CloudTranscript(..) => Some(ChatQuote)
+        CloudTranscript(..) if !self.cloud_archived() => Some(ChatQuote)
         Transcript(conversation=conv, ..) if !conv.is_archived_read_only() &&
           !self.scheduled_session_read_only(conv) => Some(ChatQuote)
         _ => None
@@ -235,7 +235,7 @@ fn SidebarDispatcher::conversation_open(
   self : SidebarDispatcher,
   id : @conversation.Id,
 ) -> @cmd.Cmd {
-  if id.source() is @conversation.CloudLive {
+  if id.source() is (@conversation.CloudLive | @conversation.CloudArchived) {
     return self.emit(
       OpenCloudConversation(account=id.channel(), session=id.conversation()),
     )
@@ -268,6 +268,17 @@ fn SidebarDispatcher::conversation_archive(
   self : SidebarDispatcher,
   id : @conversation.Id,
 ) -> @cmd.Cmd {
+  if id.source() is @conversation.CloudLive {
+    return self.emit(
+      CloudAction(
+        @cloud.Edit(
+          account=id.channel(),
+          session=id.conversation(),
+          edit=Archive(true),
+        ),
+      ),
+    )
+  }
   guard @interop.ChannelId::from_uri_authority(id.channel()) is Some(channel) else {
     return self.unroutable("archive", "channel \{id.channel()}")
   }
@@ -284,6 +295,17 @@ fn SidebarDispatcher::conversation_restore(
   self : SidebarDispatcher,
   id : @conversation.Id,
 ) -> @cmd.Cmd {
+  if id.source() is @conversation.CloudArchived {
+    return self.emit(
+      CloudAction(
+        @cloud.Edit(
+          account=id.channel(),
+          session=id.conversation(),
+          edit=Archive(false),
+        ),
+      ),
+    )
+  }
   guard @interop.ChannelId::from_uri_authority(id.channel()) is Some(channel) else {
     return self.unroutable("restore", "channel \{id.channel()}")
   }
@@ -301,6 +323,11 @@ fn SidebarDispatcher::conversation_delete(
   self : SidebarDispatcher,
   id : @conversation.Id,
 ) -> @cmd.Cmd {
+  if id.source() is (@conversation.CloudLive | @conversation.CloudArchived) {
+    return self.emit(
+      DeleteCloudSession(account=id.channel(), session=id.conversation()),
+    )
+  }
   let record = match id.source() {
     @conversation.OpenSeekLive => Some(LiveRecord)
     @conversation.OpenSeekArchived => Some(ArchivedRecord)
@@ -409,6 +436,12 @@ fn SidebarDispatcher::actions(self : SidebarDispatcher) -> @sidebar.Actions {
     new_conversation: id => self.project_new(id),
     open_settings: id => self.project_settings(id),
     detach: id => self.project_detach(id),
+    host_details: id => {
+      match @interop.ChannelId::from_uri_authority(id.channel()) {
+        Some(Remote(host)) => self.emit(Ssh(Details(host)))
+        _ => @cmd.none
+      }
+    },
     conversation,
   }
   let section : @section.Actions = {
@@ -419,12 +452,13 @@ fn SidebarDispatcher::actions(self : SidebarDispatcher) -> @sidebar.Actions {
   }
   {
     update: self.emit(UpdateClicked),
-    open_search: self.emit(OpenSessionSearch),
+    search: @cmd.Emit(msg => self.emit(SessionSearch(msg))),
     open_schedules: self.emit(OpenSchedules),
     open_skills: self.emit(OpenSkills),
     open_settings: self.emit(OpenSetup),
     refresh_account: self.emit(Console(RefreshClicked)),
     sign_out: self.emit(Console(SignOutClicked)),
+    select_device: id => self.emit(DeviceChosen(id)),
     select_mode: mode => self.emit(SidebarModeSelected(mode)),
     section,
   }
@@ -433,6 +467,9 @@ fn SidebarDispatcher::actions(self : SidebarDispatcher) -> @sidebar.Actions {
 ///|
 #warnings("-alert_unstable")
 fn main {
+  // Every host serves the frontend's resources under /assets/, independent of
+  // the page route (index.html names the same root-absolute directory).
+  @editor_viewer.set_mermaid_module_url("/assets/mermaid/mermaid.esm.min.mjs")
   // Proton installs the bridge synchronously when the page's JS context is
   // created, so this is a one-time read of the page's environment, not a
   // wait for something that may still arrive.
@@ -543,20 +580,16 @@ fn main {
             emit.map(url => ExternalLinkClicked(url)),
           ),
         )
-        // Rabbita captures ordinary clicks on its `@html.a` nodes on both
-        // hosts. Always handle their URL requests: Desktop uses its dock,
-        // while the browser console opens a new browser tab.
+        if !model.is_desktop && model.navigation_initial is Some(path) {
+          subs.push(
+            @navigation_browser.listen(
+              path,
+              emit.map(snapshot => Navigation(Browser(snapshot))),
+            ),
+          )
+        }
         subs.push(
-          @sub.on_url_request(
-            emit.map(request => {
-              ExternalLinkClicked(
-                match request {
-                  @url.Internal(url) => url.to_string()
-                  @url.External(url) => url
-                },
-              )
-            }),
-          ),
+          @sub.on_url_request(emit.map(request => Navigation(Link(request)))),
         )
         if model.file_panel.highlighted is Some(directory) {
           subs.push(
@@ -713,6 +746,11 @@ fn main {
         reveal_file: path => emit(RevealFile(path)),
       },
     )
+    let transfer_menu_html = @action_menu.component(
+      state.map(model => model.conversation_transfer_input()),
+      (input, target) => conversation_transfer_menu(emit, input, target),
+      on_open_change=emit.map(open => ConversationTransferMenuChanged(open)),
+    )
     // The floating reply for selected text is a shell overlay like the
     // context menu; they share one slot. It is bound to the composer under
     // the transcript on screen, so a reply opened over one conversation can
@@ -793,9 +831,89 @@ fn main {
         }
       },
     )
+    // Cloud selections use the same Office feedback surface and the existing
+    // direct composer delivery, so pending typing keeps its single owner.
+    let cloud_office_feedback_input = state
+      .map(model => {
+        (
+          if model.screen is Chat && model.cloud_identity() is Some(_) {
+            model.file_panel.pending_office_selection(file_ctx(model))
+          } else {
+            None
+          },
+          model.file_panel.office_selection_comment.unwrap_or(""),
+        )
+      })
+      .map2(quote_target, (selection, target) => {
+        (selection.0, selection.1, target)
+      })
+    let cloud_office_feedback = cloud_office_feedback_input.switch_by(
+      slot => {
+        guard slot is (Some(_), _, Some(_)) else {
+          return @rabbita.Val::constant(@html.nothing)
+        }
+        let (mounted, _) = @rabbita.create_state_with_input(
+          input=cloud_office_feedback_input,
+          init=(_ : @cmd.Emit[(String, Bool)], _) => ((), @cmd.none),
+          update=(_, slot, reply, _) => {
+            guard slot is (Some(preview), _, Some(target)) else {
+              return ((), @cmd.none)
+            }
+            let (deliver, identity) = match target {
+              ChatComposer(identity) => (composer_quote, identity)
+              CodexComposer(identity) => (codex_composer_quote, identity)
+            }
+            let (comment, send) = reply
+            guard preview.owner == identity.owner &&
+              preview.materialized_selection(comment) is Some(materialized) else {
+              return ((), @cmd.none)
+            }
+            (
+              (),
+              deliver({
+                identity,
+                content: @composer.OfficeSelection(materialized),
+                images: [],
+                send,
+                accepted: emit(
+                  FileEditor(@fileeditor.OfficeSelectionDismissed(preview)),
+                ),
+                declined: @cmd.none,
+              }),
+            )
+          },
+          subscriptions=(_, slot, reply_emit) => {
+            guard slot is (Some(preview), comment, Some(_)) else {
+              return @sub.none
+            }
+            @fileeditor.office_feedback_subscription(
+              emit.map(message => FileEditor(message)),
+              preview,
+              comment,
+              (text, send) => reply_emit((text, send)),
+            )
+          },
+        )
+        mounted.map(_ => @html.nothing)
+      },
+      by=slot => {
+        match slot {
+          (Some(preview), _, Some(_)) =>
+            preview.owner.key() +
+            ":" +
+            preview.epoch.to_string() +
+            ":" +
+            preview.materialized
+          _ => "closed"
+        }
+      },
+    )
+    let file_feedback = pdf_feedback.map2(cloud_office_feedback, (_, _) => {
+      @html.nothing
+    })
     let context_menu_html = @rabbita.Val::map3(
       context_menu_html,
-      pdf_feedback,
+      file_feedback,
       @action_menu.selection_component(
         state.map(model => model.locale),
         quote_target,
@@ -853,10 +971,13 @@ fn main {
       workspace_settings_html,
       (skills, workspace_settings) => (skills, workspace_settings),
     )
-    let quick_open_and_context_menu = @rabbita.Val::map2(
+    let quick_open_and_context_menu = @rabbita.Val::map3(
       quick_open_html,
       context_menu_html,
-      (quick_open, context_menu) => (quick_open, context_menu),
+      transfer_menu_html,
+      (quick_open, context_menu, transfer_menu) => {
+        (quick_open, context_menu, transfer_menu)
+      },
     )
     state.view9(
       terminal_html,

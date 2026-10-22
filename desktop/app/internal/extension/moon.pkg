@@ -1,4 +1,5 @@
 import {
+  "openseek_desktop/backend/ssh",
   "openseek_desktop/app/internal/cdp",
   "moonbit-community/proton",
   "moonbit-community/proton/extension" @proton_extension,
@@ -14,8 +15,12 @@ import {
   "openseek_desktop/backend/platform",
   "openseek_desktop/protocol",
   "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/os_error",
+  "moonbitlang/core/encoding/base64",
   "moonbitlang/async/socket",
   "moonbitlang/core/env",
+  "moonbitlang/core/debug",
   "openseek_desktop/backend/uuid",
   "moonbitlang/async/fs",
   "moonbitlang/core/json",
@@ -29,7 +34,6 @@ warnings = "+test_unqualified_package+unnecessary_annotation+unnecessary_view_op
 supported_targets = "+native"
 
 import {
-  "moonbitlang/async/http",
   "moonbitlang/async/websocket",
   "moonbitlang/core/json",
 } for "wbtest"

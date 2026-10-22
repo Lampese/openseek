@@ -74,6 +74,26 @@ fn Entry::mention_chips(
       }.render(locale~, disabled~),
     )
   }
+  for request in self.attachment_requests {
+    if request.phase is AttachmentStaged(name~) {
+      chips.push(
+        MentionChip::{
+          glyph: @mention_context.glyph(@mention_context.File(path=name)),
+          label: name,
+          title: name,
+          jump: None,
+          remove: Some(
+            (
+              emit(
+                AttachmentCancelled(self.identity(), request.root, request.id),
+              ),
+              @icons.icon(@icons.icon_close),
+            ),
+          ),
+        }.render(locale~, disabled~),
+      )
+    }
+  }
   if self.review_changes().length() > 0 {
     chips.push(self.changes_chip(locale~, emit, disabled~))
   }
@@ -213,8 +233,10 @@ fn Entry::action_buttons(
           title: ui(locale, SendLabel),
           disabled: !available ||
           self.image_reads > 0 ||
-          !self.attachment_requests.is_empty() ||
-          self.draft.is_blank() ||
+          !self.attachment_requests.all(request => {
+            request.phase is AttachmentStaged(_)
+          }) ||
+          (self.draft.is_blank() && self.attachment_requests.is_empty()) ||
           (
             input.shell_command(self.draft) is Some(command) &&
             command.is_blank()
@@ -296,7 +318,10 @@ fn Entry::view(
   let image_emit = emit.map(event => {
     ImageRead(self.identity(), self.root, event)
   })
-  let can_attach = (input.presentation.images_enabled || input.root is Some(_)) &&
+  let can_attach = (
+      input.presentation.images_enabled ||
+      (input.identity.owner.host() is Some(_) && input.root is Some(_))
+    ) &&
     !input.presentation.disabled &&
     !goal_mode &&
     shell_command is None

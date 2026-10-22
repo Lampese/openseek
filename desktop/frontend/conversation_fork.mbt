@@ -10,14 +10,16 @@ priv struct ConversationFork {
   source_title : String
   kind : ConversationForkKind
   engine_model : EngineModel
+  // The source's approval choice, which the fork keeps like its tier.
+  approval : @protocol.OpenSeekApproval
   connection_generation : Int32
   source_sequence : Int32
 } derive(Eq)
 
 ///|
 /// Whether a conversation can be forked from its answers: a live record of
-/// its own, wherever it works. The fork of a worktree conversation shares
-/// that worktree.
+/// its own, wherever it works. The fork of a worktree conversation gets a
+/// worktree of its own, which the host reports before it replies.
 fn Conversation::can_fork(self : Conversation) -> Bool {
   self.record is LiveRecord &&
   @transcript.subrun_parent(self.session_id) is None
@@ -45,6 +47,7 @@ fn Model::request_fork(
     source_sequence: conv.durable_frontier(),
     kind: AfterAnswer(through~),
     engine_model: conv.engine_model,
+    approval: self.approval_for(conv.device, conv.session_id),
     connection_generation: self.focused_connection_generation(),
   }
   (
@@ -75,7 +78,7 @@ fn Model::finish_fork(
         model.conversation_selection() == Some(pending.source) &&
         model.navigation.location.map_or(true, location => {
           model.navigation.phase is Active &&
-          location.target == @navigation.Session(pending.source.session)
+          location.target == @routes.Session(pending.source.session)
         })
       guard model.device_state(pending.source.channel) is Some(dev) &&
         dev.connection_generation == pending.connection_generation &&
@@ -102,6 +105,7 @@ fn Model::finish_fork(
           reply.session,
           pending.engine_model,
         )
+        .with_approval(pending.source.channel, reply.session, pending.approval)
       if pending.is_edit() {
         let conv = model
           .find_conversation(pending.source.channel, reply.session)
@@ -134,10 +138,11 @@ fn Model::finish_fork(
           }),
         }
       }
-      let save = save_conversation_model(
-        conversation_model_key(pending.source.channel, reply.session),
-        pending.engine_model,
-      )
+      let key = conversation_model_key(pending.source.channel, reply.session)
+      let save = @cmd.batch([
+        save_conversation_model(key, pending.engine_model),
+        save_conversation_approval(key, pending.approval),
+      ])
       // A completed background request must not take the reader away from
       // another conversation or screen they chose while it was pending.
       guard should_open else { return (save, model) }
@@ -215,6 +220,7 @@ fn fork_conversation(
                 through,
                 model: pending.engine_model.wire(),
                 source_title: pending.source_title,
+                side_chat: None,
               },
             )
         }
@@ -460,7 +466,7 @@ test "fork and message editing are pure and preserve navigation" {
 }
 
 ///|
-test "the fork of a worktree conversation opens in the same worktree" {
+test "the fork of a worktree conversation opens in its own worktree" {
   let channel = @interop.ChannelId::Local
   let project = channel.test_project()
   let source : Conversation = {
@@ -472,7 +478,7 @@ test "the fork of a worktree conversation opens in the same worktree" {
     ],
   }
   let model = test_model().replace_conversation(source)
-  // The host reports the worktree's new member before it replies.
+  // The host reports the fork's new worktree before it replies.
   let model = model.replace_device({
     ..model.dev(),
     worktrees: [
@@ -481,7 +487,14 @@ test "the fork of a worktree conversation opens in the same worktree" {
         rows: [
           {
             name: "wt-1",
-            sessions: ["desktop-test", "desktop-fork"],
+            sessions: ["desktop-test"],
+            codex_thread: None,
+            path: None,
+            present: true,
+          },
+          {
+            name: "wt-2",
+            sessions: ["desktop-fork"],
             codex_thread: None,
             path: None,
             present: true,
@@ -508,7 +521,7 @@ test "the fork of a worktree conversation opens in the same worktree" {
   guard done.find_conversation(channel, "desktop-fork") is Some(fork) else {
     fail("the fork was not opened")
   }
-  assert_true(fork.workspace == Worktree(project~, name="wt-1"))
+  assert_true(fork.workspace == Worktree(project~, name="wt-2"))
 }
 
 ///|

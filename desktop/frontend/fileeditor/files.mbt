@@ -10,33 +10,25 @@
 /// fold the entries back as `DirLoaded`.
 fn read_directory(
   dispatch : @cmd.Emit[Msg],
-  owner : @interop.ConversationKey,
+  owner : @interop.ConversationIdentity,
   epoch : Int32,
   path : @pathx.Relative,
   root~ : @common.Uri?,
+  cloud? : CloudFiles,
 ) -> @cmd.Cmd {
-  guard root is Some(root) && @resource.belongs_to(root, owner.channel) else {
+  guard root is Some(root) else { return @cmd.none }
+  if owner is @interop.Host(host) && !@resource.belongs_to(root, host.channel) {
     return @cmd.none
   }
-  let target = @resource.join_relative(root, path)
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
-      let reply = @interop.bridge_request(
-        owner.channel,
-        @commands.fs_read_directory,
-        { path: target.path, },
-      ) catch {
+      let reply = read_directory_source(owner, cloud, root, path) catch {
         error => {
-          scheduler.add(
-            dispatch(
-              DirFailed(
-                owner~,
-                epoch~,
-                path~,
-                message=@interop.bridge_error_text(error),
-              ),
-            ),
-          )
+          let message = match error {
+            SourceError(message) => message
+            _ => @interop.bridge_error_text(error)
+          }
+          scheduler.add(dispatch(DirFailed(owner~, epoch~, path~, message~)))
           return
         }
       }
@@ -50,21 +42,47 @@ fn read_directory(
 }
 
 ///|
-/// Load the bounded workspace snapshot used by file-completion consumers.
+/// Load the workspace snapshot used by file-completion consumers.
 /// The request carries this panel incarnation's owner and epoch so the update
 /// loop can reject a reply that outlived a conversation or worktree switch.
 fn list_files(
   dispatch : @cmd.Emit[Msg],
-  owner : @interop.ConversationKey,
+  owner : @interop.ConversationIdentity,
   epoch : Int32,
   root~ : @common.Uri?,
+  cloud? : CloudFiles,
 ) -> @cmd.Cmd {
-  @files.Request(owner.channel, owner.session, root).run(
-    (files, truncated) => {
-      dispatch(FilesIndexed(owner~, epoch~, files~, truncated~))
-    },
-    () => dispatch(FileIndexFailed(owner~, epoch~)),
-  )
+  match owner {
+    Host(host) =>
+      @files.Request(host.channel, host.session, root).run(
+        (files, truncated) => {
+          dispatch(FilesIndexed(owner~, epoch~, files~, truncated~))
+        },
+        () => dispatch(FileIndexFailed(owner~, epoch~)),
+      )
+    Cloud(account~, session~) => {
+      guard root is Some(root) &&
+        cloud is Some(cloud) &&
+        @resource.cloud_root(@cloud.CloudOrigin, account, session) == Some(root) else {
+        return @cmd.none
+      }
+      @cmd.custom_cmd(scheduler => {
+        @js.Promise::from_async(() => {
+          let paths = @cloud.read_file_index(cloud.token, session) catch {
+            _ => {
+              scheduler.add(dispatch(FileIndexFailed(owner~, epoch~)))
+              return
+            }
+          }
+          let files = paths.map(path => @pathx.Relative(path))
+          scheduler.add(
+            dispatch(FilesIndexed(owner~, epoch~, files~, truncated=false)),
+          )
+        })
+        |> ignore
+      })
+    }
+  }
 }
 
 ///|
@@ -78,7 +96,7 @@ fn list_files(
 /// along the same way, re-shown as an editor bubble over that range.
 fn read_file(
   dispatch : @cmd.Emit[Msg],
-  owner : @interop.ConversationKey,
+  owner : @interop.ConversationIdentity,
   epoch : Int32,
   path : @common.Uri,
   name : String,
@@ -86,8 +104,11 @@ fn read_file(
   review_generation? : Int32,
   range~ : @common.Range?,
   annotation? : String,
+  cloud? : CloudFiles,
+  allow_large~ : Bool = false,
+  cached_sig? : String,
 ) -> @cmd.Cmd {
-  guard @resource.belongs_to(path, owner.channel) else {
+  if owner is @interop.Host(host) && !@resource.belongs_to(path, host.channel) {
     // Settle the request through the same typed failure path as an async
     // bridge rejection. Review-loading tabs deliberately do not start an
     // untagged duplicate read on activation, so a silent no-op here would
@@ -105,12 +126,23 @@ fn read_file(
   }
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
-      let reply = @interop.bridge_request(
-        owner.channel,
-        @commands.fs_read_file,
-        { path: path.path, root: None, },
-      ) catch {
+      let reply = try {
+        if cached_sig is Some(sig) {
+          let unchanged = check_source(owner, cloud, path, sig)
+          scheduler.add(
+            dispatch(
+              FileVersionChecked(owner~, epoch~, path~, sig~, unchanged~),
+            ),
+          )
+          return
+        }
+        read_source(owner, cloud, path, allow_large~)
+      } catch {
         error => {
+          let message = match error {
+            SourceError(message) => message
+            _ => @interop.bridge_error_text(error)
+          }
           scheduler.add(
             dispatch(
               FileFailed(
@@ -119,7 +151,7 @@ fn read_file(
                 path~,
                 file_link_generation~,
                 review_generation~,
-                message=@interop.bridge_error_text(error),
+                message~,
               ),
             ),
           )
@@ -251,13 +283,18 @@ fn FileContent::from_reply(reply : @protocol.ReadFileReply) -> FileContent {
   match reply {
     @protocol.Binary => Binary
     @protocol.Oversized => Oversized
-    // Office packages and PDFs render in this panel. Raster images continue
-    // to use the transcript-only BinaryContent path.
+    // All supported binary previews use the original bytes from this read.
     @protocol.BinaryContent(data_base64~, media_type~, sig~) =>
       if is_office_media_type(media_type) {
         Office(data_base64~, media_type~, sig~)
       } else {
-        Binary
+        let image = Some(@wire.Image::from_base64(media_type~, data_base64)) catch {
+          _ => None
+        }
+        match image {
+          Some(image) => Raster(url=image.data_url(), sig~)
+          None => Binary
+        }
       }
     // The host echoes the requested path as `absolute`; the document key
     // already names it, so the echo is not read.
@@ -451,7 +488,10 @@ test "a cross-host file read settles through its generation-fenced failure" {
   ignore(
     read_file(
       dispatch,
-      { channel: @interop.ChannelId::Remote("other"), session: "remote-test", },
+      @interop.Host({
+        channel: @interop.ChannelId::Remote("other"),
+        session: "remote-test",
+      }),
       0,
       test_file("src/main.mbt"),
       "main.mbt",
@@ -463,7 +503,9 @@ test "a cross-host file read settles through its generation-fenced failure" {
     seen
     is Some(
       FileFailed(
-        owner={ channel: @interop.ChannelId::Remote("other"), .. },
+        owner=@interop.Host(
+          { channel: @interop.ChannelId::Remote("other"), .. }
+        ),
         epoch=0,
         path~,
         file_link_generation=None,
@@ -543,5 +585,39 @@ test "typed file replies map to viewer content" {
       media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       sig="1:2"
     ),
+  )
+}
+
+///|
+test "raster previews accept only the shared validated image formats" {
+  assert_true(
+    FileContent::from_reply(
+      @protocol.BinaryContent(
+        data_base64="iVBORw0KGgo=",
+        media_type="image/png",
+        sig="image:1",
+      ),
+    )
+    is Raster(url="data:image/png;base64,iVBORw0KGgo=", sig="image:1"),
+  )
+  assert_true(
+    FileContent::from_reply(
+      @protocol.BinaryContent(
+        data_base64="dGV4dA==",
+        media_type="image/png",
+        sig="image:2",
+      ),
+    )
+    is Binary,
+  )
+  assert_true(
+    FileContent::from_reply(
+      @protocol.BinaryContent(
+        data_base64="PHN2Zy8+",
+        media_type="image/svg+xml",
+        sig="image:3",
+      ),
+    )
+    is Binary,
   )
 }

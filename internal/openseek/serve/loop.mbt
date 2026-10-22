@@ -27,6 +27,7 @@
 ///   producers: stdin reader ──────────── Wire(command)
 ///              turn/compact completions ─ TurnDone(finished~) │ CompactDone
 ///              background-job exits ───── BackgroundNotice
+///              MCP connection closes ──── McpConnectionClosed
 ///   pump: for ;; match step
 ///     ├─ Wire(Prompt)          ── active? queue pending : start turn
 ///     ├─ Wire(Steer)           ── turn running │ prompt queued? queue steer : reject
@@ -35,6 +36,7 @@
 ///     ├─ Wire(Goal)            ── durable marker; auto=true arms auto-continue
 ///     ├─ Wire(Approval)        ── release a tool blocked INSIDE the active turn
 ///     ├─ BackgroundNotice      ── idle? drain queued context to the log
+///     ├─ McpConnectionClosed   ── emit `mcp_status` if it changed
 ///     ├─ TurnDone              ── drain context ── start next pending work
 ///     │                           └─ armed goal(auto) unmet ⇒ auto-continue
 ///     ├─ CompactDone           ── adopt compacted session ── start next pending
@@ -108,12 +110,8 @@ async fn run_serve(
   let approval_desk = @execution.ApprovalDesk::ApprovalDesk(
     now_ms=@env.now().reinterpret_as_int64(),
   )
-  let approval = @execution.approval_channel(
-    @execution.approval_policy(matches, interactive=true),
-    approval_desk,
-  )
+  let approval_policy = @execution.approval_policy(matches, interactive=true)
   @async.with_task_group(group => {
-    let runtime = @agent_runtime.AgentRuntime(workspace_root~, approval?)
     let scope = @agent_runtime.AgentTaskScope(group)
     // All scheduling flows through one ordered queue with one consumer:
     // wire commands from the reader, plus the internal turn-completion and
@@ -146,15 +144,51 @@ async fn run_serve(
       }
       None => None
     }
-    let extra_tools = @execution.build_extra_tools(
+    // Under `--approval review` a reviewer child decides each question
+    // against what the user has said so far in this session, read live.
+    let approval = @execution.approval_channel(
+      approval_policy,
+      approval_desk,
+      reviewer=@execution.build_approval_reviewer(
+        self_exe=exe,
+        model~,
+        api_key~,
+        api_url~,
+        workspace_root~,
+        intent=() => @execution.approval_intent(session),
+        child_session?,
+      ),
+    )
+    let runtime = @agent_runtime.AgentRuntime(workspace_root~, approval?)
+    let mcp = @execution.connect_mcp(
       scope,
+      @options.mcp_config_paths(matches),
+      workspace_root~,
+    )
+    let extra_tools = @execution.build_extra_tools(
       model~,
       api_key~,
-      workspace_root~,
-      mcp_config_paths=@options.mcp_config_paths(matches),
       deepseek_api_key?=@options.deepseek_api_key(matches),
       api_url?,
     )
+    // What this engine holds of its MCP servers goes out unasked: once now
+    // that connecting is over, and again whenever it changes. The close
+    // handler runs inside a connection's own teardown, so it only wakes the
+    // loop and the loop reports — which also means nothing is sent once the
+    // loop has stopped and the group is closing every connection on the way
+    // out. Installed before the first read, so no close falls between them.
+    mcp.on_connection_closed(() => {
+      ignore(steps.try_put(McpConnectionClosed) catch { _ => false })
+    })
+    let mut reported_mcp = mcp.status()
+    @emit.emit(McpStatus(status=reported_mcp))
+    fn report_mcp_status() {
+      let status = mcp.status()
+      if status != reported_mcp {
+        reported_mcp = status
+        @emit.emit(McpStatus(status~))
+      }
+    }
     // The advisory goal-met gate (--review-gate): built once, shared by
     // every turn; engine-initiated, so it runs on its own allowance.
     let on_goal_met = if @options.review_gate_enabled(matches) {
@@ -194,19 +228,24 @@ async fn run_serve(
         )
       _ => None
     }
+    let session_scratch_dir = match store {
+      Some(store) => Some(store.scratch_dir(initial_session.id()))
+      None => ephemeral_scratch
+    }
     let tools = @agent.build_tools(
       runtime,
       scope,
       subagents?,
       job_log_dir?,
-      session_scratch_dir?=match store {
-        Some(store) => Some(store.scratch_dir(initial_session.id()))
-        None => ephemeral_scratch
-      },
+      session_scratch_dir?,
       on_background_wake=() => {
         ignore(steps.try_put(BackgroundNotice) catch { _ => false })
       },
       extra_tools~,
+      mcp_service?=mcp.serve(
+        scope,
+        image_directory?=session_scratch_dir.map(dir => "\{dir}/mcp-images"),
+      ),
     )
     group.spawn_bg(no_wait=true) <| () => {
       @jsonl.each(@stdio.stdin, json => {
@@ -711,6 +750,7 @@ async fn run_serve(
         // drains and applies the queued notice live; only drain here when idle,
         // so an idle engine still surfaces the completion.
         BackgroundNotice => if active_work is None { drain_idle_steers() }
+        McpConnectionClosed => report_mcp_status()
         TurnDone(finished~) => {
           goal_promoted_this_boundary = false
           drain_idle_steers()

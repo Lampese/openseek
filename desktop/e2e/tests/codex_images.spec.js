@@ -56,7 +56,9 @@ class CodexImagesHarness extends DesktopBrowserHarness {
 test('selected image-only input reaches Codex and remains visible in history', async ({ page }, testInfo) => {
   const app = new CodexImagesHarness(page);
   await app.openCodex();
+  await expect(page).toHaveURL(/\/codex\/new$/);
   await app.select(image);
+  await expect(page).toHaveURL(/\/codex\/draft\//);
   await expect(page.locator('.composer-image img')).toHaveAttribute('src', `data:image/png;base64,${png}`);
   await expect(page.locator('#send')).toBeEnabled();
   await page.locator('#send').click();
@@ -136,13 +138,12 @@ test('slow file reads disable send and report read errors without losing text', 
     File.prototype.arrayBuffer = () => new Promise((_, reject) => { window.rejectImageRead = reject; });
   });
   await app.select(image);
-  await expect(page.getByText('Reading attachments…')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Model', exact: true })).toBeDisabled();
   await expect(page.locator('#send')).toBeDisabled();
   await page.locator('#task').press('Enter');
   expect(app.requests.some(r => r.method === 'codex.turn.start')).toBe(false);
   await page.evaluate(() => window.rejectImageRead(new Error('test read failure')));
-  await expect(page.getByRole('alert')).toContainText('Could not read attachments');
+  await expect(page.getByRole('alert')).toContainText('test read failure');
   await expect(page.locator('#task')).toHaveValue('Keep this text');
   await expect(page.getByRole('button', { name: 'Model', exact: true })).toBeEnabled();
   await expect(page.locator('#send')).toBeEnabled();

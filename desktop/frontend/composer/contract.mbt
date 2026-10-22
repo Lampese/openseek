@@ -59,6 +59,10 @@ pub(all) struct SlashCommand {
   label : String
   detail : String
   command : String
+  // Makes the command a prompt rather than an action: accepting it leaves the
+  // label in the draft, and a draft sent as the label plus optional text
+  // sends this prompt followed by that text.
+  prompt : String?
 } derive(Eq, @debug.Debug)
 
 ///|
@@ -172,6 +176,16 @@ pub(all) struct PermissionControl {
 } derive(Eq)
 
 ///|
+/// OpenSeek's Approve for me switch: whether a reviewer answers this
+/// conversation's permission questions before they reach the person.
+pub(all) struct ApprovalToggle {
+  on : Bool
+  // Off while a turn runs: its engine keeps the policy it started with, so a
+  // switch flipped then would show a mode that is not in effect.
+  enabled : Bool
+} derive(Eq)
+
+///|
 /// One typed component in the toolbar's status row. No caller-rendered HTML,
 /// command, or emit callback crosses the shared component boundary.
 pub(all) enum StatusComponent {
@@ -180,6 +194,7 @@ pub(all) enum StatusComponent {
   PermissionStatus(PermissionControl)
   GitStatus(GitControl)
   WorktreeStatus(WorktreeControl)
+  ApprovalStatus(ApprovalToggle)
 } derive(Eq)
 
 ///|
@@ -252,6 +267,9 @@ pub(all) struct Input {
   // composer recalls them with the arrow keys.
   history : Array[String]
   root : @common.Uri?
+  cloud_access : @cloud_client.Access?
+  // New Cloud sessions restore confirmed in-memory uploads with the draft.
+  staged_attachments : Array[@protocol.AttachmentSource]
   installed_skills : Array[@skills.InstalledItem]
   context_generation : Int32
   submission_sequence : Int32
@@ -268,6 +286,11 @@ pub(all) struct Input {
 /// navigation, debounce ticks, and async replies remain private to the package.
 pub(all) enum Action {
   DraftSubmitted(identity~ : Identity, draft~ : Draft)
+  DraftAttachmentsSubmitted(
+    identity~ : Identity,
+    draft~ : Draft,
+    attachments~ : Array[@protocol.AttachmentSource]
+  )
   FollowupSubmitted(
     identity~ : Identity,
     draft~ : Draft,
@@ -332,6 +355,7 @@ pub(all) enum Action {
   )
   GitDetailsToggled(identity~ : Identity)
   WorktreeModeToggled(identity~ : Identity)
+  ApprovalModeToggled(identity~ : Identity)
   ApiSetupRequested(identity~ : Identity)
   QueuedInputEditRequested(identity~ : Identity, id~ : String)
   QueuedInputSteerRequested(identity~ : Identity, id~ : String)
@@ -347,6 +371,7 @@ pub(all) enum Action {
 pub fn Action::identity(self : Action) -> Identity {
   match self {
     DraftSubmitted(identity~, ..)
+    | DraftAttachmentsSubmitted(identity~, ..)
     | FollowupSubmitted(identity~, ..)
     | DraftPresenceChanged(identity~, ..)
     | ReviewChangesRemoved(identity~, ..)
@@ -377,6 +402,7 @@ pub fn Action::identity(self : Action) -> Identity {
     | PermissionSelected(identity~, ..)
     | GitDetailsToggled(identity~)
     | WorktreeModeToggled(identity~)
+    | ApprovalModeToggled(identity~)
     | ApiSetupRequested(identity~)
     | QueuedInputEditRequested(identity~, ..)
     | QueuedInputSteerRequested(identity~, ..)
@@ -456,6 +482,11 @@ pub extend Mention with Eq::{equal, not_equal}
 #deprecated("Use `==` or the `Eq` trait directly", skip_current_package=true)
 #doc(hidden)
 pub extend PermissionControl with Eq::{equal, not_equal}
+
+///|
+#deprecated("Use `==` or the `Eq` trait directly", skip_current_package=true)
+#doc(hidden)
+pub extend ApprovalToggle with Eq::{equal, not_equal}
 
 ///|
 pub extend Presentation with Eq::{equal, not_equal}

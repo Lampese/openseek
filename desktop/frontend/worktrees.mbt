@@ -61,6 +61,11 @@ fn fetch_worktrees(
         { workspace: workspace.path, },
       ) catch {
         error => {
+          // The connection banner owns transport loss; BridgeReady reloads
+          // the inventory without treating an unavailable registry as empty.
+          if @interop.bridge_connection_lost(channel, error) {
+            return
+          }
           // A failed list is not an empty registry: until a real reply arrives
           // the client cannot safely decide whether a durable conversation is
           // rooted in the project or one of its worktrees.
@@ -109,6 +114,7 @@ fn start_in_new_worktree(
   max_steps : String,
   session : String,
   workspace : @common.Uri,
+  approval~ : @protocol.OpenSeekApproval,
   images~ : Array[String] = [],
 ) -> @cmd.Cmd {
   guard @resource.belongs_to(workspace, channel) else { return @cmd.none }
@@ -226,6 +232,7 @@ fn start_in_new_worktree(
             session,
             submission_id,
             workspace~,
+            approval~,
           )
           request_agent_start(
             scheduler, dispatch, channel, start, session, submission_id,
@@ -281,6 +288,7 @@ fn set_goal_in_new_worktree(
   max_steps : String,
   command : String,
   text : String?,
+  approval~ : @protocol.OpenSeekApproval,
 ) -> @cmd.Cmd {
   guard @resource.belongs_to(workspace, channel) else { return @cmd.none }
   let device_dispatch = dispatch.map((msg : DeviceMsg) => {
@@ -397,7 +405,13 @@ fn set_goal_in_new_worktree(
             ),
           )
           let payload = goal_payload(
-            session, engine_model, reasoning, max_steps, workspace, text,
+            session,
+            engine_model,
+            reasoning,
+            max_steps,
+            workspace,
+            text,
+            approval~,
           )
           request_agent_goal(
             scheduler, dispatch, channel, payload, session, command, text,
@@ -1134,16 +1148,15 @@ test "a missing checkout stays bound while rebuild and archive remain reachable"
     stale: false,
   }
   let review_dock = @dock.open_file(
-    { ..bound.dock, owner: Some(owner), },
+    bound.dock_state_for(@interop.Host(owner)),
     review_file,
   )
   let bound = {
-    ..bound,
+    ..bound.with_dock_state_for(@interop.Host(owner), review_dock),
     right_panel_open: true,
-    dock: review_dock,
     file_panel: {
       ..bound.file_panel,
-      owner: Some(owner),
+      owner: Some(@interop.Host(owner)),
       docs: review_docs,
       changes: ChangeListReady(
         repository=true,
@@ -1179,7 +1192,7 @@ test "a missing checkout stays bound while rebuild and archive remain reachable"
     gone.conversation_placement(gone.active())
     is Some(@interop.MissingWorktree(name="wt", ..)),
   )
-  assert_true(file_ctx(gone).owner == owner)
+  assert_true(file_ctx(gone).owner == @interop.Host(owner))
   assert_false(gone.file_panel.review_recovery_pending)
   assert_true(gone.file_panel.placement.is_parked())
   assert_true(
@@ -1211,7 +1224,7 @@ test "a missing checkout stays bound while rebuild and archive remain reachable"
     ),
     gone,
   )
-  assert_true(file_ctx(restored).owner == owner)
+  assert_true(file_ctx(restored).owner == @interop.Host(owner))
   assert_false(restored.file_panel.review_recovery_pending)
   assert_false(restored.file_panel.placement.is_parked())
   assert_eq(restored.file_panel.request_epoch, missing_epoch)
@@ -1296,7 +1309,7 @@ test "a restored workspace conversation waits for placement before using root" {
   assert_true(terminal_ctx(unresolved).placement is None)
   // Placement is a separate typed fence; preserving the real identity lets
   // open review state survive while every host-backed action remains parked.
-  assert_eq(file_ctx(unresolved).owner.session, "desktop-test")
+  assert_eq(file_ctx(unresolved).owner.session(), "desktop-test")
   let generation = unresolved.dev().worktrees_request_generation
   let (_, retrying) = update(dispatch, RetryWorktreePlacement, unresolved)
   assert_eq(retrying.dev().worktrees_request_generation, generation + 1)
@@ -1315,7 +1328,7 @@ test "a restored workspace conversation waits for placement before using root" {
     loaded.conversation_placement(loaded.active())
     is Some(@interop.WorkspaceRoot(..)),
   )
-  assert_eq(file_ctx(loaded).owner.session, "desktop-test")
+  assert_eq(file_ctx(loaded).owner.session(), "desktop-test")
 }
 
 ///|
@@ -1912,6 +1925,7 @@ test "a start payload never names a worktree" {
     "desktop-wt",
     "sub-1",
     workspace~,
+    approval=ApprovalReview,
   )
   // The typed wire shape has no worktree field at all; the workspace hint
   // is the only placement the start carries.
@@ -1920,6 +1934,7 @@ test "a start payload never names a worktree" {
   )
   assert_eq(payload.workspace, Some("/proj"))
   assert_eq(payload.thinking, Some(ThinkingMax))
+  assert_eq(payload.approval, Some(ApprovalReview))
   let unknown_model = start_payload(
     "go",
     Other("kimi-k2.5"),
@@ -1928,6 +1943,7 @@ test "a start payload never names a worktree" {
     "desktop-kimi",
     "sub-2",
     workspace~,
+    approval=ApprovalAsk,
   )
   assert_true(unknown_model.thinking is None)
 }

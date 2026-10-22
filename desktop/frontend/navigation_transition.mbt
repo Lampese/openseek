@@ -1,8 +1,8 @@
 ///|
 priv enum NavigationWrite {
   Keep
-  Push(@navigation.Location)
-  Replace(@navigation.Location)
+  Push(@routes.Location)
+  Replace(@routes.Location)
 }
 
 ///|
@@ -23,6 +23,11 @@ fn NavigationObservation::write(
     Replace(location)
   } else if self.session_rotated &&
     navigation.location is Some({ target: Chat | ChatNew, .. }) {
+    Replace(location)
+  } else if navigation.location is Some(current) &&
+    current != location &&
+    current.target is (Session(id) | ChatDraft(id)) &&
+    self.retired.contains(id) {
     Replace(location)
   } else {
     Keep
@@ -51,12 +56,19 @@ fn NavigationObservation::addresses_blank(
 ///|
 fn promote_navigation(
   model : Model,
-  old : @navigation.Location,
-  promoted : @navigation.Location,
+  old : @routes.Location,
+  promoted : @routes.Location,
 ) -> (@cmd.Cmd, Model) {
   let navigation = model.navigation
   (
-    @cmd.none,
+    if !model.is_desktop &&
+      navigation.browser_ready &&
+      old.path() is Some(old_path) &&
+      promoted.path() is Some(new_path) {
+      @navigation_browser.promote(old_path, new_path)
+    } else {
+      @cmd.none
+    },
     {
       ..model,
       navigation: {

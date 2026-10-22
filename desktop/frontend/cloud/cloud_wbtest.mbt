@@ -35,14 +35,14 @@ test "Cloud history reads message metadata without unused IDs or outcomes" {
 
 ///|
 test "SSE dispatches only complete events and preserves multiline data" {
-  let parser = SseParser::new()
+  let parser = @cloud_client.SseParser::new()
   assert_true(parser.line(": keepalive") is None)
   assert_true(parser.line("event: assistant_message\r") is None)
   assert_true(parser.line("data: {\"content\":\"您好 🌙\",\r") is None)
   assert_true(parser.line("data: \"ok\":true}\r") is None)
   assert_eq(
     parser.line("\r"),
-    Some("{\"content\":\"您好 🌙\",\n\"ok\":true}"),
+    Some(("assistant_message", "{\"content\":\"您好 🌙\",\n\"ok\":true}")),
   )
   assert_true(parser.line("") is None)
 }
@@ -66,9 +66,25 @@ test "Cloud list preserves nullable and long backend titles" {
 }
 
 ///|
+fn live_test_session() -> Session {
+  {
+    id: "session",
+    title: None,
+    updated_at: None,
+    generating: false,
+    archived: false,
+  }
+}
+
+///|
 test "Busy cannot allow another send before authoritative history recovers" {
   let emit : @cmd.Emit[Msg] = _ => @cmd.none
-  let state = { ..State::empty(), user_id: Some("user"), epoch: 1, }
+  let state = {
+    ..State::empty(),
+    user_id: Some("user"),
+    epoch: 1,
+    sessions: [live_test_session()],
+  }
   let (opened, _, _) = update(
     state,
     Open("session"),
@@ -137,12 +153,14 @@ test "Busy cannot allow another send before authoritative history recovers" {
 ///|
 test "history recovery clears a send error only when the pending submission was admitted" {
   let emit : @cmd.Emit[Msg] = _ => @cmd.none
-  for error in [Http(422), Unreachable] {
+  let errors : Array[Failure] = [Http(422), Unreachable]
+  for error in errors {
     for admitted in [false, true] {
       let state = {
         ..State::empty(),
         user_id: Some("user"),
         epoch: 1,
+        sessions: [live_test_session()],
         conversations: Map([
           (
             "session",
@@ -228,6 +246,7 @@ test "Cloud text previews stay response-scoped and terminal events fence late de
     ..State::empty(),
     user_id: Some("user"),
     epoch: 1,
+    sessions: [live_test_session()],
     conversations: Map([
       (
         "session",

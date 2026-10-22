@@ -19,6 +19,28 @@ fn reconcile_navigation(
       }
     }),
   }
+  // Browser URLs are account-neutral. A changed login re-resolves the URL;
+  // desktop history retains its account-bound identity.
+  if !next.is_desktop &&
+    previous.cloud.user_id != next.cloud.user_id &&
+    next.navigation.location
+    is Some(
+      { target: CloudSession(session~, ..) | CloudDraft(id=session, ..), .. } as location
+    ) {
+    let target : @routes.Target = if location.target is CloudDraft(..) {
+      CloudDraft(account=next.cloud.user_id, id=session)
+    } else {
+      CloudSession(account=next.cloud.user_id, session~)
+    }
+    next = {
+      ..next,
+      navigation: {
+        ..next.navigation,
+        location: Some({ device: None, target, }),
+        phase: Waiting,
+      },
+    }
+  }
   let commands : Array[@cmd.Cmd] = []
   next = { ..next, navigation: observe_navigation_catalogs(message, next), }
   let observation = observe_navigation(message, previous, next)
@@ -37,7 +59,7 @@ fn reconcile_navigation(
     observation.write(
       next.navigation,
       previous.navigation.revision,
-      desktop=next.is_desktop || message is FromDevice(_, BridgeReady),
+      desktop=next.is_desktop,
     ) {
     Keep => ()
     Push(location) | Replace(location) as write => {
@@ -55,8 +77,9 @@ fn reconcile_navigation(
     commands.push(command)
     next = updated
   }
-  // Lifecycle fallback may retire a deleted selection; navigation keeps the
-  // requested identity and renders its unavailable state instead of another chat.
+  // Lifecycle fallback may retire a selection deleted elsewhere; navigation
+  // keeps the requested identity and renders its unavailable state instead of
+  // another chat. This page's own delete already replaced its entry above.
   if next.navigation.phase is Active &&
     next.navigation.location is Some(location) {
     match location.target {
@@ -73,10 +96,6 @@ fn reconcile_navigation(
     !next.codex.composing_draft() &&
     next.codex.can_start_thread() {
     next = { ..next, navigation: { ..next.navigation, phase: Waiting, }, }
-  }
-  if next.screen is Chat &&
-    next.cloud.creating_at(next.chat_navigation_generation) {
-    return (@cmd.batch(commands), next)
   }
   let (activate, next) = activate_navigation(dispatch, next)
   commands.push(activate)

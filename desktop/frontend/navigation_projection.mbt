@@ -1,11 +1,7 @@
 ///|
-fn Model::navigation_location(self : Model) -> @navigation.Location? {
+fn Model::navigation_location(self : Model) -> @routes.Location? {
   let device = self.console.page_device
-  if self.screen is Chat &&
-    self.cloud.creating_at(self.chat_navigation_generation) {
-    return None
-  }
-  let target : @navigation.Target = match self.screen {
+  let target : @routes.Target = match self.screen {
     Settings => Settings
     Schedules => Schedules
     Skills =>
@@ -16,8 +12,14 @@ fn Model::navigation_location(self : Model) -> @navigation.Location? {
       }
     Codex => self.codex.navigation_target()
     Chat =>
-      if self.cloud_identity() is Some(@interop.Cloud(account~, session~)) {
-        CloudSession(account~, session~)
+      if self.cloud_draft_identity()
+        is Some(@interop.Cloud(account~, session=id)) {
+        CloudDraft(account=Some(account), id~)
+      } else if self.cloud_identity()
+        is Some(@interop.Cloud(account~, session~)) {
+        CloudSession(account=Some(account), session~)
+      } else if self.cloud_selected() {
+        Cloud
       } else if self.host_selection() is Some(selection) &&
         self.loading_conversation is Some(_) {
         Session(selection.session)
@@ -40,16 +42,22 @@ fn Model::navigation_location(self : Model) -> @navigation.Location? {
       }
   }
   match target {
-    CloudSession(..) => Some({ device: None, target, })
+    Cloud | CloudSession(..) | CloudDraft(..) => Some({ device: None, target, })
     Settings => Some({ device, target, })
     _ => if device is Some(_) { Some({ device, target, }) } else { None }
   }
 }
 
 ///|
-fn navigation_screen(target : @navigation.Target) -> Screen {
+fn navigation_screen(target : @routes.Target) -> Screen {
   match target {
-    Chat | ChatNew | Session(_) | ChatDraft(_) | CloudSession(..) => Chat
+    Chat
+    | ChatNew
+    | Session(_)
+    | ChatDraft(_)
+    | Cloud
+    | CloudSession(..)
+    | CloudDraft(..) => Chat
     Codex | CodexNew | Thread(_) | CodexDraft(_) => Codex
     Settings => Settings
     Skills | InstalledSkill(_) | MarketSkill(_) => Skills
@@ -62,7 +70,7 @@ fn navigation_screen(target : @navigation.Target) -> Screen {
 /// Leaving that owner for a different work destination cancels its adoption.
 fn Model::project_adoption_at(
   self : Model,
-  location : @navigation.Location,
+  location : @routes.Location,
 ) -> ProjectAdoption? {
   guard self.pending_project_adoption is Some(pending) &&
     pending.channel == self.focused &&

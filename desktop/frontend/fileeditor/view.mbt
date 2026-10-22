@@ -177,7 +177,26 @@ fn ExplorerMode::previous(self : ExplorerMode) -> ExplorerMode {
 }
 
 ///|
-fn explorer_tab_key_target(mode : ExplorerMode, key : String) -> ExplorerMode? {
+fn explorer_tab_key_target(
+  mode : ExplorerMode,
+  key : String,
+  cloud~ : Bool = false,
+) -> ExplorerMode? {
+  if cloud &&
+    (
+      key == "ArrowRight" ||
+      key == "ArrowDown" ||
+      key == "ArrowLeft" ||
+      key == "ArrowUp"
+    ) {
+    return Some(
+      if mode is ExplorerFiles {
+        ExplorerSearch
+      } else {
+        ExplorerFiles
+      },
+    )
+  }
   match key {
     "Home" => Some(ExplorerFiles)
     "End" => Some(ExplorerSearch)
@@ -196,6 +215,7 @@ fn explorer_tab(
   mode : ExplorerMode,
   title : String,
   children : Array[@html.Html],
+  cloud~ : Bool = false,
 ) -> @html.Html {
   let active = selected == mode
   @html.button(
@@ -209,7 +229,7 @@ fn explorer_tab(
       .aria_controls(ExplorerPanelId)
       .aria_selected(active.to_string())
       .on_keydown(event => {
-        match explorer_tab_key_target(mode, event.key()) {
+        match explorer_tab_key_target(mode, event.key(), cloud~) {
           Some(target) => {
             event.prevent_default()
             @cmd.batch([
@@ -326,8 +346,20 @@ pub fn body_view(
     }
   }
   let office_document = active_office_surface(state, ctx)
+  let image = if !use_diff_surface {
+    ctx.active_file.bind(path => {
+      match state.docs.get(path) {
+        Some({ name, state: TabImage(url~, ..), .. }) => Some((name, url))
+        _ => None
+      }
+    })
+  } else {
+    None
+  }
+  let use_image_surface = image is Some(_)
   let use_office_surface = !use_diff_surface && office_document is Some(_)
   let use_markdown_surface = !use_diff_surface &&
+    !use_image_surface &&
     !use_office_surface &&
     (match ctx.active_file {
       Some(path) =>
@@ -337,10 +369,12 @@ pub fn body_view(
       None => false
     })
   let use_mbti_surface = !use_diff_surface &&
+    !use_image_surface &&
     !use_markdown_surface &&
     !use_office_surface &&
     uses_mbti_diagram_surface(state, ctx)
   let use_package_surface = !use_diff_surface &&
+    !use_image_surface &&
     !use_markdown_surface &&
     !use_mbti_surface &&
     !use_office_surface &&
@@ -359,6 +393,7 @@ pub fn body_view(
       .id(ViewerHostId)
       .class(
         if use_diff_surface ||
+          use_image_surface ||
           use_office_surface ||
           use_markdown_surface ||
           use_mbti_surface ||
@@ -390,6 +425,17 @@ pub fn body_view(
       ]),
       office_surface,
     ],
+  )
+  let image_surface = @html.div(
+    class=if use_image_surface {
+      "viewer-host file-image-preview"
+    } else {
+      "viewer-host file-image-preview moonbit-viewer-surface-hidden"
+    },
+    match image {
+      Some((name, url)) => [@html.img(src=url, alt=name)]
+      None => []
+    },
   )
   let markdown_viewer_host = @html.div(
     attrs=@html.Attrs::build()
@@ -465,20 +511,49 @@ pub fn body_view(
     semantic_review,
   )
   @html.div(class="editor-body", [
-    @html.div(class="viewer-stack", [
-      viewer_host,
-      office_surface,
-      pdf_password_dialog(locale~, dispatch, state, ctx),
-      markdown_viewer_host,
-      mbti_diagram_host,
-      package_diagram_host,
-      diff_editor_host,
-      semantic_review_host,
-      viewer_notice(locale~, state, ctx),
-      github_review_line_layer(locale~, dispatch, state, ctx),
-      office_selection_preview_view(state, ctx),
-      pdf_capture_feedback_view(state, ctx),
-    ]),
+    @html.div(
+      class="viewer-stack",
+      attrs=@html.Attrs::build()
+        .on_keydown(event => {
+          if event
+            .to_keyboard_event()
+            .map(key => key.key() == "Escape")
+            .unwrap_or(false) &&
+            state.pending_excel_selection(ctx) is Some(preview) {
+            dispatch(ExcelSelectionCleared(preview))
+          } else {
+            @cmd.none
+          }
+        })
+        .on_click(event => {
+          if event
+            .target()
+            .to_element()
+            .bind(element => element.closest("[data-excel-sheet-tab]"))
+            is Some(_) &&
+            state.pending_excel_selection(ctx) is Some(preview) {
+            dispatch(ExcelSelectionCleared(preview))
+          } else {
+            @cmd.none
+          }
+        }),
+      [
+        office_pages_view(locale~, dispatch, state, ctx),
+        viewer_host,
+        office_surface,
+        image_surface,
+        pdf_password_dialog(locale~, dispatch, state, ctx),
+        markdown_viewer_host,
+        mbti_diagram_host,
+        package_diagram_host,
+        diff_editor_host,
+        semantic_review_host,
+        viewer_notice(locale~, dispatch, state, ctx),
+        github_review_line_layer(locale~, dispatch, state, ctx),
+        office_selection_preview_view(state, ctx),
+        pdf_capture_feedback_view(state, ctx),
+      ],
+    ),
     tree_pane(locale~, dispatch, state, ctx),
   ])
 }
@@ -497,7 +572,7 @@ fn active_office_surface(
   }
   match state.docs.get(path) {
     Some({ state: TabOffice(document~, ..), .. }) =>
-      Some(office_surface_config(state, document))
+      Some(office_surface_config(state, path, document))
     Some({ state: TabPdf(..), .. }) => Some(pdf_surface_config(state, path))
     _ => None
   }
@@ -510,6 +585,7 @@ fn active_office_surface(
 /// highlighted source document. Always in the DOM; blank and hidden otherwise.
 fn viewer_notice(
   locale~ : @i18n.Locale = English,
+  dispatch : @cmd.Emit[Msg],
   state : State,
   ctx : Ctx,
 ) -> @html.Html {
@@ -573,15 +649,34 @@ fn viewer_notice(
                 PdfFailed(message) => message
                 PdfReady | PdfPasswordRequired(_) => ""
               }
-            TabLoading | TabLoaded(..) | TabOffice(..) => ""
+            TabLoading => ui(locale, LoadingFile)
+            TabLoaded(..) | TabOffice(..) | TabImage(..) => ""
           }
         None => ""
       }
     None => ""
   }
+  let content = [@html.span(text)]
+  let preview = state.large_preview_file(ctx)
+  if preview is Some((path, _)) {
+    content.push(
+      @html.button(
+        type_="button",
+        class="button secondary small",
+        on_click=dispatch(
+          PreviewLargeFile(owner=ctx.owner, epoch=state.request_epoch, path~),
+        ),
+        ui(locale, PreviewAnyway),
+      ),
+    )
+  }
   @html.div(
     class=if !text.is_empty() {
-      "viewer-notice"
+      if preview is Some(_) {
+        "viewer-notice has-action"
+      } else {
+        "viewer-notice"
+      }
     } else if diff_pending {
       // Preserve the last complete diff for a fast replacement without
       // letting clicks or selection reach that now-stale comparison. If the
@@ -590,7 +685,7 @@ fn viewer_notice(
     } else {
       "viewer-notice hidden"
     },
-    text,
+    content,
   )
 }
 
@@ -650,25 +745,29 @@ fn tree_pane(
       Some(errors.join("\n"))
     }
   }
-  let inventory = if ctx.placement is None {
+  let inventory = if !ctx.checkout_ready() && ctx.placement is None {
     [@html.div(class="file-panel-empty", ui(locale, WaitingPlacement))]
   } else if ctx.placement is Some(@interop.MissingWorktree(..)) {
     [@html.div(class="file-panel-empty", ui(locale, MissingCheckout))]
-  } else if ctx.owner.session.is_empty() {
+  } else if ctx.owner.session().is_empty() {
     [@html.div(class="file-panel-empty", ui(locale, NoConversation))]
   } else {
     match state.explorer_mode {
       ExplorerFiles => file_inventory(locale~, dispatch, state, ctx)
       ExplorerChanges => [review_git_layout(locale~, dispatch, state, ctx)]
       ExplorerSearch =>
-        [
-          state.search.explorer_view(
-            locale~,
-            ctx.search_input(),
-            dispatch.map(msg => Search(msg)),
-            (path, range) => dispatch(SearchMatchSelected(path~, range~)),
-          ),
-        ]
+        match ctx.search_input() {
+          Some(input) =>
+            [
+              state.search.explorer_view(
+                locale~,
+                input,
+                dispatch.map(msg => Search(msg)),
+                (path, range) => dispatch(SearchMatchSelected(path~, range~)),
+              ),
+            ]
+          None => []
+        }
     }
   }
   @html.div(class="file-tree-pane", [
@@ -695,29 +794,39 @@ fn tree_pane(
             @icons.icon(@icons.icon_folder),
             @html.span(class="visually-hidden", ui(locale, FilesLabel)),
           ],
+          cloud=ctx.owner is @interop.Cloud(..),
         ),
-        explorer_tab(
-          dispatch,
-          state.explorer_mode,
-          ExplorerChanges,
-          ui(locale, ChangedFilesHint),
-          // Keep the name and count in the accessibility tree, as before.
-          [
-            @icons.icon(@icons.icon_diff_multiple),
-            @html.span(class="visually-hidden", ui(locale, ChangesLabel)),
-            change_count(state.changes),
-          ],
-        ),
-        explorer_tab(
-          dispatch,
-          state.explorer_mode,
-          ExplorerSearch,
-          ui(locale, SearchWorkspace),
-          [
-            @icons.icon(@icons.icon_search),
-            @html.span(class="visually-hidden", ui(locale, SearchLabel)),
-          ],
-        ),
+        if ctx.owner.host() is Some(_) {
+          explorer_tab(
+            dispatch,
+            state.explorer_mode,
+            ExplorerChanges,
+            ui(locale, ChangedFilesHint),
+            // Keep the name and count in the accessibility tree, as before.
+            [
+              @icons.icon(@icons.icon_diff_multiple),
+              @html.span(class="visually-hidden", ui(locale, ChangesLabel)),
+              change_count(state.changes),
+            ],
+          )
+        } else {
+          @html.nothing
+        },
+        if ctx.search_input() is Some(_) {
+          explorer_tab(
+            dispatch,
+            state.explorer_mode,
+            ExplorerSearch,
+            ui(locale, SearchWorkspace),
+            [
+              @icons.icon(@icons.icon_search),
+              @html.span(class="visually-hidden", ui(locale, SearchLabel)),
+            ],
+            cloud=ctx.owner is @interop.Cloud(..),
+          )
+        } else {
+          @html.nothing
+        },
       ],
     ),
     @html.div(
@@ -2028,21 +2137,21 @@ fn office_viewer_toolbar(
   state : State,
   ctx : Ctx,
 ) -> @html.Html {
-  guard active_office_surface(state, ctx) is Some(_) else {
+  guard active_office_surface(state, ctx) is Some(config) else {
     return @html.nothing
   }
   let pdf = active_pdf_document(state, ctx) is Some(_)
-  let minimum = if pdf { 25 } else { 50 }
+  let minimum = if pdf { 25 } else { 10 }
   let maximum = if pdf { 400 } else { 200 }
-  let zoom_out = if state.office_zoom <= minimum {
+  let zoom_out = if config.zoom <= minimum {
     @cmd.none
   } else {
-    dispatch(OfficeZoomChanged((state.office_zoom - 10).to_string()))
+    dispatch(OfficeZoomChanged((config.zoom - 10).to_string()))
   }
-  let zoom_in = if state.office_zoom >= maximum {
+  let zoom_in = if config.zoom >= maximum {
     @cmd.none
   } else {
-    dispatch(OfficeZoomChanged((state.office_zoom + 10).to_string()))
+    dispatch(OfficeZoomChanged((config.zoom + 10).to_string()))
   }
   @html.div(
     class="office-viewer-toolbar",
@@ -2050,17 +2159,41 @@ fn office_viewer_toolbar(
       .role("group")
       .aria_label(ui(locale, OfficeControls)),
     [
+      if config.kind == Some(Word) || pdf {
+        @html.button(
+          type_="button",
+          class=if state.office_pages_open {
+            "office-viewer-control active"
+          } else {
+            "office-viewer-control"
+          },
+          title=ui(locale, OfficePages),
+          disabled=pdf &&
+            active_pdf_document(state, ctx)
+            .map(value => value.1.status != PdfReady)
+            .unwrap_or(true),
+          attrs=@html.Attrs::build()
+            .aria_label(ui(locale, OfficePages))
+            .aria_pressed(state.office_pages_open.to_string()),
+          on_click=dispatch(OfficePagesToggled),
+          @icons.icon(@icons.icon_layout_sidebar_left),
+        )
+      } else {
+        @html.nothing
+      },
       @html.button(
         type_="button",
         class="office-viewer-control",
         title=ui(locale, OfficeRegion),
-        disabled=state.office_region_request is Some(_) ||
+        disabled=ctx.owner.host() is None ||
+          state.office_region_request is Some(_) ||
           state.pending_region_feedback(ctx) is Some(_) ||
           state.has_pinned_office_selection(ctx),
         on_click=dispatch(OfficeRegionRequested),
         attrs=@html.Attrs::build().aria_label(ui(locale, OfficeRegion)),
         @icons.icon(@icons.icon_region_capture),
       ),
+      excel_copy_controls(locale~, dispatch, state, ctx),
       @html.label(
         class=if state.office_query.is_empty() {
           "office-viewer-find"
@@ -2085,25 +2218,39 @@ fn office_viewer_toolbar(
         type_="button",
         class="office-viewer-control",
         title=ui(locale, OfficeZoomOut),
-        disabled=state.office_zoom <= minimum,
+        disabled=config.zoom <= minimum,
         on_click=zoom_out,
         attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomOut)),
         "−",
       ),
-      @html.span(class="office-viewer-zoom-value", "\{state.office_zoom}%"),
+      @html.span(class="office-viewer-zoom-value", "\{config.zoom}%"),
       @html.button(
         type_="button",
         class="office-viewer-control",
         title=ui(locale, OfficeZoomIn),
-        disabled=state.office_zoom >= maximum,
+        disabled=config.zoom >= maximum,
         on_click=zoom_in,
         attrs=@html.Attrs::build().aria_label(ui(locale, OfficeZoomIn)),
         "+",
       ),
-      if pdf ||
-        active_office_surface(state, ctx)
-        .map(config => config.kind == Some(PowerPoint))
-        .unwrap_or(false) {
+      if pdf {
+        @html.nothing
+      } else {
+        @html.button(
+          type_="button",
+          class=if ctx.active_file is Some(path) &&
+            office_zoom_preference(state, path, config.kind.unwrap_or(Word)).fit_width {
+            "office-viewer-control active"
+          } else {
+            "office-viewer-control"
+          },
+          title=ui(locale, PdfFitWidth),
+          attrs=@html.Attrs::build().aria_label(ui(locale, PdfFitWidth)),
+          on_click=dispatch(OfficeFitWidth),
+          "↔",
+        )
+      },
+      if pdf || config.kind == Some(PowerPoint) {
         @html.nothing
       } else {
         @html.button(
@@ -2140,6 +2287,7 @@ fn office_viewer_toolbar(
 /// With no file open the whole breadcrumb hides; it stays in the DOM so the
 /// editor's child order, and thus the viewer host, is never re-keyed.
 pub fn breadcrumb_view(
+  desktop~ : Bool = false,
   locale~ : @i18n.Locale = English,
   dispatch : @cmd.Emit[Msg],
   state : State,
@@ -2248,7 +2396,9 @@ pub fn breadcrumb_view(
   if moon_mod_view_available(state, ctx) {
     path_row.push(moon_mod_view_toolbar(locale~, dispatch, state, ctx))
   }
-  if reveal is Some((label, command)) {
+  if ctx.owner is @interop.Cloud(..) && ctx.active_file is Some(_) {
+    path_row.push(download_button(locale~, dispatch, state, desktop~))
+  } else if reveal is Some((label, command)) {
     path_row.push(
       @html.button(
         type_="button",
@@ -2410,7 +2560,8 @@ fn mbti_view_toolbar(
 /// exact basename is `moon.mod`. Reviews and historical comparisons retain
 /// their source/diff surfaces even if their path names a module manifest.
 fn moon_mod_view_available(state : State, ctx : Ctx) -> Bool {
-  guard ctx.active_history_diff is None &&
+  guard ctx.owner.host() is Some(_) &&
+    ctx.active_history_diff is None &&
     ctx.active_file is Some(path) &&
     ctx.relative(path) is Some(_) else {
     return false

@@ -11,35 +11,15 @@ The static drawing support and explicit unsupported-feature errors come from
 The renderer's MPL-2.0 MTX decoder license and source notice are staged alongside
 the viewer's runtime assets in both browser and packaged Desktop builds.
 
-## Development dependencies
+## Published dependencies
 
-This draft depends on the unreleased source APIs in
-[office.mbt#654](https://github.com/moonbitlang/office.mbt/pull/654) and the
-`feat/pptx-preview` branch of `moonbit-community/office-viewer` at `12c9643`.
-That branch retains the `Lampese/office-viewer` module identity currently consumed
-by Desktop; the canonical upstream change is
-[office-viewer#12](https://github.com/moonbit-community/office-viewer/pull/12).
-Those dependencies
-must be released and the module pins updated before this change can merge.
-No package release is performed by this branch.
-
-To reproduce before those releases, check out those branches beside OpenSeek,
-then append their module paths to the local `moon.work` members:
-
-```toml
-  "../office-viewer",
-  "../office.mbt/pagelayout",
-```
-
-Keep the development paths local. The packager also needs the matching viewer's
-runtime assets:
-
-```sh
-OPENSEEK_OFFICE_VIEWER_SOURCE="$PWD/../office-viewer" moon run desktop/package/browser --target native
-OPENSEEK_OFFICE_VIEWER_SOURCE="$PWD/../office-viewer" moon run desktop/package/macos --target native -- --no-open
-```
-
-Use an absolute environment path because the package script runs from `desktop/`.
+Desktop uses `Lampese/office-viewer@0.2.6`, built from the merged
+[office-viewer#12](https://github.com/moonbit-community/office-viewer/pull/12),
+and the published `moonbitlang/pagelayout@0.8.1` PPTX renderer from
+[office.mbt#654](https://github.com/moonbitlang/office.mbt/pull/654).
+Compilation, fonts, thumbnails, PDF runtime and license assets all come from
+that pinned Viewer package. No local workspace member or asset-source override
+is required for browser or packaged Desktop builds.
 
 The public two-slide fixture in `desktop/e2e/fixtures/office` is independently
 generated; its generator and provenance are included. The private reference deck

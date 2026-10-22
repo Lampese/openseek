@@ -68,6 +68,8 @@ async fn mock_mcp_endpoint(
         }
         let message = @json.parse(text) catch { _ => null }
         match message {
+          { "method": "server/discover", .. } =>
+            conn.send_response(400, "Bad Request")
           { "method": "initialize", "id": id, .. } => {
             let reply : Json = {
               "jsonrpc": "2.0",
@@ -139,7 +141,7 @@ async test "http connect handshakes, lists tools over SSE, and echoes session he
         ("mCp-SeSsIoN-iD", "forged"),
       ]),
     )
-    assert_eq(conn.init().server_name, "http-mock")
+    assert_eq(conn.init().server_name, Some("http-mock"))
     assert_eq(conn.init().protocol_version, "2025-11-25")
     let tools = conn.client().list_tools()
     assert_eq(tools.length(), 1)
@@ -204,6 +206,8 @@ async test "a server ping mid-stream is answered while the stream is open" {
         (_request, body, conn) => {
           let message = @json.parse(body.read_all().text()) catch { _ => null }
           match message {
+            { "method": "server/discover", .. } =>
+              conn.send_response(400, "Bad Request")
             { "method": "initialize", "id": id, .. } =>
               answer_initialize(conn, id)
             { "method": "tools/list", "id": id, .. } => {
@@ -264,6 +268,8 @@ async test "an http error fails the request fast" {
         (_request, body, conn) => {
           let message = @json.parse(body.read_all().text()) catch { _ => null }
           match message {
+            { "method": "server/discover", .. } =>
+              conn.send_response(400, "Bad Request")
             { "method": "initialize", "id": id, .. } =>
               answer_initialize(conn, id)
             { "method": "tools/list", .. } => {
@@ -300,6 +306,77 @@ async test "an http error fails the request fast" {
 }
 
 ///|
+/// A server that forgets the legacy session answers 404 to every later
+/// request, and nothing reinitializes it: the request fails with the reason,
+/// and the connection ends so its owner can report the server as lost. The
+/// session is already gone, so closing sends no DELETE.
+async test "an expired legacy session fails the request and ends the connection" {
+  @async.with_task_group() <| group => {
+    guard bind_test_server("local TCP bind unavailable; skipping expiry test")
+      is Some(server) else {
+      return
+    }
+    let mut deleted = false
+    group.spawn_bg(no_wait=true, allow_failure=true) <| () => {
+      server.run_forever(
+        (request, body, conn) => {
+          if request.meth is Delete {
+            deleted = true
+            conn.send_response(200, "OK")
+            return
+          }
+          let message = @json.parse(body.read_all().text()) catch { _ => null }
+          match message {
+            { "method": "server/discover", .. } =>
+              conn.send_response(400, "Bad Request")
+            { "method": "initialize", "id": id, .. } => {
+              let reply : Json = {
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "protocolVersion": "2025-11-25" },
+              }
+              conn.send_response(200, "OK", extra_headers={
+                "Content-Type": "application/json",
+                "Mcp-Session-Id": "session-123",
+              })
+              conn.write(reply.stringify())
+            }
+            { "method": "tools/list", .. } =>
+              conn.send_response(404, "Not Found")
+            _ => conn.send_response(202, "Accepted")
+          }
+        },
+        max_connections=8,
+      )
+    }
+    let conn = connect_or_fail(
+      group,
+      "http://127.0.0.1:\{server.addr.port()}/mcp",
+    )
+    let client = conn.client()
+    let closed : @async.Queue[Unit] = Queue(kind=Unbounded)
+    client.set_close_handler(() => {
+      ignore(closed.try_put(()) catch { _ => false })
+    })
+    let outcome = @async.with_timeout_opt(5000, () => {
+      try {
+        client.list_tools() |> ignore
+        "no error raised"
+      } catch {
+        @jsonrpc.Failed(message~, ..) => message
+        _ => "other error"
+      }
+    })
+    guard outcome is Some(outcome) else { fail("request did not fail fast") }
+    assert_true(outcome.contains("session expired"))
+    @async.with_timeout(5000, () => closed.get())
+    assert_true(client.is_closed())
+    assert_false(deleted)
+    conn.shutdown()
+  }
+}
+
+///|
 /// Regression guard for the lifecycle ordering race: with detached per-POST
 /// tasks, `tools/list` must still reach the server only after the
 /// `notifications/initialized` POST has completed — even when the server is
@@ -317,6 +394,8 @@ async test "tools/list waits for the initialized notification to complete" {
         (_request, body, conn) => {
           let message = @json.parse(body.read_all().text()) catch { _ => null }
           match message {
+            { "method": "server/discover", .. } =>
+              conn.send_response(400, "Bad Request")
             { "method": "initialize", "id": id, .. } =>
               answer_initialize(conn, id)
             { "method": "notifications/initialized", .. } => {

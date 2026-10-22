@@ -3,13 +3,15 @@ priv enum AttachmentPhase {
   AttachmentPreparing
   AttachmentConfirming(name~ : String)
   AttachmentImporting
+  AttachmentStaged(name~ : String)
 } derive(Eq)
 
 ///|
 priv struct AttachmentRequest {
   id : Int32
   source : @protocol.AttachmentSource
-  root : @common.Uri
+  root : @common.Uri?
+  cloud_access : @cloud_client.Access?
   phase : AttachmentPhase
 } derive(Eq)
 
@@ -19,17 +21,18 @@ fn pick_attachments(
   input : Input,
   emit : @cmd.Emit[@image_input.Event],
 ) -> @cmd.Cmd {
-  guard input.identity.owner.host() is Some(host) else { return @cmd.none }
   // Native selection exposes an exact path. The browser File API deliberately
   // hides it, so browser/remote selections must upload their actual bytes.
-  if host.channel != @interop.Local ||
-    input.root is None ||
-    @interop.openseek_api() is None {
-    return @image_input.pick(
-      locale~,
-      allow_images=input.presentation.images_enabled,
-      emit,
-    )
+  let host = match input.identity.owner.host() {
+    Some(host) if host.channel == @interop.Local &&
+      input.root is Some(_) &&
+      @interop.openseek_api() is Some(_) => host
+    _ =>
+      return @image_input.pick(
+        locale~,
+        allow_images=input.presentation.images_enabled,
+        emit,
+      )
   }
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
@@ -59,17 +62,32 @@ fn prepare_attachment(
   request : AttachmentRequest,
   emit : @cmd.Emit[Msg],
 ) -> @cmd.Cmd {
-  guard identity.owner.host() is Some(host) else { return @cmd.none }
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
+      if identity.owner is @interop.Cloud(session~, ..) &&
+        request.cloud_access is Some(access) {
+        let result = Ok(
+          @cloud_client.prepare_attachment(
+            access.token,
+            session,
+            request.source,
+          ),
+        ) catch {
+          @cloud_client.RequestError(failure) => Err(failure.label())
+          _ => Err(@cloud_client.Failure::Unreachable.label())
+        }
+        scheduler.add(
+          emit(AttachmentPrepared(identity, request.root, request.id, result)),
+        )
+        return
+      }
+      guard identity.owner.host() is Some(host) && request.root is Some(root) else {
+        return
+      }
       let reply : @protocol.PrepareAttachmentReply = @interop.bridge_request(
         host.channel,
         @commands.fs_prepare_attachment,
-        {
-          session: host.session,
-          workspace: request.root.path,
-          source: request.source,
-        },
+        { session: host.session, workspace: root.path, source: request.source, },
       ) catch {
         error => {
           scheduler.add(
@@ -99,17 +117,28 @@ fn import_attachment(
   request : AttachmentRequest,
   emit : @cmd.Emit[Msg],
 ) -> @cmd.Cmd {
-  guard identity.owner.host() is Some(host) else { return @cmd.none }
   @cmd.custom_cmd(scheduler => {
     @js.Promise::from_async(() => {
+      if identity.owner is @interop.Cloud(session~, ..) &&
+        request.cloud_access is Some(access) {
+        let result = Ok(
+          @cloud_client.import_attachment(access.token, session, request.source).path,
+        ) catch {
+          @cloud_client.RequestError(failure) => Err(failure.label())
+          _ => Err(@cloud_client.Failure::Unreachable.label())
+        }
+        scheduler.add(
+          emit(AttachmentImported(identity, request.root, request.id, result)),
+        )
+        return
+      }
+      guard identity.owner.host() is Some(host) && request.root is Some(root) else {
+        return
+      }
       let reply : @protocol.ImportAttachmentReply = @interop.bridge_request(
         host.channel,
         @commands.fs_import_attachment,
-        {
-          session: host.session,
-          workspace: request.root.path,
-          source: request.source,
-        },
+        { session: host.session, workspace: root.path, source: request.source, },
       ) catch {
         error => {
           scheduler.add(
@@ -144,7 +173,7 @@ fn Entry::prepare_attachments(
   if sources.is_empty() {
     return (self, @cmd.none)
   }
-  guard self.root is Some(root) else {
+  guard self.root is Some(_) || self.owner is @interop.Cloud(..) else {
     return (
       {
         ..self,
@@ -161,7 +190,8 @@ fn Entry::prepare_attachments(
     let request = AttachmentRequest::{
       id: sequence,
       source,
-      root,
+      root: self.root,
+      cloud_access: self.cloud_access,
       // Browser and remote files have no host-local path to resolve. Keep
       // their bytes in this draft until the user confirms the upload.
       phase: match source {
@@ -188,6 +218,25 @@ fn Entry::without_attachment(self : Entry, id : Int32) -> Entry {
       request.id != id
     }),
   }
+}
+
+///|
+fn Entry::attachment_failed(
+  self : Entry,
+  id : Int32,
+  message : String,
+) -> Entry {
+  let next = if self.owner is @interop.Cloud(..) &&
+    self.attachment_requests.iter().find_first(request => request.id == id)
+    is Some(request) {
+    self.with_attachment_phase(
+      id,
+      AttachmentConfirming(name=attachment_name(request.source)),
+    )
+  } else {
+    self.without_attachment(id)
+  }
+  { ..next, image_error: Some(message), }
 }
 
 ///|
@@ -225,8 +274,9 @@ fn Entry::attachment_confirmations(
   locale : @i18n.Locale,
   emit : @cmd.Emit[Msg],
 ) -> Array[(Int32, @html.Html)] {
-  self.attachment_requests.map(request => {
+  self.attachment_requests.filter_map(request => {
     let confirmation = match request.phase {
+      AttachmentStaged(_) => return None
       AttachmentConfirming(name~) =>
         @html.div(
           class="composer-context-row composer-attachment-confirm",
@@ -265,8 +315,16 @@ fn Entry::attachment_confirmations(
           ui(locale, PreparingAttachment),
         )
     }
-    (request.id, confirmation)
+    Some((request.id, confirmation))
   })
+}
+
+///|
+fn attachment_name(source : @protocol.AttachmentSource) -> String {
+  match source {
+    AttachmentBytes(name~, ..) => name
+    AttachmentPath(path) => path
+  }
 }
 
 ///|

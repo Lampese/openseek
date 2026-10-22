@@ -176,7 +176,7 @@ pub fn panel(
       ),
     )
   }
-  if state.owner is Some(_) && !state.active {
+  if state.owner is Some(_) && !(state.watch is Panel) {
     body.push(
       @html.div(class="jobs-error", ui(locale, DisconnectedDescription)),
     )
@@ -288,7 +288,14 @@ pub fn panel(
               ),
               @html.div(
                 id="jobs-history-content",
-                hidden=!state.history_expanded,
+                class=if state.history_expanded {
+                  "jobs-history-content open"
+                } else {
+                  "jobs-history-content"
+                },
+                attrs=@html.Attrs::build()
+                  .aria_hidden((!state.history_expanded).to_string())
+                  .inert(!state.history_expanded),
                 content,
               ),
             ]
@@ -339,10 +346,19 @@ pub fn panel(
         if !extent.is_empty() {
           details.push(@html.div(class="jobs-detail-meta", extent))
         }
-        if info.workspace is Worktree(worktree) {
-          details.append(
-            worktree_details(locale~, ended=job.state.is_terminal(), worktree),
-          )
+        match info.workspace {
+          Worktree(worktree) =>
+            details.append(
+              worktree_details(locale~, ended=job.state.is_terminal(), worktree),
+            )
+          Directory(path~) =>
+            details.push(
+              @html.div(
+                class="jobs-detail-meta jobs-worker-directory",
+                dynamic_text(locale, DWorkerDirectory(path)),
+              ),
+            )
+          InPlace => ()
         }
       }
       if job.cwd is Some(cwd) {

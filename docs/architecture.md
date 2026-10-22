@@ -12,15 +12,15 @@ One shared engine, three frontends. The root CLI package is the engine (headless
 automation: `run`/`serve`/`mcp`/`sessions`; the desktop app and the
 viz server are separate executables that spawn or read from it): its `serve`
 mode reads JSONL commands on stdin and streams typed JSONL events
-(`moonbitlang/openseek_protocol`) on stdout. The terminal UI (`openseek_tui`, in
-its own repository, [moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui)), the desktop app,
+(`moonbitlang/openseek_protocol`) on stdout. The terminal UI (`openseek_tui`, its own module in
+[`openseek_tui/`](../openseek_tui/README.md)), the desktop app,
 and headless `run` all drive that same engine and event stream. Durable state lives in append-only session files that
 the visualizer reads directly.
 
 ```mermaid
 flowchart LR
   subgraph frontends [Frontends]
-    TUI["openseek_tui — terminal UI<br/>(separate repo: moonbitlang/openseek_tui)"]
+    TUI["openseek_tui — terminal UI<br/>(own module: openseek_tui/)"]
     DESKTOP["openseek_desktop — desktop app<br/>(CEF shell + JS frontend)"]
     VIZ["inspect + viz —<br/>session visualizer (browser)"]
   end
@@ -29,7 +29,7 @@ flowchart LR
     SERVE["serve / run / review / sessions / mcp"]
     AGENT["agent — turn loop"]
     TOOLS["agent_tool — registry:<br/>mbtx·job_output·job_stop·job_wait<br/>edit·multi_edit·write·remove<br/>plan·goal·finish"]
-    MCP["mcp — client + tool bridge<br/>(mcp__server__tool)"]
+    MCP["mcp — client + catalog<br/>(@mcp.search / @mcp.call in scripts)"]
     PROMPT["prompt + agent_skill —<br/>system prompt & skills"]
     SESSION["agent_session (+ store) —<br/>durable event log"]
   end
@@ -147,8 +147,9 @@ Key invariants:
   (`agent_session/log` reads leniently).
 - **Tools are data.** A tool is a name, a JSON schema, and an executor.
   Normal tools return `Respond(ToolOutput)`; control tools (`finish`) end the
-  turn via `Control`. MCP tools enter the same registry namespaced as
-  `mcp__<server>__<tool>`, so the loop dispatches them identically.
+  turn via `Control`. MCP tools are not in the registry: scripts search and
+  call them through the MCP host, a loopback service beside PTC that routes
+  by server and tool name.
 
 ## One turn, end to end
 

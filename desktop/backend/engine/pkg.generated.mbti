@@ -44,6 +44,8 @@ pub async fn fork_session(EngineManager, @protocol.SessionForkPayload, on_create
 
 pub async fn goal_run(EngineManager, @protocol.GoalPayload) -> @protocol.GoalReply
 
+pub async fn import_session(EngineManager, @protocol.SessionImportPayload, on_created~ : (String) -> Unit, on_worktree_changed~ : (String, Array[@protocol.WorktreeInfo]) -> Unit) -> String
+
 pub async fn list_jobs(EngineManager, @protocol.JobsListPayload) -> @protocol.JobsListReply
 
 pub async fn list_sessions() -> @protocol.SessionsReply
@@ -54,7 +56,9 @@ pub async fn load_archived_session(EngineManager, @protocol.LoadSessionPayload) 
 
 pub async fn load_session(EngineManager, @protocol.LoadSessionPayload) -> @protocol.LoadSessionReply
 
-pub async fn migrate_global_store() -> Int
+pub fn mcp_status(EngineManager, @protocol.McpStatusPayload) -> @protocol.McpStatusReply
+
+pub async fn migrate_global_store() -> Int32
 
 pub fn new_engine_actor(String, runtime_dir? : @pathx.Path, host_mcp? : @mcp.Server, moonbit? : @moonbit.ToolchainSource) -> EngineActor
 
@@ -70,7 +74,13 @@ pub async fn rename_session(EngineManager, @protocol.SessionRenamePayload) -> Un
 
 pub async fn search_sessions(@protocol.SessionSearchPayload) -> @protocol.SessionSearchReply
 
+pub async fn session_artifacts_list(EngineManager, String) -> @protocol.SessionArtifacts
+
+pub async fn session_artifacts_update(EngineManager, String, (@protocol.SessionArtifacts) -> @protocol.SessionArtifacts, () -> Unit) -> @protocol.SessionArtifacts
+
 pub async fn settings_status(EngineManager) -> @protocol.SettingsStatusPayload
+
+pub async fn ssh_model_credentials(EngineManager) -> Map[String, String]
 
 pub async fn start_run(EventSink, EngineManager, @protocol.StartPayload) -> @protocol.StartReply
 

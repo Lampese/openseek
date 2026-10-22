@@ -4,14 +4,14 @@ version = "0.1.5"
 
 import {
   "moonbitlang/jsonl@0.2.1",
-  "moonbitlang/openseek_protocol@0.4.0",
+  "moonbitlang/openseek_protocol@0.4.1",
   "moonbit-community/pty@0.4.3",
-  "moonbit-community/flate@0.9.0",
+  "moonbit-community/flate@0.10.0",
   "moonbitlang/x@0.5.5",
   "moonbitlang/async@0.22.4",
+  "moonbitlang/moonback@0.8.9",
   "tonyfettes/xlog@0.4.2",
-  "moonbit-community/proton_contract@0.3.4",
-  "moonbitlang/openseek@0.7.0",
+  "moonbitlang/openseek@0.7.3",
   "openseek_desktop@0.1.5",
   "Yoorkin/multipart@0.1.3",
 }

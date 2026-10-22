@@ -40,6 +40,37 @@ pub fn OpenSeekThinking::parse(value : String) -> OpenSeekThinking? {
 }
 
 ///|
+/// Who answers an OpenSeek engine's permission questions (sandbox escalation,
+/// deletion, writes outside the allowed scope). The host passes it to the
+/// engine as `--approval`; an absent request field means `ApprovalAsk`, the
+/// behavior every host had before the field existed.
+pub(all) enum OpenSeekApproval {
+  /// The person at the composer answers each question.
+  ApprovalAsk
+  /// A reviewer subagent answers against the user's own messages; what it
+  /// cannot settle comes to the person as an ordinary question.
+  ApprovalReview
+} derive(Debug, Eq)
+
+///|
+/// The wire spelling, which is also the engine's `--approval` value.
+pub fn OpenSeekApproval::wire(self : OpenSeekApproval) -> String {
+  match self {
+    ApprovalAsk => "ask"
+    ApprovalReview => "review"
+  }
+}
+
+///|
+pub fn OpenSeekApproval::parse(value : String) -> OpenSeekApproval? {
+  match value {
+    "ask" => Some(ApprovalAsk)
+    "review" => Some(ApprovalReview)
+    _ => None
+  }
+}
+
+///|
 pub(all) struct StartPayload {
   // Original images as data URLs. The engine persists the bytes before upload.
   images : Array[String]
@@ -51,6 +82,8 @@ pub(all) struct StartPayload {
   // Optional keeps older clients compatible; a present value is decoded into
   // the closed protocol type before the command reaches the host operation.
   thinking : OpenSeekThinking?
+  // Who answers the engine's permission questions; absent means ask.
+  approval : OpenSeekApproval?
   max_steps : Int32?
   // Every desktop run belongs to a durable conversation. The engine rejects
   // a blank id before it acquires that conversation's record lease.
@@ -124,6 +157,8 @@ pub(all) struct CompactPayload {
   // A resumed conversation may need a new engine process with these settings.
   model : String?
   thinking : OpenSeekThinking?
+  // Who answers the engine's permission questions; absent means ask.
+  approval : OpenSeekApproval?
   max_steps : Int32?
   workspace : String?
 } derive(Debug, Eq)
@@ -143,6 +178,8 @@ pub(all) struct GoalPayload {
   // A resumed conversation may need a new engine process with these settings.
   model : String?
   thinking : OpenSeekThinking?
+  // Who answers the engine's permission questions; absent means ask.
+  approval : OpenSeekApproval?
   max_steps : Int32?
   workspace : String?
 } derive(Debug, Eq)
@@ -1074,68 +1111,36 @@ pub(all) struct BrowserVisiblePayload {
 // Notification payloads.
 
 ///|
-/// How much of the host is up behind an `agent.connected`. Both spellings
-/// ask the client for the same thing — this connection is live, re-read your
-/// state — and differ only in whether a run can start yet.
-pub(all) enum ConnectedStage {
-  /// A transport accepted this client. The engine pump may still be between
-  /// generations, so a start can be refused until `Serving` follows.
-  Accepted
-  /// The engine pump entered a serving generation and accepts runs.
-  Serving
-} derive(Debug, Eq)
-
-///|
-pub impl ToJson for ConnectedStage with fn to_json(self) {
-  match self {
-    Accepted => "accepted"
-    Serving => "serving"
-  }
-}
-
-///|
-/// The stage is a bare string, and an unrecognized one is refused rather than
-/// read as the weaker of the two: a client acts on this field to decide
-/// whether a start can be refused, and a spelling this build does not know is
-/// a host it cannot reason about. Host and clients ship together, so a third
-/// stage arrives with the code that understands it.
-pub impl FromJson for ConnectedStage with fn from_json(json, path) {
-  guard json is String(stage) else {
-    raise JsonDecodeError((path, "expected connected stage"))
-  }
-  match stage {
-    "accepted" => Accepted
-    "serving" => Serving
-    _ => raise JsonDecodeError((path, "unknown connected stage"))
-  }
-}
-
-///|
-/// `agent.connected` is a signal rather than a description: every client
-/// answers it by re-reading its state. `stage` says how much of the host is
-/// up, which is all a client can act on beyond that.
+/// `agent.connected` is the host's handshake and its resync signal: a client
+/// answers it by re-reading its state. `protocol` is the `HostProtocolRevision`
+/// the host was built for; hosts that predate it send none.
 pub(all) struct ConnectedPayload {
-  stage : ConnectedStage
+  protocol : Int32?
 } derive(Debug, Eq)
 
 ///|
 pub impl ToJson for ConnectedPayload with fn to_json(self) {
-  { "stage": ToJson::to_json(self.stage) }
+  let object : Map[String, Json] = Map([])
+  if self.protocol is Some(revision) {
+    object["protocol"] = Json(revision)
+  }
+  Json::object(object)
 }
 
 ///|
-/// `stage` is the whole payload: a notification carrying none, or one this
-/// build cannot read, says nothing a client can act on, so it is refused
-/// rather than guessed at — `Notification::from_wire` drops it. Fields this
-/// build does not know are ignored, leaving the wire room to grow.
-pub impl FromJson for ConnectedPayload with fn from_json(json, path) {
-  guard json is Object(fields) else {
-    raise JsonDecodeError((path, "expected connected payload"))
+/// Every host's notification decodes, so a client can always compare
+/// revisions before it sends a request. Only an integral `protocol` is read;
+/// a missing or malformed one, and every other field (including the `stage`
+/// and `ready` of earlier hosts), leaves the revision absent.
+pub impl FromJson for ConnectedPayload with fn from_json(json, _path) {
+  let protocol = if json is Object(fields) &&
+    fields.get("protocol") is Some(Number(value, ..)) &&
+    value == value.to_int().to_double() {
+    Some(value.to_int())
+  } else {
+    None
   }
-  guard fields.get("stage") is Some(stage) else {
-    raise JsonDecodeError((path.add_key("stage"), "missing required field"))
-  }
-  { stage: @json.from_json(stage, path=path.add_key("stage")), }
+  { protocol, }
 }
 
 ///|
@@ -1437,6 +1442,14 @@ pub impl ToJson for SettingsStatusPayload with fn to_json(self) {
   }
   Json(fields)
 }
+
+///|
+/// The host protocol a frontend and host build agree on, sent in every
+/// `agent.connected`. The relay serves one current frontend to every host,
+/// with no compatibility layer for older ones: increment this whenever a host
+/// command, reply or event changes incompatibly, and a browser shows a
+/// mismatched host as unavailable before sending it any request.
+pub const HostProtocolRevision : Int32 = 1
 
 ///|
 /// Immutable identity of the installed desktop package. The native host reads
@@ -1811,18 +1824,6 @@ pub extend ConnectedPayload with Eq::{equal, not_equal}
 pub extend ConnectedPayload with ToJson::{to_json}
 
 ///|
-pub extend ConnectedStage with Debug::{to_repr}
-
-///|
-pub extend ConnectedStage with FromJson::{from_json}
-
-///|
-pub extend ConnectedStage with Eq::{equal, not_equal}
-
-///|
-pub extend ConnectedStage with ToJson::{to_json}
-
-///|
 pub extend DiagnosticsPayload with Debug::{to_repr}
 
 ///|
@@ -2085,6 +2086,18 @@ pub extend MoonIdeCodeLensPayload with Eq::{equal, not_equal}
 
 ///|
 pub extend MoonIdeCodeLensPayload with ToJson::{to_json}
+
+///|
+pub extend OpenSeekApproval with Debug::{to_repr}
+
+///|
+pub extend OpenSeekApproval with FromJson::{from_json}
+
+///|
+pub extend OpenSeekApproval with Eq::{equal, not_equal}
+
+///|
+pub extend OpenSeekApproval with ToJson::{to_json}
 
 ///|
 pub extend OpenSeekThinking with Debug::{to_repr}

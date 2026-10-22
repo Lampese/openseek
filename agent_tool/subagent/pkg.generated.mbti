@@ -20,16 +20,17 @@ pub fn send_definition(@agent_subagent.Launcher, Array[Kind]) -> @agent_tool.Age
 // Types and methods
 pub(all) struct Kind {
   name : String
-  ceiling : Int
+  ceiling : Int32
   validate : (Json) -> Result[Json, String]
   takes_instructions : Bool
-  worktree : Bool
+  changes_code : Bool
 }
 
 pub(all) struct Subagents {
   launcher : (@bgjobs.BgJobRuntime) -> @agent_subagent.Launcher
   kinds : Array[Kind]
   audit_context : () -> Json
+  notified : (String) -> Bool
 }
 
 // Type aliases

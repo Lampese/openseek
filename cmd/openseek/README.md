@@ -5,8 +5,8 @@ Use `moonx moonbitlang/openseek` or `moon run .` from the repository root.
 The old coordinate remains supported and prints one warning to stderr.
 
 The `openseek` binary is a subcommand tree for the headless engine (the
-interactive terminal UI is the separate `openseek_tui` binary, maintained in
-[moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui)). It parses arguments with
+interactive terminal UI is the separate `openseek_tui` binary, in
+[`openseek_tui/`](../../openseek_tui/README.md)). It parses arguments with
 `moonbitlang/core/argparse`, reads defaults from environment variables, and
 drives turns through `moonbitlang/openseek/agent.run_turn_in_scope` (both one-shot
 `run` and durable sessions).
@@ -131,6 +131,14 @@ started with, and the ones the fork will be resumed with. The fork's first
 request does not reuse the source's cached prefix past the point where the two
 prompts differ.
 
+The copied history ends with a `[session forked]` runtime notice, which the
+model reads before the fork's first prompt: the files were not copied with the
+history, so earlier tool results may not describe what is in `--dir` now. A
+caller that knows more about the fork's environment — the desktop app, which
+makes a new git worktree for a fork and knows what the source left
+uncommitted — passes it with `--notice <text>`, which the notice carries after
+its standard part as given.
+
 ## `openseek serve`
 
 In `serve` mode, controllers can ask the engine to generate and append a summary
@@ -202,8 +210,8 @@ dispatch, argument parsing, environment-backed defaults, model parsing, prompt
 override file loading, session-store setup, and the command handlers live under
 [`internal/openseek`](../../internal/openseek/README.md), which documents its
 own package layout. The interactive UI is the separate `openseek_tui` binary
-([moonbitlang/openseek_tui](https://github.com/moonbitlang/openseek_tui)),
-which consumes this module from mooncakes; the prompt package owns built-in
+([`openseek_tui/`](../../openseek_tui/README.md)), its own module in this
+workspace; the prompt package owns built-in
 prompt selection; the agent package owns tool definitions and the execution
 loop.
 

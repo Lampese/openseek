@@ -8,6 +8,9 @@ export class DesktopBrowserHarness {
   constructor(page) {
     this.page = page;
     this.ticketStatus = 200;
+    // `HostProtocolRevision` in desktop/protocol; another value is an
+    // incompatible host build.
+    this.hostProtocol = 1;
     this.pauseTicket = null;
     this.ticketRequests = [];
     this.issuedTickets = new Map();
@@ -19,7 +22,25 @@ export class DesktopBrowserHarness {
     // Error and delay controls let tests exercise the product's real pending,
     // failed, and retry states without replacing its Rabbita update logic.
     this.rpcErrors = new Map();
+    this.connectionAvailable = true;
     this.rpcDelays = new Map();
+    // What `mcp.status` answers for a conversation: by default no engine is
+    // running for it.
+    this.mcpStatus = { engine: 'stopped' };
+    // The `JobView`s `jobs.list` answers for session-1, newest first; other
+    // sessions have none. Specs that read output use BackgroundJobsHarness.
+    this.jobs = [];
+    // What `git.branch` and `git.pull_request` answer for a conversation's
+    // checkout: by default it is not a repository.
+    this.gitBranch = {};
+    this.gitPullRequest = {};
+    // The pull requests and branches attached to each session, as
+    // `session.artifacts_list` reads them and `session.artifacts_remove`
+    // edits them.
+    this.sessionArtifacts = {};
+    // What `github.pull_request_summary` answers for each pull request address: by
+    // default GitHub has nothing to say about it.
+    this.githubPullRequestSummaries = {};
     this.textSearchMatches = [];
     this.semanticSearchMatches = [];
     this.textSearchMatchCount = undefined;
@@ -70,6 +91,7 @@ export class DesktopBrowserHarness {
         name: 'MoonBit',
         description: 'Authoritative MoonBit guidance',
         source: '',
+        enabled: true,
       },
     ];
     this.codexRequiresAuth = false;
@@ -507,6 +529,16 @@ export class DesktopBrowserHarness {
 
   async install() {
     this.page.on('pageerror', error => this.pageErrors.push(error.message));
+    // Match openseek-api: every page route (`/device/:device/*page`, `/cloud`
+    // and `/cloud/*page`) serves the one current document.
+    await this.page.route(url => url.pathname.startsWith('/device/') || url.pathname === '/cloud' ||
+      url.pathname.startsWith('/cloud/'), async route => {
+      if (!route.request().isNavigationRequest()) return route.continue();
+      const url = new URL('/index.html', route.request().url());
+      const response = await route.fetch({ url: url.href });
+      await route.fulfill({ response });
+    });
+
 
     await this.page.route('https://cloud.moonbitlang.cn/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [] }) }));
     await this.page.route('**/v2/devices/*/connect-ticket', async route => {
@@ -545,6 +577,10 @@ export class DesktopBrowserHarness {
       this.issuedTickets.delete(ticket);
       this.socketTickets.push(ticket);
       this.socketURLs.push(socket.url());
+      if (!this.connectionAvailable) {
+        socket.close({ code: 1001, reason: 'fixture offline' });
+        return;
+      }
       this.socket = socket;
       socket.onMessage(async message => {
         const request = JSON.parse(message.toString());
@@ -574,7 +610,8 @@ export class DesktopBrowserHarness {
       socket.send(JSON.stringify({
         jsonrpc: '2.0',
         method: 'agent.connected',
-        params: { stage: 'serving' },
+        // The handshake: this host's `HostProtocolRevision`.
+        params: this.connectedParams ?? { protocol: this.hostProtocol },
       }));
     });
   }
@@ -617,6 +654,20 @@ export class DesktopBrowserHarness {
         }
         return { workspaces: [...this.workspaces] };
       }
+      case 'mcp.status':
+        return this.mcpStatus;
+      case 'jobs.list': {
+        const jobs = request.params.scope.session === 'session-1' ? this.jobs : [];
+        const { offset } = request.params;
+        return {
+          jobs: jobs.slice(offset, offset + 100),
+          next_offset: offset + 100 < jobs.length ? offset + 100 : null,
+          errors: [],
+          selected: null,
+        };
+      }
+      case 'app.info':
+        return { version: '0.0.0-fixture' };
       case 'settings.get':
         return this.hostSettings;
       case 'settings.set': {
@@ -678,6 +729,7 @@ export class DesktopBrowserHarness {
           description: 'Elm-style browser UI',
           source: 'rabbita@0.15.4/moonbitlang/rabbita',
           registry: { module_name: 'rabbita', package_path: 'moonbitlang/rabbita' },
+          enabled: true,
         };
         if (!this.installedSkills.some(skill => skill.id === installed.id)) {
           this.installedSkills.push(installed);
@@ -689,6 +741,12 @@ export class DesktopBrowserHarness {
           skill => skill.id !== request.params?.id,
         );
         return { removed: true };
+      case 'skills.set_enabled': {
+        const skill = this.installedSkills.find(skill => skill.id === request.params.id);
+        if (!skill) return { error: 'Skill is no longer installed' };
+        skill.enabled = request.params.enabled;
+        return { ok: true };
+      }
       case 'agent.start':
         return { run_id: 'run-e2e', status: 'accepted', exit_code: 0 };
       case 'agent.queue':
@@ -824,7 +882,22 @@ export class DesktopBrowserHarness {
         return { ...snapshot };
       }
       case 'git.branch':
-        return {};
+        return this.gitBranch;
+      case 'git.pull_request':
+        return this.gitPullRequest;
+      case 'github.pull_request_summary': {
+        const pullRequest = this.githubPullRequestSummaries[request.params?.url];
+        return pullRequest ? { pull_request: pullRequest } : {};
+      }
+      case 'session.artifacts_list':
+        return { artifacts: [...(this.sessionArtifacts[request.params?.session] ?? [])] };
+      case 'session.artifacts_remove': {
+        const { session, artifact } = request.params ?? {};
+        const remaining = (this.sessionArtifacts[session] ?? []).filter(item =>
+          item.type !== artifact?.type || item.url !== artifact?.url);
+        this.sessionArtifacts[session] = remaining;
+        return { artifacts: [...remaining] };
+      }
       case 'github.checkout_status':
         return { branch: 'codex/browser-fixture', has_open_pull_request: false };
       case 'git.changes':
@@ -995,8 +1068,14 @@ export class DesktopBrowserHarness {
   }
 
   async goto() {
-    await this.page.goto('/dist/browser/index.html?device=device-a');
+    await this.page.goto('/index.html?device=device-a');
     await this.page.getByRole('main').waitFor();
+  }
+
+  projectRow(root, channel = 'remote.device-a') {
+    // Match project identity, including its host, independently of tooltip text.
+    const key = `project:openseek.projects:${channel}:${root}`;
+    return this.page.locator(`.workspace-row[data-action-menu-context=${JSON.stringify(key)}]`);
   }
 
   async openSession() {

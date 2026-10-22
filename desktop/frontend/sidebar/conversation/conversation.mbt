@@ -3,6 +3,7 @@
 pub(all) enum ConversationSource {
   OpenSeekLive
   CloudLive
+  CloudArchived
   OpenSeekArchived
   CodexLive
   CodexArchived
@@ -13,6 +14,7 @@ pub(all) enum ConversationSource {
 fn ConversationSource::key(self : ConversationSource) -> String {
   match self {
     CloudLive => "cloud.live"
+    CloudArchived => "cloud.archived"
     OpenSeekLive => "openseek.live"
     OpenSeekArchived => "openseek.archived"
     CodexLive => "codex.live"
@@ -64,9 +66,8 @@ pub fn Id::root(self : Id) -> String? {
 }
 
 ///|
-/// The DOM child key for this conversation's row. The whole sidebar renders
-/// into one keyed container, so cached component output is re-paired with its
-/// own element when neighbouring rows appear or leave — never positionally.
+/// The DOM child key for this conversation's branch. Each parent keys its
+/// children so insertion and reorder preserve their DOM and event slots.
 pub fn Id::key(self : Id) -> String {
   let root = self.root.unwrap_or("")
   "conversation:\{self.source.key()}:\{self.channel}:\{self.conversation}:\{root}"
@@ -181,6 +182,34 @@ pub(all) struct Actions {
 }
 
 ///|
+/// Search presentation is separate from the row's domain identity and state.
+pub(all) struct Search {
+  query : String
+  selected : Id?
+} derive(Eq)
+
+///|
+fn highlighted(value : String, query : String) -> @html.Html {
+  let query = query.trim().to_owned().to_lower()
+  let children : Array[@html.Html] = []
+  let mut rest = value
+  while !query.is_empty() {
+    guard rest.to_lower().find(query) is Some(offset) else { break }
+    children.push(@html.span(rest.view(end_offset=offset).to_owned()))
+    children.push(
+      @html.strong(
+        rest
+        .view(start_offset=offset, end_offset=offset + query.length())
+        .to_owned(),
+      ),
+    )
+    rest = rest.view(start_offset=offset + query.length()).to_owned()
+  }
+  children.push(@html.span(rest))
+  @html.span(children)
+}
+
+///|
 priv enum Msg {
   ToggleChildren
 }
@@ -216,10 +245,10 @@ fn Input::menu_kind(self : Input) -> MenuKind? {
     return None
   }
   match self.id.source() {
-    OpenSeekLive | CodexLive => Some(LiveMenu)
-    OpenSeekArchived => Some(OpenSeekArchivedMenu)
+    OpenSeekLive | CodexLive | CloudLive => Some(LiveMenu)
+    OpenSeekArchived | CloudArchived => Some(OpenSeekArchivedMenu)
     CodexArchived => Some(CodexArchivedMenu)
-    CodexDraft | CloudLive => None
+    CodexDraft => None
   }
 }
 
@@ -256,7 +285,16 @@ fn Input::menu_entries_for_kind(
           // The menu is the row's only Archive control, so it carries the
           // source's own hint about what archiving keeps.
           title: if !archive_enabled {
-            ui(locale, StopBeforeArchive)
+            ui(
+              locale,
+              if self.id.source() is CloudLive {
+                FinishBeforeArchive
+              } else {
+                StopBeforeArchive
+              },
+            )
+          } else if self.id.source() is CloudLive {
+            ui(locale, ArchiveConversation)
           } else if self.trailing is [Archive(title~), ..] {
             title
           } else {
@@ -276,6 +314,8 @@ fn Input::menu_entries_for_kind(
             label: ui(locale, DeleteLabel),
             title: if delete_enabled {
               title
+            } else if self.id.source() is CloudLive {
+              ui(locale, FinishBeforeDelete)
             } else {
               ui(locale, StopBeforeDelete)
             },
@@ -294,7 +334,7 @@ fn Input::menu_entries_for_kind(
           label: ui(locale, RestoreLabel),
           title: ui(locale, RestoreConversation),
           icon: Some(@icons.icon(@icons.icon_arrow_up)),
-          enabled: true,
+          enabled: !(self.id.source() is CloudArchived && self.running),
           destructive: false,
           command: (actions.restore)(self.id),
         }),
@@ -428,19 +468,20 @@ fn Actions::child_component(
   locale : @rabbita.Val[@i18n.Locale],
   _id : Id,
   input : @rabbita.Val[Input],
+  search : @rabbita.Val[Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
-  component(locale, input, self)
+  component(locale, input, self, search)
 }
 
 ///|
 /// A real Rabbita component: it is constructed once for an `assoc_by` key,
 /// owns its sub-run disclosure state, consumes incremental input, and returns
-/// an incremental DOM value. Rows are (key, node) pairs for the sidebar's one
-/// keyed container.
+/// an incremental DOM value. Child branches stay mounted when folded.
 pub fn component(
   locale : @rabbita.Val[@i18n.Locale],
   input : @rabbita.Val[Input],
   actions : Actions,
+  search : @rabbita.Val[Search],
 ) -> @rabbita.Val[Array[(String, @html.Html)]] {
   let (state, emit) = @rabbita.create_state_with_input(
     input~,
@@ -451,8 +492,8 @@ pub fn component(
       }
     },
   )
-  let child_inputs = input.map2(locale, (input, locale) => {
-    @vector.from_array(input.children.map(child => (locale, child)))
+  let child_inputs = input.map3(locale, search, (input, locale, search) => {
+    @vector.from_array(input.children.map(child => (locale, child, search)))
   })
   let child_rows = child_inputs.assoc_by(
     (id, child) => {
@@ -460,13 +501,21 @@ pub fn component(
         child.map(pair => pair.0),
         id,
         child.map(pair => pair.1),
+        child.map(parts => parts.2),
       )
     },
     by=child => child.1.id(),
   )
-  state.map4(input, child_rows, locale, (state, input, child_rows, locale) => {
+  state.map5(input, child_rows, locale, search, (
+    state,
+    input,
+    child_rows,
+    locale,
+    search,
+  ) => {
     // Opening a workflow child must keep its selected row visible under the parent.
-    let children_open = state.children_open ||
+    let children_open = !search.query.is_blank() ||
+      state.children_open ||
       input.children.any(child => child.active || child.loading)
     let mut class = "conversation-row"
     if input.nested {
@@ -477,6 +526,9 @@ pub fn component(
     }
     if input.active {
       class += " active"
+    }
+    if search.selected is Some(id) && id == input.id {
+      class += " search-selected"
     }
     if input.loading {
       class += " loading"
@@ -500,10 +552,13 @@ pub fn component(
           class=if children_open { "row-twisty expanded" } else { "row-twisty" },
           type_="button",
           title=ui(locale, SubagentRuns(input.children.length())),
-          attrs=@html.Attrs::build().on_click(event => {
-            event.stop_propagation()
-            emit(ToggleChildren)
-          }),
+          attrs=@html.Attrs::build()
+            .aria_expanded(children_open.to_string())
+            .aria_controls(input.id.key() + ":children")
+            .on_click(event => {
+              event.stop_propagation()
+              emit(ToggleChildren)
+            }),
           @icons.icon(@icons.icon_chevron_down),
         ),
       )
@@ -538,7 +593,7 @@ pub fn component(
               }
               @cmd.none
             }),
-          input.label,
+          highlighted(input.label, search.query),
         )
       } else {
         @html.span(class="sidebar-label", input.label)
@@ -665,7 +720,11 @@ pub fn component(
         @html.span(class="row-status", status),
       ]
       for action in trailing_actions {
-        let enabled = !(action is Archive(..) && input.running)
+        let enabled = if input.id.source() is CloudArchived {
+          !input.running
+        } else {
+          !(action is Archive(..) && input.running)
+        }
         let (title, button_class, image, id_suffix) = match action {
           Archive(title~) =>
             (title, "row-archive", @icons.icon_archive, "archive")
@@ -688,7 +747,11 @@ pub fn component(
               button_class + " disabled"
             },
             type_="button",
-            title=if enabled { title } else { ui(locale, StopBeforeArchive) },
+            title=if enabled || input.id.source() is CloudArchived {
+              title
+            } else {
+              ui(locale, StopBeforeArchive)
+            },
             attrs=@html.Attrs::build()
               .aria_disabled((!enabled).to_string())
               .on_click(event => {
@@ -723,15 +786,36 @@ pub fn component(
       attrs=row_attrs,
       children,
     )
-    let rows : Array[(String, @html.Html)] = [(input.id.key(), row)]
-    if children_open {
-      for group in child_rows {
-        for child in group {
-          rows.push(child)
-        }
+    let rows : Map[String, @html.Html] = Map([])
+    for group in child_rows {
+      for child in group {
+        rows[child.0] = child.1
       }
     }
-    rows
+    let collapsed = !children_open || input.children.is_empty()
+    [
+      (
+        input.id.key(),
+        @html.div(
+          class=if collapsed {
+            "sidebar-conversation sidebar-branch collapsed"
+          } else {
+            "sidebar-conversation sidebar-branch"
+          },
+          [
+            row,
+            @html.div(
+              id=input.id.key() + ":children",
+              class="conversation-children sidebar-branch-content",
+              attrs=@html.Attrs::build()
+                .aria_hidden(collapsed.to_string())
+                .inert(collapsed),
+              rows,
+            ),
+          ],
+        ),
+      ),
+    ]
   })
 }
 
@@ -779,3 +863,6 @@ pub extend TrailingAction with Eq::{equal, not_equal}
 
 ///|
 pub extend RunOutcome with Eq::{equal, not_equal}
+
+///|
+pub extend Search with Eq::{equal, not_equal}

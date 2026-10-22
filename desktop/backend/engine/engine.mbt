@@ -73,6 +73,10 @@ priv struct ServeEngine {
   // reaper (idle.mbt) stops an engine whose stamp is old enough; the reaper's
   // own job probe is the one exchange that leaves it alone.
   mut last_activity_ms : Int64
+  // The engine's latest `mcp_status` — what this process holds of its MCP
+  // servers, as it last said. `None` until its first report, which comes
+  // once it has connected them.
+  mut mcp_status : @wire.McpStatus?
 }
 
 ///|
@@ -1247,7 +1251,7 @@ async fn EngineActor::run_generation(
 
   manager.pump = Serving(sessions~)
   defer reset()
-  emit(sink, Connected({ stage: Serving, }))
+  emit(sink, Connected({ protocol: Some(@protocol.HostProtocolRevision), }))
   @async.with_task_group(group => {
     // A permanent deletion whose physical cleanup failed or was interrupted
     // leaves its condemned records under `archived/deleting`. Erase them once
@@ -1504,7 +1508,7 @@ async fn engine_process_args(
     args.push("--session-root=\{root.to_string()}")
   }
   args.append(engine_mcp_args(config.mcp_config, runtime_dir, env, host_mcp~))
-  args.append(["--dir", ".", "--approval", "ask"])
+  args.append(["--dir", ".", "--approval", config.approval.wire()])
   args
 }
 
@@ -1650,6 +1654,7 @@ async fn[G] start_serve_engine(
     queued_runs: [],
     job_requests: Map([]),
     last_activity_ms: engine_clock_ms(),
+    mcp_status: None,
   }
   startup_engine = Some(engine)
   // Spawned before the handle is reachable from any request, so stdin has an
@@ -1845,6 +1850,9 @@ async fn ServeEngine::consume(
             if manager.mcp.current_engine_id == Some(engine.id) {
               manager.mcp.errors = mcp_errors
             }
+          // Kept for `mcp.status`, and still forwarded: a page showing this
+          // conversation's status reads it again when it sees one.
+          Some(McpStatus(status~)) => engine.mcp_status = Some(status)
           Some(PredictionResult(source_sequence~, outcome~)) => {
             if outcome is Completed(..) {
               emit(
@@ -2396,6 +2404,7 @@ fn test_serve_engine(
     queued_runs: [],
     job_requests: Map([]),
     last_activity_ms,
+    mcp_status: None,
   }
 }
 
@@ -2613,6 +2622,10 @@ async test "a failed command leaves settlement to the EOF retirement" {
     slot.engine = Some(engine)
     manager.pump = Serving(sessions~)
     engine.wait_process()
+    // Inject the write failure explicitly: a reaped child alone does not
+    // prove that no other process holds its pipe's read end. A successful
+    // write would leave write_commands waiting on its open command queue.
+    writer.close()
     let ack : @async.Queue[EngineError?] = Queue(kind=Blocking(1))
     assert_true(
       engine.submit(
@@ -3052,6 +3065,7 @@ async test "native engine env has one authoritative bundled moon path" {
     api_url: None,
     model: "m",
     thinking: ThinkingHigh,
+    approval: ApprovalAsk,
     max_steps: 1,
     engine: engine.to_string(),
     cwd: None,
@@ -3097,6 +3111,10 @@ async test "native engine env has one authoritative bundled moon path" {
   @debug.assert_eq(engine_process_args({ ..config, session: "--resume", }), [
     "serve", "--session=--resume", "--dir", ".", "--approval", "ask",
   ])
+  @debug.assert_eq(
+    engine_process_args({ ..config, approval: ApprovalReview, }),
+    ["serve", "--session=s-env", "--dir", ".", "--approval", "review"],
+  )
   let explicit_root = root.join("sessions").resolve()
   @debug.assert_eq(
     engine_process_args({ ..config, session_root: Some(explicit_root), }),
@@ -3243,6 +3261,7 @@ async test "engine startup rolls back follower on pre-spawn failure" {
     api_url: None,
     model: "test",
     thinking: ThinkingMax,
+    approval: ApprovalAsk,
     max_steps: 1,
     engine: dir + "/missing/openseek",
     cwd: None,
@@ -3359,6 +3378,7 @@ fn pump_test_config(session : String) -> RunConfig {
     api_url: None,
     model: "test",
     thinking: ThinkingMax,
+    approval: ApprovalAsk,
     max_steps: 1,
     engine: "unused",
     cwd: None,

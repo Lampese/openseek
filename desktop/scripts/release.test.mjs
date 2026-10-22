@@ -80,7 +80,7 @@ test("mutating requests fail without retrying", async t => {
   assert.equal(requests, 1);
 });
 
-test("verify distinguishes missing Location, non-redirects, and wrong destinations", async t => {
+test("verify checks the current Browser bundle the API serves", async t => {
   const release = new Release();
   release.dist = await fs.mkdtemp(join(tmpdir(), "openseek-release-"));
   t.after(() => fs.rm(release.dist, { recursive: true, force: true }));
@@ -94,9 +94,15 @@ test("verify distinguishes missing Location, non-redirects, and wrong destinatio
   const bytes = Buffer.from("release artifact fixture");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   for (const file of Object.values(files)) await fs.writeFile(join(release.dist, file), bytes);
+  await fs.mkdir(join(release.dist, "browser/assets"), { recursive: true });
+  const documents = new Map([
+    ["/cloud", "packaged document"],
+    ["/assets/frontend.js", "packaged frontend"],
+  ]);
+  await fs.writeFile(join(release.dist, "browser/index.html"), "packaged document");
+  await fs.writeFile(join(release.dist, "browser/assets/frontend.js"), "packaged frontend");
   const manifest = { version: "0.1.9", platforms: {} };
-  let status = 302;
-  let headers = {};
+  let current = "0.1.8";
   const url = await server(t, (request, response) => {
     if (request.method === "HEAD") {
       response.writeHead(200, { "content-length": String(bytes.length), "x-oss-meta-sha256": sha256, "x-oss-hash-crc64ecma": "1" });
@@ -104,12 +110,11 @@ test("verify distinguishes missing Location, non-redirects, and wrong destinatio
     } else if (request.url === "/desktop/releases/latest.json") {
       response.end(JSON.stringify(manifest));
     } else if (request.url === "/browser/releases/current.json") {
-      response.end(JSON.stringify({ version: "0.1.9" }));
-    } else if (request.url === "/console/") {
-      response.writeHead(status, headers);
-      response.end();
+      response.end(JSON.stringify({ version: current }));
     } else if (request.url.startsWith("/v0.1.9/")) {
       response.end(bytes);
+    } else if (documents.has(request.url)) {
+      response.end(documents.get(request.url));
     } else {
       response.writeHead(404);
       response.end();
@@ -119,12 +124,13 @@ test("verify distinguishes missing Location, non-redirects, and wrong destinatio
     manifest.platforms[platform] = { url: `${url}/v0.1.9/${file}`, sha256 };
   }
   t.mock.method(release, "apiOrigin", () => url);
-  await assert.rejects(release.verify("v0.1.9"), /redirect is missing Location: HTTP 302/);
-  status = 200;
-  await assert.rejects(release.verify("v0.1.9"), /did not redirect: HTTP 200/);
-  status = 302;
-  headers = { location: "/console/releases/v0.1.8/index.html" };
-  await assert.rejects(release.verify("v0.1.9"), /did not select \/console\/releases\/v0\.1\.9\/index\.html/);
+  await assert.rejects(release.verify("v0.1.9"), /browser current\.json version 0\.1\.8 is not 0\.1\.9/);
+  current = "0.1.9";
+  await release.verify("v0.1.9");
+  documents.set("/assets/frontend.js", "previous frontend");
+  await assert.rejects(release.verify("v0.1.9"), /served assets\/frontend\.js does not match/);
+  documents.delete("/cloud");
+  await assert.rejects(release.verify("v0.1.9"), /GET \/cloud failed: HTTP 404/);
 });
 
 test("artifact checks preserve non-missing filesystem errors", async t => {
@@ -135,11 +141,20 @@ test("artifact checks preserve non-missing filesystem errors", async t => {
   await assert.rejects(new Release().localArtifact({ file: "SeekMoon.app.zip" }), actual => actual === error);
 });
 
-test("stamp keeps all Desktop module versions aligned", async t => {
+async function stampFixture(t) {
   const release = new Release();
-  release.desktop = await fs.mkdtemp(join(tmpdir(), "openseek-release-stamp-"));
+  const repo = await fs.mkdtemp(join(tmpdir(), "openseek-release-stamp-"));
+  release.desktop = join(repo, "desktop");
   release.dist = join(release.desktop, "dist");
-  t.after(() => fs.rm(release.desktop, { recursive: true, force: true }));
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  await fs.mkdir(join(release.desktop, "backend/ssh"), { recursive: true });
+  await fs.writeFile(join(repo, "moon.mod"), 'name = "moonbitlang/openseek"\nversion = "0.8.2"\n');
+  await fs.writeFile(join(release.desktop, "backend/ssh/version.mbt"), '///|\nconst CliRelease = "0.7.1"\n');
+  return release;
+}
+
+test("stamp aligns Desktop versions while taking SSH's CLI version from the root manifest", async t => {
+  const release = await stampFixture(t);
   // Each member with the sibling modules its manifest pins.
   const members = {
     backend: ["openseek_desktop"],
@@ -148,7 +163,7 @@ test("stamp keeps all Desktop module versions aligned", async t => {
   };
   await fs.writeFile(join(release.desktop, "moon.mod"), 'name = "openseek_desktop"\nversion = "0.1.5"\n');
   for (const [member, pins] of Object.entries(members)) {
-    await fs.mkdir(join(release.desktop, member));
+    await fs.mkdir(join(release.desktop, member), { recursive: true });
     const imports = pins.map(pin => `"${pin}@0.1.5"`).join(", ");
     await fs.writeFile(
       join(release.desktop, member, "moon.mod"),
@@ -169,7 +184,27 @@ test("stamp keeps all Desktop module versions aligned", async t => {
   }
   const config = JSON.parse(await fs.readFile(join(release.desktop, "proton.project.json"), "utf8"));
   assert.equal(config.package.version, "0.2.0");
+  assert.equal(await fs.readFile(join(release.desktop, "backend/ssh/version.mbt"), "utf8"), '///|\nconst CliRelease = "0.8.2"\n');
+  assert.match(await fs.readFile(join(release.desktop, "../moon.mod"), "utf8"), /^version = "0\.8\.2"$/m);
+  await fs.writeFile(join(release.desktop, "../moon.mod"), 'version = "0.8.3"\n');
+  await release.stamp("0.2.1");
+  assert.equal(await fs.readFile(join(release.desktop, "backend/ssh/version.mbt"), "utf8"), '///|\nconst CliRelease = "0.8.3"\n');
+  assert.equal(await release.moduleVersion(), "0.2.1");
 });
+
+for (const scenario of [
+  { name: "missing CLI version", file: "../moon.mod", content: 'name = "moonbitlang/openseek"\n', error: /could not read CLI version/ },
+  { name: "missing patch target", file: "backend/ssh/version.mbt", content: '///|\nconst Renamed = "0.7.1"\n', error: /expected one CliRelease constant/ },
+]) {
+  test(`stamp rejects ${scenario.name} instead of retaining a stale version`, async t => {
+    const release = await stampFixture(t);
+    await fs.writeFile(join(release.desktop, scenario.file), scenario.content);
+    const source = join(release.desktop, "backend/ssh/version.mbt");
+    const before = await fs.readFile(source, "utf8");
+    await assert.rejects(release.stamp("0.2.0"), scenario.error);
+    assert.equal(await fs.readFile(source, "utf8"), before);
+  });
+}
 
 test("missing artifacts have a useful message and retain the filesystem cause", async t => {
   const error = Object.assign(new Error("no such file"), { code: "ENOENT" });
