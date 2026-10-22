@@ -13,6 +13,13 @@ struct FakeHost {
   starts : Array[Json]
   // Each started child's report, or why it has none.
   reports : Map[String, Result[Json, String]]
+  // The simplify sweep's host: jobs still running, which of them are
+  // workers, each worker's worktree record, and the commits the scripted
+  // workers report (by package directory, plus "head").
+  running : Array[String]
+  workers : Array[String]
+  workspaces : Map[String, Json]
+  fixture : Map[String, String]
 }
 
 ///|
@@ -61,18 +68,62 @@ fn FakeHost::answer(
         ) {
         return reply("error: 16 subagents are already running", is_error=true)
       }
+      if self.mode == "simplify-refused" &&
+        arguments is { "label": String(label), .. } &&
+        label.has_prefix("simplify:review-") {
+        return reply("error: 16 subagents are already running", is_error=true)
+      }
+      // The engine runs at most 8 workers at once and refuses a ninth.
+      if self.name == "simplify" &&
+        arguments is { "kind": "worker", .. } &&
+        self.workers.filter(id => self.running.contains(id)).length() >= 8 {
+        return reply("error: 8 workers are already running", is_error=true)
+      }
       self.starts.push(arguments)
       let job = "job-\{self.starts.length()}"
-      self.reports[job] = child_report(self.name, self.mode, job, arguments)
+      self.running.push(job)
+      if arguments is { "kind": "worker", .. } {
+        self.workers.push(job)
+      }
+      self.reports[job] = if self.name == "simplify" {
+        self.simplify_child(job, arguments)
+      } else {
+        child_report(self.name, self.mode, job, arguments)
+      }
       reply("started \{job}", data={ "job_id": job, "session": "p-sr-\{job}" })
     }
     "job_wait" => {
       guard arguments is { "job_ids": Array(ids), .. } else {
         return reply("error: job_ids", is_error=true)
       }
+      // The sweep's host ends one job per wait, as a real session does
+      // when its children finish at different times; the others end all.
+      let waiting = [
+        for id in ids if id is String(id) && self.running.contains(id) => id
+      ]
+      // A worker reported ended before its capture finished: every read
+      // until the next wait sees its worktree still working.
+      for id in ids {
+        if id is String(id) &&
+          !waiting.contains(id) &&
+          self.fixture.get("capture:\{id}") is Some(captured) {
+          self.fixture.remove("capture:\{id}")
+          self.workspaces[id] = @json.parse(captured)
+        }
+      }
+      if self.name != "simplify" {
+        self.running.clear()
+      } else if waiting is [first, ..] &&
+        self.running.search(first) is Some(index) {
+        ignore(self.running.remove(index))
+      }
       let jobs : Array[Json] = ids.map(id => {
         "job_id": id,
-        "state": "ended",
+        "state": if id is String(id) && self.running.contains(id) {
+          "running"
+        } else {
+          "ended"
+        },
         "outcome": "reported",
       })
       reply("waited", data={ "jobs": Json::array(jobs) })
@@ -92,12 +143,17 @@ fn FakeHost::answer(
         "completion_tokens": 2,
         "source": "result",
       }
+      let subagent : Map[String, Json] = { "usage": usage }
+      if self.workspaces.get(job) is Some(workspace) {
+        subagent["workspace"] = workspace
+      }
+      let subagent = Json::object(subagent)
       match report {
         Err(why) =>
           reply("no report", data={
             "job_id": job,
             "state": { "job_id": job, "state": "ended", "outcome": why },
-            "subagent": { "usage": usage },
+            "subagent": subagent,
           })
         Ok(report) => {
           let text = report.stringify()
@@ -108,7 +164,7 @@ fn FakeHost::answer(
           reply("report", data={
             "job_id": job,
             "state": { "job_id": job, "state": "ended", "outcome": "reported" },
-            "subagent": { "usage": usage },
+            "subagent": subagent,
             "report": {
               "chunk": chunk,
               "offset": offset,
@@ -255,8 +311,14 @@ async fn run_against(
   artifact : String,
   args : Array[String],
   cwd~ : String,
+  extra_env? : Map[String, String],
 ) -> (Int32, String) {
   let env = clean_env()
+  if extra_env is Some(extra) {
+    for name, value in extra {
+      env[name] = value
+    }
+  }
   @async.with_task_group(group => {
     if host is Some(host) {
       let server = @http.Server(@socket.Addr::parse("127.0.0.1:0"))
@@ -314,7 +376,17 @@ async fn run_against(
 
 ///|
 fn fake_host(name : String, mode : String, audit~ : Json = null) -> FakeHost {
-  { name, mode, audit, starts: [], reports: Map([]), }
+  {
+    name,
+    mode,
+    audit,
+    starts: [],
+    reports: Map([]),
+    running: [],
+    workers: [],
+    workspaces: Map([]),
+    fixture: Map([]),
+  }
 }
 
 ///|

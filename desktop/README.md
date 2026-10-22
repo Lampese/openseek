@@ -256,7 +256,11 @@ The app offers browser tools and session artifacts to the OpenSeek agents
 it runs. An agent works with the Browser tabs of its own conversation:
 `browser_tabs` lists them, `browser_open` opens a new one on an address, and
 `browser_navigate` loads an address in one, steps back or forward in its
-history, or reloads it. The engine connects directly to the host over MCP
+history, or reloads it, and `browser_snapshot` reads what one shows as the
+page's accessibility tree, with a `ref` on each element that can be clicked
+or typed into. `browser_click` and `browser_type` act on such an element
+through the browser's own mouse and keyboard input and answer with a new
+snapshot once the page has settled. The engine connects directly to the host over MCP
 Streamable HTTP and registers these tools automatically, including for scheduled
 runs. No user configuration is required. To customize the host entry, put an
 override like this in `~/.openseek/mcp.json`:
@@ -499,6 +503,14 @@ Build the current host's debug package with `just desktop-package`. The
 entry forwards its arguments unchanged to `package/build.mjs`. See
 [BUILD.md](BUILD.md) for file ownership, execution order, caching, and
 validation limits.
+
+Release builds use a single instance per application identity so Proton can
+persist the browser profile, including localStorage preferences such as theme
+and font size. A second launch activates the existing window. Pass
+`--no-single-instance` (or `OPENSEEK_DESKTOP_SINGLE_INSTANCE=0`) to use a
+temporary profile instead. Development builds keep temporary profiles by
+design, including when `--single-instance` is passed. Account and engine
+settings remain host-owned files.
 
 ## Run during development
 
