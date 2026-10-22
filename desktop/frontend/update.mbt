@@ -2596,6 +2596,16 @@ fn update_msg(
           return (@cmd.none, model)
         }
         match action {
+          @composer.StopRequested(identity~)
+          | @composer.FollowupSubmitted(identity~, ..)
+          | @composer.QueuedInputEditRequested(identity~, ..)
+          | @composer.QueuedInputSteerRequested(identity~, ..)
+          | @composer.QueuedInputDeleteRequested(identity~, ..) =>
+            return update_cloud(
+              dispatch,
+              @cloud.ControlAction(identity.owner, action),
+              model,
+            )
           @composer.DraftSubmitted(identity~, draft~) =>
             return update_cloud(
               dispatch,

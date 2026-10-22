@@ -39,7 +39,7 @@ pub async fn stage_attachments(@interop.ChannelId, String, String, String, Array
 pub(all) enum Action {
   DraftSubmitted(identity~ : Identity, draft~ : Draft)
   DraftAttachmentsSubmitted(identity~ : Identity, draft~ : Draft, attachments~ : Array[@protocol.AttachmentSource])
-  FollowupSubmitted(identity~ : Identity, draft~ : Draft, choice~ : FollowupChoice)
+  FollowupSubmitted(identity~ : Identity, draft~ : Draft, choice~ : FollowupChoice, attachments~ : Array[@protocol.AttachmentSource])
   DraftPresenceChanged(identity~ : Identity, present~ : Bool, cleared_source~ : Draft?)
   ReviewChangesRemoved(identity~ : Identity, selections~ : Array[@mention_context.ReviewChanges])
   ReviewChangesOpened(identity~ : Identity, selection~ : @mention_context.ReviewChanges)
@@ -313,6 +313,7 @@ pub fn Presentation::not_equal(Self, Self) -> Bool
 
 pub(all) enum PrimaryAction {
   Send(available~ : Bool)
+  SaveQueuedInput(available~ : Bool)
   Running(steer_available~ : Bool, can_stop~ : Bool, submit~ : RunningSubmit, queue_available~ : Bool)
 } derive(Eq, @debug.Debug)
 pub fn PrimaryAction::equal(Self, Self) -> Bool
@@ -329,7 +330,7 @@ pub fn QueuedInput::not_equal(Self, Self) -> Bool
 
 pub(all) enum QueuedInputState {
   Queueing
-  Queued(editing~ : Bool, interactive~ : Bool)
+  Queued(editing~ : Bool, interactive~ : Bool, steer_available~ : Bool)
 } derive(Eq)
 pub fn QueuedInputState::equal(Self, Self) -> Bool
 pub fn QueuedInputState::not_equal(Self, Self) -> Bool
