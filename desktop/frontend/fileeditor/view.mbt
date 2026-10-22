@@ -420,9 +420,12 @@ pub fn body_view(
       "office-surface-layout"
     },
     [
-      @html.aside(class="office-slide-rail", hidden=!presentation, [
-        @office_viewer.render_page_thumbnails(OfficeSlideListId),
-      ]),
+      @html.nav(
+        class="office-slide-rail",
+        hidden=!presentation,
+        attrs=@html.Attrs::build().aria_label(ui(locale, OfficePages)),
+        [@office_viewer.render_page_thumbnails(OfficeSlideListId)],
+      ),
       office_surface,
     ],
   )
