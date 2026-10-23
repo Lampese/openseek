@@ -506,7 +506,16 @@ fn main {
           // therefore unloads its WebSocket immediately; advancing its retry
           // identity replaces only that device's connection.
           model.bridge_subscriptions(emit),
-          @cloud.subscriptions(model.cloud),
+          @cloud.subscriptions(
+            model.cloud,
+            if model.screen is Chat {
+              model.cloud_identity().map(owner => owner.session())
+            } else {
+              None
+            },
+            model.account.map(account => account.token),
+            emit.map(message => CloudAction(message)),
+          ),
         ]
         if model.screen.work_screen() is None && !model.is_console_gated() {
           subs.push(management_navigation_subscription(emit))
@@ -655,6 +664,7 @@ fn main {
         browser_reload: emit(BrowserReload),
         browser_open_external: emit(BrowserOpenExternal),
         reveal_file: path => emit(RevealFile(path)),
+        share_file: path => emit(ShareFile(path)),
         toggle_menu: emit(ToggleRightPanelMenu),
         toggle_expanded: emit(ToggleRightPanelExpanded),
         close_tabs: emit.map(selection => CloseDockTabs(selection)),
@@ -752,6 +762,7 @@ fn main {
         open_external_link: url => open_external_link(emit, url),
         open_file: path => emit(OpenFile(path)),
         reveal_file: path => emit(RevealFile(path)),
+        share_file: path => emit(ShareFile(path)),
       },
     )
     let transfer_menu_html = @action_menu.component(
@@ -907,11 +918,7 @@ fn main {
       by=slot => {
         match slot {
           (Some(preview), _, Some(_)) =>
-            preview.owner.key() +
-            ":" +
-            preview.epoch.to_string() +
-            ":" +
-            preview.materialized
+            "\{preview.owner.key()}:\{preview.epoch}:\{preview.materialized}"
           _ => "closed"
         }
       },
