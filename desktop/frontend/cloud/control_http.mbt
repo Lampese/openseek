@@ -6,28 +6,38 @@ async fn control(
   task_id : String,
   operation : ControlOperation,
 ) -> ControlResult {
-  let endpoint = match operation {
-    Stop => "stop"
-    Steer(..) => "steer"
-    _ => "queue"
+  let body : QueueRequest = match operation {
+    Stop => return send_command(token, session, @wire.Cancel, task_id~)
+    Steer(submission_id~, content~) =>
+      return send_command(
+        token,
+        session,
+        @wire.Steer(content~, submission_id=Some(submission_id)),
+        task_id~,
+      )
+    QueueAdd(id~, content~) =>
+      { task_id, action: "add", id, content: Some(content), }
+    QueueEdit(id~, content~) =>
+      { task_id, action: "edit", id, content: Some(content), }
+    QueueWithdraw(id~) => { task_id, action: "withdraw", id, content: None, }
+    QueueSteer(id~) => { task_id, action: "steer", id, content: None, }
   }
-  let body : ControlRequest = { task_id, operation, }
   let (response, data) = @http.request(
-    CloudOrigin + "/v1/sessions/\{@uri.encode_component(session)}/" + endpoint,
+    CloudOrigin + "/v1/sessions/\{@uri.encode_component(session)}/queue",
     Post,
     { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
     ToJson::to_json(body).stringify(),
   ) catch {
     _ => raise @cloud_client.RequestError(Unreachable)
   }
-  // 202 is control acceptance, and a structured 409 is a definite refusal.
-  if !(response.code is (202 | 409)) {
+  // Queue mutations are synchronous; a structured 409 is a definite refusal.
+  if response.code != 409 {
     check_status(response.code)
   }
   let json = data.json() catch {
     _ => raise @cloud_client.RequestError(Malformed)
   }
-  operation.decode_reply(response.code, task_id, json)
+  body.decode_reply(response.code, json)
 }
 
 ///|
@@ -86,6 +96,8 @@ async fn watch_control(
       let owner = match parsed {
         Snapshot(snapshot) => snapshot.session_id
         EngineEvent(event) => event.session_id
+        NativeEvent(event) => event.session_id
+        EngineFailed(session~, ..) => session
       }
       guard owner == session else {
         raise @cloud_client.RequestError(Malformed)

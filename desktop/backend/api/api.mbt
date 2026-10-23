@@ -494,8 +494,8 @@ pub fn endpoints(
     Endpoint(@commands.agent_queue, payload => {
       @engine.queue_run(state.manager, payload)
     }),
-    Endpoint(@commands.agent_compact, payload => {
-      @engine.compact_run(state.manager, payload)
+    Endpoint(@commands.agent_command, payload => {
+      @engine.session_command(state.sink(), state.manager, payload)
     }),
     Endpoint(@commands.jobs_list, payload => {
       @engine.list_jobs(state.manager, payload)
@@ -508,9 +508,6 @@ pub fn endpoints(
     }),
     Endpoint(@commands.mcp_status, payload => {
       @engine.mcp_status(state.manager, payload)
-    }),
-    Endpoint(@commands.agent_goal, payload => {
-      @engine.goal_run(state.manager, payload)
     }),
     @endpoint.Endpoint::sync(@commands.user_questions_list, _ => {
       state.questions.snapshot()
@@ -882,7 +879,10 @@ test "remote endpoint catalog has one entry per command name" {
   assert_true(names.contains("codex.thread.history.read"))
   assert_true(names.contains("codex.thread.list"))
   assert_true(names.contains("agent.start"))
-  assert_true(names.contains("agent.goal"))
+  assert_true(names.contains("agent.command"))
+  assert_false(names.contains("agent.goal"))
+  assert_false(names.contains("agent.compact"))
+  assert_true(names.contains("agent.command"))
   assert_true(names.contains("session.load_archived"))
   assert_true(names.contains("session.delete_archived"))
   assert_true(names.contains("session.delete"))

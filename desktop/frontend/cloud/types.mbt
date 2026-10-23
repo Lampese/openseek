@@ -13,10 +13,13 @@ pub(all) struct Record {
   kind : String
   data : Json
   created_at : Double
+  // Native User sequence; absent for service-only submissions.
+  engine_sequence : Int32?
 } derive(Eq)
 
 ///|
 pub(all) struct History {
+  session : @protocol.SessionDocument
   messages : Array[Record]
   generating : Bool
 }
@@ -53,13 +56,17 @@ pub extend WatchStatus with Eq::{equal, not_equal}
 ///|
 pub(all) struct Conversation {
   records : Array[Record]
+  // Last task lifecycle event supplies status while canonical history reloads.
   events : Array[Event]
+  document : @protocol.SessionDocument
   request : Int32
   send_request : Int32
   loading : Bool
   sending : Bool
   generating : Bool
   unseen_finish : Bool
+  // Retain the current native reply for completion notifications while history loads.
+  notification_answer : String?
   // Last live completion handled, independent of history replacement.
   last_finished_task : String?
   // Keep observing a known run through its idle snapshot until the terminal
@@ -82,12 +89,10 @@ pub(all) struct Conversation {
   task : String?
   last_seq : Int32?
   // Provisional text belongs to this response stream, never to history.
-  streaming_response : String?
-  streaming_reasoning : String?
-  reasoning_complete : Bool
+  live : @engine_session.Stream
   heartbeat : @composer.RunHeartbeat?
   retrying : @composer.RunStage?
-  compacting : Bool
+  controls : @engine_session.State
   notice : String?
 } derive(Eq)
 
@@ -96,12 +101,19 @@ fn Conversation::empty() -> Conversation {
   {
     records: [],
     events: [],
+    document: {
+      version: None,
+      id: None,
+      system_prompt: None,
+      events: Some([]),
+    },
     request: 0,
     send_request: 0,
     loading: true,
     sending: false,
     generating: false,
     unseen_finish: false,
+    notification_answer: None,
     last_finished_task: None,
     observed_task: None,
     history_required: true,
@@ -118,12 +130,10 @@ fn Conversation::empty() -> Conversation {
     watch_status: Watching,
     task: None,
     last_seq: None,
-    streaming_response: None,
-    streaming_reasoning: None,
-    reasoning_complete: false,
+    live: @engine_session.Stream::empty(),
     heartbeat: None,
     retrying: None,
-    compacting: false,
+    controls: @engine_session.State::empty(),
     notice: None,
   }
 }
@@ -230,6 +240,8 @@ pub(all) enum Msg {
   WatchEvent(Int32, String, StreamLease, ControlStreamEvent)
   WatchEnded(Int32, String, StreamLease, Failure?)
   ControlAction(@interop.ConversationIdentity, @composer.Action)
+  CommandFinished(Int32, String, String, @wire.Command, ControlResult)
+  CommandFailed(Int32, String, String, @wire.Command, Failure)
   ControlAttachmentStored(
     Int32,
     String,
@@ -318,12 +330,28 @@ fn decode_history(json : Json) -> History raise RequestError {
     raise @cloud_client.RequestError(Malformed)
   }
   let messages = items.map(item => {
-    task_id: required_string(item, "task_id"),
-    kind: required_string(item, "kind"),
-    data: required_data(item),
-    created_at: required_number(item, "created_at"),
+    let engine_sequence = match item {
+      { "engine_sequence": Null, .. } => None
+      { "engine_sequence": Number(sequence, ..), .. } if sequence > 0 &&
+        sequence == sequence.to_int().to_double() => Some(sequence.to_int())
+      Object(fields) if !fields.contains("engine_sequence") => None
+      _ => raise @cloud_client.RequestError(Malformed)
+    }
+    {
+      task_id: required_string(item, "task_id"),
+      kind: required_string(item, "kind"),
+      data: required_data(item),
+      created_at: required_number(item, "created_at"),
+      engine_sequence,
+    }
   })
-  { messages, generating: required_bool(json, "generating"), }
+  guard json is { "session": document, .. } else {
+    raise @cloud_client.RequestError(Malformed)
+  }
+  let session : @protocol.SessionDocument = @json.from_json(document) catch {
+    _ => raise @cloud_client.RequestError(Malformed)
+  }
+  { session, messages, generating: required_bool(json, "generating"), }
 }
 
 ///|

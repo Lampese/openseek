@@ -204,6 +204,8 @@ pub fn State::can_send(self : State, id : String) -> Bool {
   !conversation.loading &&
   !conversation.sending &&
   !conversation.generating &&
+  !conversation.controls.is_compacting() &&
+  !conversation.controls.is_compact_queued() &&
   conversation.watch_status == Watching &&
   !conversation.history_required
 }
@@ -240,6 +242,9 @@ pub fn update(
   token? : String,
   navigation~ : Int32,
 ) -> (State, @cmd.Cmd, String?) {
+  if state.update_command(msg, emit, token) is Some((next, command)) {
+    return (next, command, None)
+  }
   if state.update_control(msg, emit, token) is Some((next, command)) {
     return (next, command, None)
   }
@@ -532,10 +537,7 @@ pub fn update(
         Snapshot(snapshot) => {
           let baseline = conversation.last_seq is None
           guard baseline ||
-            (
-              snapshot.task_id == conversation.task &&
-              conversation.last_seq.map_or(true, seq => snapshot.seq > seq)
-            ) else {
+            conversation.last_seq.map_or(true, seq => snapshot.seq > seq) else {
             return (state, @cmd.none, None)
           }
           let admitted = conversation.pending is Some(submitted) &&
@@ -551,12 +553,27 @@ pub fn update(
               snapshot.data.queue.any(item => item.id == id)
             }),
             task: snapshot.task_id,
+            notification_answer: if snapshot.task_id == conversation.task {
+              conversation.notification_answer
+            } else {
+              None
+            },
+            events: if snapshot.task_id != conversation.task {
+              []
+            } else {
+              conversation.events
+            },
             last_seq: Some(snapshot.seq),
             generating: snapshot.data.active_task_id is Some(_),
             observed_task: match snapshot.data.active_task_id {
               Some(task) => Some(task)
               None => conversation.observed_task
             },
+            controls: conversation.controls.observe_compaction(
+              queued=snapshot.data.compact_queued,
+              compacting=snapshot.data.compacting,
+              baseline~,
+            ),
             sending: conversation.sending && !admitted,
             pending: if admitted {
               None
@@ -601,6 +618,30 @@ pub fn update(
             navigation~,
           )
         }
+        EngineFailed(session~, seq~, error~) => {
+          guard session == id &&
+            conversation.last_seq is Some(last) &&
+            seq > last else {
+            return (state, @cmd.none, None)
+          }
+
+          (
+            state.replace(id, {
+              ..conversation,
+              controls: conversation.controls.host_failed(),
+              last_seq: Some(seq),
+              notice: Some(error),
+            }),
+            @cmd.none,
+            None,
+          )
+        }
+        NativeEvent(frame) => {
+          guard conversation.last_seq is Some(seq) && frame.seq > seq else {
+            return (state, @cmd.none, None)
+          }
+          state.engine_event(id, frame, token, emit)
+        }
       }
     }
     WatchEnded(epoch, id, stream, error) => {
@@ -643,6 +684,8 @@ pub fn update(
       (next, command, None)
     }
     ControlPreparationFailed(_, _, _, _, _)
+    | CommandFinished(_, _, _, _, _)
+    | CommandFailed(_, _, _, _, _)
     | ControlAction(_, _)
     | ControlPrepared(_, _, _, _, _, _)
     | ControlAttachmentStored(_, _, _, _, _, _)
@@ -701,10 +744,16 @@ pub fn update(
         conversation
       }
       let next = state.replace(id, {
-        ..settled,
+        ..settled.restore_goal(history.session),
         control,
         records: history.messages,
-        events: conversation.events_not_in(history.messages),
+        events: conversation.events.filter(event => {
+          !history.messages.any(record => {
+            record.task_id == event.task_id &&
+            (record.kind == event.kind || record.kind == "task_finished")
+          })
+        }),
+        document: history.session,
         loading: false,
         watch_status: if observed && conversation.last_seq is Some(_) {
           Watching
@@ -860,14 +909,16 @@ pub fn update(
         conversation.task != Some(previous) {
         return (state, @cmd.none, None)
       }
-      guard (next_task || same_task || conversation.task is None) &&
-        (
-          next_task ||
-          conversation.last_seq.map_or(true, seq => event.seq > seq)
-        ) else {
+      guard conversation.last_seq.map_or(true, seq => event.seq > seq) else {
+        return (state, @cmd.none, None)
+      }
+      guard next_task || same_task || conversation.task is None else {
         // A late receipt can settle its own input, never the current run.
         return (
-          state.replace(id, conversation.control_receipt(event)),
+          state.replace(id, {
+            ..conversation.control_receipt(event),
+            last_seq: Some(event.seq),
+          }),
           @cmd.none,
           None,
         )
@@ -884,23 +935,23 @@ pub fn update(
       }
       let admitted = event.kind == "task_started" &&
         conversation.pending is Some(_)
-      let mut events = conversation.events
-      if admitted && conversation.pending is Some(submission) {
-        events = events +
-          [
-            {
-              ..event,
-              kind: "user",
-              data: { "content": submission.content.to_json() },
-            },
-          ]
-      } else if !event.is_live_progress() &&
-        !(event.kind is ("steer_dropped" | "steer_applied")) {
-        events = events + [event]
+      let conversation = if event.kind == "task_started" {
+        {
+          ..conversation.clear_streams(),
+          notification_answer: None,
+          heartbeat: Some({
+            stage: @composer.Thinking,
+            started_ms: None,
+            tokens: 0,
+          }),
+          retrying: None,
+        }
+      } else if event.kind == "task_finished" {
+        conversation.clear_progress()
+      } else {
+        conversation
       }
-      let conversation = conversation
-        .live_progress(event)
-        .control_receipt(event)
+      let conversation = conversation.control_receipt(event)
       let control = conversation.control.map(control => {
         if event.kind == "task_started" {
           {
@@ -919,7 +970,11 @@ pub fn update(
       let next = state.replace(id, {
         ..conversation,
         control,
-        events,
+        events: if event.kind is ("task_started" | "task_finished") {
+          [event]
+        } else {
+          conversation.events
+        },
         task: Some(event.task_id),
         last_seq: Some(event.seq),
         generating: event.kind != "task_finished",
@@ -1124,7 +1179,6 @@ fn State::submit(
     sending: true,
     heartbeat: Some({ stage: @composer.Starting, started_ms: None, tokens: 0, }),
     history_required: true,
-    events: [],
     notice: None,
     pending: Some({
       content: prompt,
@@ -1159,7 +1213,15 @@ fn State::submit(
           scheduler.add(
             emit(MessagePrepared(state.epoch, id, request, prepared, prompt)),
           )
-          send_message(token, id, prompt)
+          match
+            send_command(
+              token,
+              id,
+              @wire.Prompt(content=prompt, submission_id=None),
+            ) {
+            Accepted => ()
+            Rejected(_) => raise @cloud_client.RequestError(Busy)
+          }
           SendAccepted(state.epoch, id, request)
         } catch {
           @cloud_client.RequestError(error) =>
