@@ -198,6 +198,8 @@ test "Cloud observer failure retains the confirmed queue as read-only" {
     WatchEnded(1, "session", stream, Some(Unreachable)),
   )
   let conversation = disconnected.conversations["session"]
+  assert_true(conversation.watch_status is Reconnecting)
+  assert_true(conversation.notice is None)
   assert_true(conversation.control == Some(control))
   assert_true(
     conversation.control_context()
@@ -210,10 +212,8 @@ test "Cloud observer failure retains the confirmed queue as read-only" {
       generating: true,
     }),
   )
-  assert_eq(
-    recovered.conversations["session"].notice,
-    Some(Failure::Unreachable.label()),
-  )
+  assert_true(recovered.conversations["session"].watch_status is Reconnecting)
+  assert_true(recovered.conversations["session"].notice is None)
   assert_true(
     recovered.conversations["session"].control.unwrap().queue == control.queue,
   )
@@ -306,4 +306,189 @@ test "Cloud steer receipts settle input without duplicating the durable user mes
     Loaded(1, "session", applied.conversations["session"].request, history),
   )
   assert_eq(loaded.conversations["session"].items().length(), 1)
+}
+
+///|
+test "Cloud reconnect fences old history and synchronizes after its new baseline" {
+  let (state, old_stream) = watch_fixture(controls_fixture())
+  let control = state.conversations["session"].control.unwrap()
+  let state = watch_snapshot(state, old_stream, Some("task"), 20, control)
+  let old_request = state.conversations["session"].request
+  let ended = metadata_update(state, WatchEnded(1, "session", old_stream, None))
+  assert_true(ended.conversations["session"].generating)
+  assert_false(ended.can_send("session"))
+  assert_true(ended.conversations["session"].watch_status is Reconnecting)
+  assert_true(
+    ended.conversations["session"].watch_request >
+    state.conversations["session"].watch_request,
+  )
+  let stale = metadata_update(
+    ended,
+    Loaded(1, "session", old_request, { messages: [], generating: false, }),
+  )
+  assert_true(stale == ended)
+  assert_true(
+    watch_event(ended, old_stream, "task", 21, "task_finished", {}) == ended,
+  )
+  let (opened, stream) = watch_fixture(ended)
+  let baseline = watch_snapshot(opened, stream, Some("next"), 1, {
+    ..control,
+    active_task_id: Some("next"),
+  })
+  assert_eq(baseline.conversations["session"].task, Some("next"))
+  assert_true(baseline.conversations["session"].watch_status is Reconnecting)
+  let event = watch_event(baseline, stream, "next", 2, "user", {
+    "content": "new input",
+  })
+  let loaded = metadata_update(
+    event,
+    Loaded(1, "session", event.conversations["session"].request, {
+      messages: [],
+      generating: false,
+    }),
+  )
+  assert_true(loaded.conversations["session"].watch_status is Watching)
+  assert_true(loaded.conversations["session"].generating)
+  assert_true(loaded.sessions[0].generating)
+  assert_eq(loaded.conversations["session"].items().length(), 1)
+  assert_true(
+    watch_event(loaded, stream, "task", 99, "task_finished", {}) == loaded,
+  )
+}
+
+///|
+test "Cloud observation retries transport failures but stops on definitive errors" {
+  let retryable : Array[Failure?] = [
+    None,
+    Some(Unreachable),
+    Some(Http(503)),
+    Some(Http(429)),
+  ]
+  for failure in retryable {
+    let (state, stream) = watch_fixture(controls_fixture())
+    let ended = metadata_update(
+      state,
+      WatchEnded(1, "session", stream, failure),
+    )
+    assert_true(ended.conversations["session"].watch_status is Reconnecting)
+    assert_false(ended.needs_sign_in)
+  }
+  let permanent : Array[Failure] = [
+    Unauthorized,
+    Http(400),
+    Http(403),
+    Malformed,
+  ]
+  for failure in permanent {
+    let (state, stream) = watch_fixture(controls_fixture())
+    let ended = metadata_update(
+      state,
+      WatchEnded(1, "session", stream, Some(failure)),
+    )
+    assert_true(ended.conversations["session"].watch_status is Disconnected)
+    assert_eq(ended.needs_sign_in, failure is Unauthorized)
+    assert_false(ended.can_send("session"))
+  }
+  let (state, stream) = watch_fixture(controls_fixture())
+  let missing = metadata_update(
+    state,
+    WatchEnded(1, "session", stream, Some(Http(404))),
+  )
+  assert_false(missing.conversations.contains("session"))
+  assert_true(missing.retired.contains("session"))
+}
+
+///|
+test "Cloud recovery retries failed history even when idle and cancels polls with its lease" {
+  let (state, stream) = watch_fixture(controls_fixture())
+  let ended = metadata_update(state, WatchEnded(1, "session", stream, None))
+  let (opened, current) = watch_fixture(ended)
+  let baseline = watch_snapshot(opened, current, Some("task"), 10, {
+    ..state.conversations["session"].control.unwrap(),
+    active_task_id: None,
+    status: Idle,
+  })
+  let request = baseline.conversations["session"].request
+  let failed = metadata_update(
+    baseline,
+    LoadFailed(1, "session", request, Unreachable),
+  )
+  assert_true(failed.conversations["session"].watch_status is Reconnecting)
+  assert_true(failed.notice is None)
+  assert_true(failed.conversations["session"].notice is None)
+  let retry = metadata_update(failed, Poll(1, "session", request))
+  assert_true(retry.conversations["session"].request > request)
+  current.close()
+  assert_true(metadata_update(failed, Poll(1, "session", request)) == failed)
+  let (opened, current) = watch_fixture(failed)
+  let fatal = metadata_update(
+    opened,
+    LoadFailed(1, "session", request, Malformed),
+  )
+  assert_true(fatal.conversations["session"].watch_status is Disconnected)
+  assert_false(current.active)
+}
+
+///|
+test "Cloud background observation survives idle snapshots until a terminal and follows a live queue" {
+  let (state, stream) = watch_fixture(controls_fixture())
+  let control = state.conversations["session"].control.unwrap()
+  let running = watch_snapshot(state, stream, Some("task"), 2, control)
+  let idle = watch_snapshot(running, stream, Some("task"), 3, {
+    ..control,
+    active_task_id: None,
+    status: Idle,
+  })
+  assert_false(idle.conversations["session"].generating)
+  assert_true(idle.conversations["session"].needs_observation())
+  let terminal = watch_event(idle, stream, "task", 4, "task_finished", {
+    "status": "completed",
+  })
+  assert_false(terminal.conversations["session"].needs_observation())
+  let queued = {
+    ..terminal.conversations["session"],
+    control: Some({
+      ..control,
+      active_task_id: None,
+      status: Idle,
+      queue: [{ id: "q1", content: Content([Text("Next")]), }],
+    }),
+  }
+  assert_true(queued.needs_observation())
+  assert_false(
+    {
+      ..queued,
+      control: queued.control.map(control => { ..control, paused: true, }),
+    }.needs_observation(),
+  )
+}
+
+///|
+test "Cloud recovered history can release an observed task without replaying its terminal event" {
+  let (state, stream) = watch_fixture(controls_fixture())
+  let control = state.conversations["session"].control.unwrap()
+  let state = watch_snapshot(state, stream, Some("task"), 2, control)
+  let ended = metadata_update(state, WatchEnded(1, "session", stream, None))
+  let (reopened, current) = watch_fixture(ended)
+  let idle = watch_snapshot(reopened, current, Some("task"), 5, {
+    ..control,
+    active_task_id: None,
+    status: Idle,
+  })
+  let loaded = metadata_update(
+    idle,
+    Loaded(1, "session", idle.conversations["session"].request, {
+      messages: [
+        {
+          task_id: "task",
+          kind: "task_finished",
+          data: { "status": "completed" },
+          created_at: 100,
+        },
+      ],
+      generating: false,
+    }),
+  )
+  assert_false(loaded.conversations["session"].needs_observation())
+  assert_false(loaded.conversations["session"].unseen_finish)
 }

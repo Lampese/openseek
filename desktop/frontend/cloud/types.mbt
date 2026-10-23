@@ -39,6 +39,18 @@ pub struct Submission {
 } derive(Eq)
 
 ///|
+/// Recovery includes the fresh stream's history synchronization. Definitive
+/// errors disconnect until the conversation is explicitly opened again.
+pub(all) enum WatchStatus {
+  Watching
+  Reconnecting
+  Disconnected
+} derive(Eq)
+
+///|
+pub extend WatchStatus with Eq::{equal, not_equal}
+
+///|
 pub(all) struct Conversation {
   records : Array[Record]
   events : Array[Event]
@@ -47,6 +59,12 @@ pub(all) struct Conversation {
   loading : Bool
   sending : Bool
   generating : Bool
+  unseen_finish : Bool
+  // Last live completion handled, independent of history replacement.
+  last_finished_task : String?
+  // Keep observing a known run through its idle snapshot until the terminal
+  // event arrives. An idle snapshot alone is not a completion notification.
+  observed_task : String?
   history_required : Bool
   submission_sequence : Int32
   // Seed the shared composer after creation assigns a remote ID. Clear only
@@ -60,6 +78,7 @@ pub(all) struct Conversation {
   control_inputs : Array[ControlInput]
   queue_edit : String?
   watch_request : Int32
+  watch_status : WatchStatus
   task : String?
   last_seq : Int32?
   // Provisional text belongs to this response stream, never to history.
@@ -82,6 +101,9 @@ fn Conversation::empty() -> Conversation {
     loading: true,
     sending: false,
     generating: false,
+    unseen_finish: false,
+    last_finished_task: None,
+    observed_task: None,
     history_required: true,
     submission_sequence: 0,
     initial_submission: None,
@@ -93,6 +115,7 @@ fn Conversation::empty() -> Conversation {
     control_inputs: [],
     queue_edit: None,
     watch_request: 0,
+    watch_status: Watching,
     task: None,
     last_seq: None,
     streaming_response: None,

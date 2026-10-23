@@ -18,6 +18,7 @@ export class CloudHarness {
     this.device = new DesktopBrowserHarness(page);
     this.requests = [];
     this.hostRequests = [];
+    this.notifications = [];
     this.codes = new Map();
     this.userId = '123';
     this.apiStatus = 200;
@@ -45,6 +46,8 @@ export class CloudHarness {
     this.streamCancellations = 0;
     this.fileStreamCancellations = 0;
     this.sessionStreamCancellations = 0;
+    this.sessionEventStatus = 200;
+    this.pauseSessionEvents = null;
     this.controlSnapshots = new Map();
     this.manualTasks = false;
     this.pauseControl = null;
@@ -219,6 +222,9 @@ export class CloudHarness {
   account() { return { token: `ts_fixture-${this.userId}`, user: { user_id: this.userId, login: 'octocat', avatar_url: '' } }; }
 
   async installDesktopBridge() {
+    await this.page.exposeFunction('cloudNotification', (method, params) => {
+      this.notifications.push({ method, params });
+    });
     await this.page.exposeFunction('cloudHostRequest', async request => {
       this.hostRequests.push(request);
       if (request.method === 'app.system_appearance') return { dark: false };
@@ -246,6 +252,10 @@ export class CloudHarness {
         for (const callback of listeners.get(name) || []) callback({ payload });
       };
       window.__MoonBit__ = { getTitlebarArea: async () => null, app: events, events,
+        notification: {
+          show: params => window.cloudNotification('show', params),
+          setBadge: params => window.cloudNotification('setBadge', params),
+        },
         openseek: new Proxy({}, { get: (_, method) => async params => {
           if (method === 'host.connect') for (const callback of listeners.get('openseek.agent.connected') || []) callback({ payload: { protocol: 1 } });
           return window.cloudHostRequest({ method, params });
@@ -270,7 +280,10 @@ export class CloudHarness {
       const operation = control[2];
       const snapshot = this.controlState(session);
       if (operation === 'control') return json(snapshot);
-      if (operation === 'events') return route.fulfill({ headers, contentType: 'text/event-stream', body: this.sseFrame('control_state', snapshot) });
+      if (operation === 'events') {
+        if (this.pauseSessionEvents) await this.pauseSessionEvents;
+        return route.fulfill({ status: this.sessionEventStatus, headers, contentType: 'text/event-stream', body: this.sseFrame('control_state', this.controlState(session)) });
+      }
       const body = request.postDataJSON();
       if (this.pauseControl) await this.pauseControl;
       if (this.controlOffline) return route.abort('failed');
@@ -399,6 +412,16 @@ export class CloudHarness {
 
   sseFrame(kind, value) {
     return `event: ${kind}\ndata: ${JSON.stringify(value)}\n\n`;
+  }
+
+  async disconnectSession(session, { error = false } = {}) {
+    await this.page.evaluate(({ session, error }) => {
+      for (const controller of window.cloudSessionStreams.get(session) || []) {
+        if (error) controller.error(new Error('Fixture session stream disconnected'));
+        else controller.close();
+      }
+      window.cloudSessionStreams.delete(session);
+    }, { session, error });
   }
 
   async publishControl(session, change = {}, { kind = 'queue_changed' } = {}) {

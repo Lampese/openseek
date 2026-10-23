@@ -117,6 +117,9 @@ pub(all) struct Conversation {
   loading : Bool
   sending : Bool
   generating : Bool
+  unseen_finish : Bool
+  last_finished_task : String?
+  observed_task : String?
   history_required : Bool
   submission_sequence : Int32
   initial_submission : @composer.Draft?
@@ -128,6 +131,7 @@ pub(all) struct Conversation {
   control_inputs : Array[ControlInput]
   queue_edit : String?
   watch_request : Int32
+  watch_status : WatchStatus
   task : String?
   last_seq : Int32?
   streaming_response : String?
@@ -272,6 +276,7 @@ pub fn State::draft_identity(Self) -> @interop.ConversationIdentity?
 pub fn State::empty() -> Self
 pub fn State::equal(Self, Self) -> Bool
 pub fn State::is_archived(Self, String) -> Bool
+pub fn State::mark_read(Self, String) -> Self
 pub fn State::not_equal(Self, Self) -> Bool
 
 pub(all) struct SteerReceipt {
@@ -312,6 +317,14 @@ pub struct UploadedAttachment {
 } derive(Eq)
 pub fn UploadedAttachment::equal(Self, Self) -> Bool
 pub fn UploadedAttachment::not_equal(Self, Self) -> Bool
+
+pub(all) enum WatchStatus {
+  Watching
+  Reconnecting
+  Disconnected
+} derive(Eq)
+pub fn WatchStatus::equal(Self, Self) -> Bool
+pub fn WatchStatus::not_equal(Self, Self) -> Bool
 
 // Type aliases
 pub using @cloud_client {type Failure}

@@ -109,6 +109,23 @@ fn update_cloud(
     token?=model.account.map(account => account.token),
     navigation=model.chat_navigation_generation,
   )
+  let completion = if model.account.map(account => account.user.user_id) ==
+    before.user_id {
+    cloud_finished_notification(before, cloud, message)
+  } else {
+    None
+  }
+  let cloud = if completion is Some((id, _)) {
+    let conversations = cloud.conversations.copy()
+    conversations[id] = {
+      ..conversations[id],
+      unseen_finish: true,
+      last_finished_task: conversations[id].task,
+    }
+    { ..cloud, conversations, }
+  } else {
+    cloud
+  }
   let switched = before.user_id is Some(_) && before.user_id != cloud.user_id
   let retirements = model.composer_entry_retirements.copy()
   let created = match message {
@@ -301,7 +318,13 @@ fn update_cloud(
     }
   }
   let next = { ..next, file_panel, }
-  let command = @cmd.batch([command, ..file_commands])
+  let command = @cmd.batch(
+    [
+      command,
+      ..file_commands,
+      completion.map_or(@cmd.none, value => value.1.command(locale=next.locale)),
+    ],
+  )
   if ((deleted && removed_selection) || archived_selection) &&
     model.screen is Chat {
     let next = {
@@ -417,6 +440,9 @@ fn Model::cloud_composer_input(self : Model) -> @composer.Input? {
         let context = conversation.map_or(input.presentation.context, value => {
           value.control_context()
         })
+        if conversation is Some({ watch_status: Reconnecting, .. }) {
+          context.push(@composer.ConnectionBanner(device_name=Some("Cloud")))
+        }
         if conversation is Some({ compacting: true, .. }) {
           context.push(@composer.CompactionNotice(queued=false))
         }
@@ -520,7 +546,19 @@ fn Model::cloud_chat_rows(
               conversation.sending || conversation.generating
             }),
           needs_input=false,
-          unseen_outcome=None,
+          unseen_outcome=if !archived &&
+            conversation is Some({ unseen_finish: true, .. } as conversation) {
+            Some(
+              match cloud_recorded_status(conversation) {
+                Finished(Completed) => @conversation.Completed
+                Failed | Errored => @conversation.Failed
+                Finished(Aborted) => @conversation.Stopped
+                _ => @conversation.Ended
+              },
+            )
+          } else {
+            None
+          },
         ),
       },
     )
