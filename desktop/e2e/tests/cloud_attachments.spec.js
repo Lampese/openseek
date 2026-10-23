@@ -48,7 +48,7 @@ async function select(page, files) {
 }
 
 const creations = cloud => cloud.requests.filter(request => request.path === '/v1/sessions' && request.method === 'POST');
-const messages = cloud => cloud.requests.filter(request => request.path.endsWith('/messages') && request.method === 'POST');
+const messages = cloud => cloud.requests.filter(request => request.path.endsWith('/commands') && request.method === 'POST');
 
 test('blank Cloud keeps confirmed files and image bytes in memory until first Send, then restores immutable history', async ({ page }, testInfo) => {
   const cloud = new AttachmentHarness(page);
@@ -69,7 +69,7 @@ test('blank Cloud keeps confirmed files and image bytes in memory until first Se
   expect(cloud.imports.map(upload => upload.session)).toEqual([sessionC, sessionC]);
   expect(cloud.imports.map(upload => upload.source.name)).toEqual(['report.pdf', 'two-colors.png']);
   expect(cloud.imports[1].source.data_base64).toBe(png);
-  const content = JSON.parse(messages(cloud)[0].body).content;
+  const content = JSON.parse(messages(cloud)[0].body).command.content;
   expect(content[0]).toMatchObject({ type: 'text' });
   expect(content[0].text).toContain('.openseek/attachments/fixture-1/report.pdf');
   expect(content[0].text).toContain('Inspect the attachments');
@@ -98,13 +98,13 @@ test('a failed first image send preserves the draft and known session, and expli
   expect(creations(cloud)).toHaveLength(1);
   expect(cloud.imports).toHaveLength(1);
   expect(messages(cloud)).toHaveLength(1);
-  cloud.sendStatus = 200;
+  cloud.sendStatus = 202;
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.locator('#task')).toHaveValue('');
   expect(creations(cloud)).toHaveLength(1);
   expect(cloud.imports).toHaveLength(1);
   expect(messages(cloud)).toHaveLength(2);
-  expect(JSON.parse(messages(cloud)[1].body).content[1].data).toBe(png);
+  expect(JSON.parse(messages(cloud)[1].body).command.content[1].data).toBe(png);
   expect(cloud.device.pageErrors).toEqual([]);
 });
 
@@ -126,7 +126,7 @@ test('existing Cloud documents use Upload confirmation and retain bytes after a 
   expect(cloud.imports[0].source).toEqual(cloud.imports[1].source);
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect.poll(() => messages(cloud).length).toBe(1);
-  expect(JSON.parse(messages(cloud)[0].body).content).toContain('.openseek/attachments/fixture-2/report.pdf');
+  expect(JSON.parse(messages(cloud)[0].body).command.content).toContain('.openseek/attachments/fixture-2/report.pdf');
   expect(creations(cloud)).toHaveLength(0);
   expect(cloud.device.pageErrors).toEqual([]);
 });
@@ -165,7 +165,7 @@ for (const [method, editText] of [['picker', false], ['paste', true]]) {
       await expect(page.locator('.composer-image img')).toHaveAttribute('src', imageURL);
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect.poll(() => messages(cloud).length).toBe(2);
-      expect(JSON.parse(messages(cloud)[1].body).content).toEqual([
+      expect(JSON.parse(messages(cloud)[1].body).command.content).toEqual([
         { type: 'text', text: editText ? 'Next draft' : '' },
         { type: 'image', media_type: 'image/png', data: png },
       ]);
@@ -173,5 +173,47 @@ for (const [method, editText] of [['picker', false], ['paste', true]]) {
     } finally {
       admit(); finish();
     }
+  });
+}
+
+for (const command of ['goal', 'compact']) {
+  test(`first Cloud ${command} retains unsubmitted images and documents for the following prompt`, async ({ page }) => {
+    const cloud = new AttachmentHarness(page);
+    await cloud.install(); await cloud.goto(); await cloud.create();
+    await select(page, [document, image]);
+    await page.getByRole('button', { name: 'Upload to workspace', exact: true }).click();
+    await expect(page.locator('.composer .mention-chip')).toContainText('report.pdf');
+    const task = page.locator('#task');
+    await task.fill(`/${command}`);
+    await expect(page.locator('.completion-item').filter({ hasText: `/${command}` })).toBeVisible();
+    await task.press('Enter');
+    if (command === 'goal') {
+      await task.fill('Inspect these files');
+      await page.locator('#goal-set').click();
+    }
+    await expect(cloud.row(sessionC)).toHaveAttribute('aria-current', 'true');
+    await expect.poll(() => messages(cloud).length).toBe(1);
+    await expect(page.locator('.composer-image img')).toHaveAttribute('src', imageURL);
+    await expect(page.locator('.composer .mention-chip')).toContainText('report.pdf');
+    expect(cloud.imports).toEqual([]);
+    if (command === 'goal') {
+      await cloud.emitSessionEvent(sessionC, 'goal_updated', { goal: 'Inspect these files' }, { task: null });
+    } else {
+      await cloud.emitSessionEvent(sessionC, 'compaction_started', { from_sequence: 1, to_sequence: 1 }, { task: null });
+      await cloud.emitSessionEvent(sessionC, 'compaction_finished', { from_sequence: 1, to_sequence: 1, summary: 'Fixture summary' }, { task: null });
+      await cloud.publishControl(sessionC, { compact_queued: false, compacting: false });
+    }
+    await task.fill('Now inspect the files');
+    await page.locator('#send').click();
+    await expect.poll(() => messages(cloud).length).toBe(2);
+    const payload = JSON.parse(messages(cloud)[1].body).command;
+    expect(payload.command).toBe('prompt');
+    expect(payload.content).toContainEqual({ type: 'image', media_type: 'image/png', data: png });
+    expect(payload.content.find(part => part.type === 'text').text).toContain('report.pdf');
+    expect(cloud.imports.map(item => item.source.name)).toEqual(['report.pdf', 'two-colors.png']);
+    await expect(page.locator('.composer-image')).toHaveCount(0);
+    await expect(page.locator('.composer .mention-chip')).toHaveCount(0);
+    expect(creations(cloud)).toHaveLength(1);
+    expect(cloud.device.pageErrors).toEqual([]);
   });
 }

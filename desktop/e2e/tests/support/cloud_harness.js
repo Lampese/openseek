@@ -26,7 +26,7 @@ export class CloudHarness {
     this.listStatus = 200;
     this.historyStatus = 200;
     this.createStatus = 201;
-    this.sendStatus = 200;
+    this.sendStatus = 202;
     this.shareStatus = 200;
     this.exportStatus = 200;
     this.exportSnapshots = new Map();
@@ -62,6 +62,7 @@ export class CloudHarness {
     this.generating = new Set();
     this.archived = new Set();
     this.histories = new Map();
+    this.nativeNotices = new Map();
     this.titles = new Map([[sessionA, 'Cloud fixture A'], [sessionB, 'Cloud fixture B']]);
     this.postCount = 0;
     this.exchangeCount = 0;
@@ -257,7 +258,7 @@ export class CloudHarness {
           setBadge: params => window.cloudNotification('setBadge', params),
         },
         openseek: new Proxy({}, { get: (_, method) => async params => {
-          if (method === 'host.connect') for (const callback of listeners.get('openseek.agent.connected') || []) callback({ payload: { protocol: 1 } });
+          if (method === 'host.connect') for (const callback of listeners.get('openseek.agent.connected') || []) callback({ payload: { protocol: 2 } });
           return window.cloudHostRequest({ method, params });
         } }),
       };
@@ -274,17 +275,33 @@ export class CloudHarness {
     if (/^\/v1\/sessions\/[^/]+\/files\/events$/.test(path)) {
       return route.fulfill({ status: this.fileEventStatus, headers, contentType: 'text/event-stream', body: 'event: workspace_invalidated\ndata: {}\n\n' });
     }
-    const control = path.match(/^\/v1\/sessions\/([^/]+)\/(control|events|stop|steer|queue)$/);
+    const control = path.match(/^\/v1\/sessions\/([^/]+)\/(control|events|commands|queue)$/);
     if (control) {
       const session = decodeURIComponent(control[1]);
-      const operation = control[2];
+      let operation = control[2];
       const snapshot = this.controlState(session);
       if (operation === 'control') return json(snapshot);
       if (operation === 'events') {
         if (this.pauseSessionEvents) await this.pauseSessionEvents;
         return route.fulfill({ status: this.sessionEventStatus, headers, contentType: 'text/event-stream', body: this.sseFrame('control_state', this.controlState(session)) });
       }
-      const body = request.postDataJSON();
+      const envelope = request.postDataJSON();
+      if (operation === 'commands' && envelope.command.command === 'prompt') {
+        return this.promptCommand(route, json, headers, session, envelope.command);
+      }
+      if (operation === 'commands' && ['goal', 'compact'].includes(envelope.command.command)) {
+        if (this.pauseControl) await this.pauseControl;
+        if (this.controlOffline) return route.abort('failed');
+        const rejected = this.controlRejected || (envelope.task_id !== undefined && envelope.task_id !== snapshot.data.active_task_id ? 'task_mismatch' : null);
+        if (rejected) return route.fulfill({ status: 409, headers, contentType: 'text/plain', body: rejected });
+        if (envelope.command.command === 'compact') {
+          if (snapshot.data.compact_queued || snapshot.data.compacting) return route.fulfill({ status: 409, headers, contentType: 'text/plain', body: 'compaction_busy' });
+          await this.publishControl(session, { compact_queued: true });
+        }
+        return json({ accepted: true }, 202);
+      }
+      const body = operation === 'commands' ? { task_id: envelope.task_id, ...envelope.command } : envelope;
+      if (operation === 'commands') operation = body.command === 'cancel' ? 'stop' : body.command;
       if (this.pauseControl) await this.pauseControl;
       if (this.controlOffline) return route.abort('failed');
       const current = this.controlState(session);
@@ -294,16 +311,18 @@ export class CloudHarness {
         || (current.task_id !== body.task_id ? 'task_mismatch' : null)
         || (!current.data.active_task_id && !idleQueueEdit ? 'task_not_running' : null)
         || (operation !== 'stop' && current.data.status === 'stopping' ? 'task_stopping' : null);
-      if (rejected) return json({ accepted: false, error: rejected, task_id: body.task_id }, 409);
+      if (rejected) return control[2] === 'commands'
+        ? route.fulfill({ status: 409, headers, contentType: 'text/plain', body: rejected })
+        : json({ accepted: false, error: rejected, task_id: body.task_id }, 409);
       if (operation === 'stop') {
         await this.publishControl(session, { status: 'stopping' });
-        return json({ accepted: true, task_id: body.task_id }, 202);
+        return json({ accepted: true }, 202);
       }
       if (operation === 'steer') {
         if (!current.data.steers.some(item => item.submission_id === body.submission_id)) {
           await this.publishControl(session, { steers: [...current.data.steers, { submission_id: body.submission_id, status: 'pending' }] });
         }
-        return json({ accepted: true, task_id: body.task_id, submission_id: body.submission_id }, 202);
+        return json({ accepted: true }, 202);
       }
       const index = current.data.queue.findIndex(item => item.id === body.id);
       if (body.action !== 'add' && index < 0) return json({ accepted: false, error: 'queue_item_missing', task_id: body.task_id }, 409);
@@ -371,12 +390,14 @@ export class CloudHarness {
     if (request.method() === 'GET') {
       const history = this.histories.get(session) || { messages: [], generating: false, outcome: null };
       if (this.pauseHistory) await this.pauseHistory;
-      return json(history, this.historyStatus);
+      return json(history.session ? history : { ...history, ...this.nativeHistory(session, history) }, this.historyStatus);
     }
+    throw new Error('Messages are read-only; use the native commands endpoint');
+  }
+
+  async promptCommand(route, json, headers, session, body) {
     this.postCount++;
-    const body = request.postDataJSON();
-    if (Object.keys(body).join(',') !== 'content') throw new Error('Cloud must send content without a model key');
-    if (this.sendStatus !== 200) return this.sendErrorBody ? route.fulfill({ status: this.sendStatus, headers, contentType: 'text/plain', body: this.sendErrorBody }) : json({}, this.sendStatus);
+    if (this.sendStatus !== 202) return this.sendErrorBody ? route.fulfill({ status: this.sendStatus, headers, contentType: 'text/plain', body: this.sendErrorBody }) : json({}, this.sendStatus);
     const text = typeof body.content === 'string' ? body.content : body.content.filter(part => part.type === 'text').map(part => part.text).join('');
     if (!this.titles.get(session) && text.trim()) this.titles.set(session, text.trim().split('\n')[0].trim());
     const task = `fixture-task-${++this.taskCount}`;
@@ -392,21 +413,43 @@ export class CloudHarness {
     this.histories.set(session, { messages, generating: true, outcome: null });
     if (this.pauseSend) await this.pauseSend;
     if (this.disconnectSend) return route.abort('failed');
-    const chunks = data.map(([kind, value], i) => `event: ${kind}\r\ndata: ${JSON.stringify({ session_id: session, task_id: task, seq: i + 1, kind, data: value })}\r\n\r\n`);
-    let bytes = 0;
-    const boundaries = chunks.map(chunk => bytes += Buffer.byteLength(chunk));
-    const streamHeaders = { ...headers, 'x-fixture-admission-bytes': String(boundaries[0]), 'x-fixture-event-boundaries': JSON.stringify(boundaries) };
-    if (this.disconnectStreamAfter !== undefined) streamHeaders['x-fixture-disconnect-after'] = String(this.disconnectStreamAfter);
-    await route.fulfill({ headers: streamHeaders, contentType: 'text/event-stream', body: chunks.join('') });
-    // The session subscription is the source of live UI events. Keep the old
-    // POST body realistic too, so consuming both streams would duplicate data.
+    await json({ accepted: true }, 202);
     await this.publishTaskStream(session, task, data);
+  }
+
+  // Fixtures retain their compact message builders; the wire response is the
+  // native document used by the Local projector, including non-message records.
+  nativeHistory(session, history) {
+    const items = [];
+    const messages = history.messages.map(record => {
+      if (record.kind === 'user') {
+        const mapped = { ...record, engine_sequence: items.length + 1 };
+        items.push({ kind: record.kind, payload: record.data });
+        return mapped;
+      }
+      const payload = record.data;
+      if (['tool_result', 'runtime_notice', 'summary'].includes(record.kind)) items.push({ kind: record.kind, payload });
+      if (record.kind === 'assistant_message') items.push({ kind: 'assistant', payload });
+      if (record.kind === 'tool_call') {
+        const call = payload.function ? { id: payload.id, name: payload.function.name, arguments: payload.function.arguments } : payload;
+        items.push({ kind: 'assistant', payload: { content: '', tool_calls: [call] } });
+      }
+      if (record.kind === 'task_finished') {
+        const result = payload.result || {};
+        const status = result.status || payload.status;
+        const kinds = { completed: 'finished', aborted: 'aborted', interrupted: 'interrupted', context_yield: 'context_yield', max_steps_exhausted: 'max_steps_exhausted' };
+        items.push({ kind: 'terminal', payload: { kind: kinds[status] || 'failed', message: result.output?.answer || result.reason || '' } });
+      }
+      return record;
+    });
+    items.push(...(this.nativeNotices.get(session) || []));
+    return { messages, session: { events: items.map((item, index) => ({ sequence: index + 1, ts: 1000 + index, item })) } };
   }
 
   controlState(session) {
     return this.controlSnapshots.get(session) || {
       session_id: session, task_id: null, seq: 0,
-      data: { active_task_id: null, status: 'idle', paused: false, queue: [], steers: [] },
+      data: { active_task_id: null, status: 'idle', paused: false, queue: [], steers: [], compacting: false, compact_queued: false },
     };
   }
 
@@ -434,7 +477,7 @@ export class CloudHarness {
 
   async emitSessionEvent(session, kind, data, { task, seq, silent = false } = {}) {
     const old = this.controlState(session);
-    task ??= old.task_id;
+    if (task === undefined) task = old.task_id;
     const event = { session_id: session, task_id: task, seq: seq ?? old.seq + 1, kind, data };
     let queueAdvanced = false;
     if (kind === 'task_started') {
@@ -446,7 +489,7 @@ export class CloudHarness {
       }
       this.generating.add(session);
       this.controlSnapshots.set(session, { session_id: session, task_id: task, seq: event.seq,
-        data: { active_task_id: task, status: 'running', paused: false, queue: old.data.queue.filter(item => item.id !== data.submission_id), steers: [] } });
+        data: { ...old.data, active_task_id: task, status: 'running', paused: false, queue: old.data.queue.filter(item => item.id !== data.submission_id), steers: [] } });
     } else if (task === old.task_id && event.seq > old.seq) {
       const state = { ...old.data };
       if (kind === 'task_finished') {
@@ -461,15 +504,33 @@ export class CloudHarness {
       }
       this.controlSnapshots.set(session, { ...old, seq: event.seq, data: state });
     }
+    if (kind === 'goal_updated') {
+      const notices = this.nativeNotices.get(session) || [];
+      notices.push({ kind: 'runtime_notice', payload: { content: data.goal === null ? '[goal cleared]' : `[goal]\n${data.goal}` } });
+      this.nativeNotices.set(session, notices);
+    }
+    if (kind === 'compaction_started') {
+      const snapshot = this.controlState(session);
+      this.controlSnapshots.set(session, { ...snapshot, data: { ...snapshot.data, compact_queued: false, compacting: true } });
+    }
+    if (['compaction_finished', 'compaction_failed'].includes(kind)) {
+      const snapshot = this.controlState(session);
+      this.controlSnapshots.set(session, { ...snapshot, data: { ...snapshot.data, compacting: false } });
+    }
     const history = this.histories.get(session) || { messages: [], generating: false };
-    const transient = ['task_started', 'assistant_delta', 'reasoning_delta', 'reasoning_message', 'stream_retry', 'step', 'usage', 'compaction_started', 'compaction_finished', 'auto_compaction_started', 'auto_compaction_finished', 'steer_applied', 'steer_dropped'];
+    const transient = ['task_started', 'assistant_delta', 'reasoning_delta', 'reasoning_message', 'stream_retry', 'step', 'usage', 'compaction_started', 'compaction_finished', 'compaction_failed', 'auto_compaction_failed', 'auto_compaction_started', 'auto_compaction_finished', 'steer_applied', 'steer_dropped', 'goal_updated', 'goal_blocked', 'goal_unblocked', 'command_error', 'session_error', 'engine_failed'];
     if (!transient.includes(kind)) {
       this.histories.set(session, { ...history,
         messages: [...history.messages, { task_id: task, kind, data, created_at: 1000 + event.seq }],
         generating: kind !== 'task_finished', outcome: kind === 'task_finished' ? data : history.outcome });
     }
-    if (!silent) {
-      await this.page.evaluate(({ session, frame }) => window.cloudSessionEvent(session, frame), { session, frame: this.sseFrame(kind, event) });
+    if (event.seq > this.controlState(session).seq) {
+      this.controlSnapshots.set(session, { ...this.controlState(session), seq: event.seq });
+    }
+    if (!silent && !['user', 'tool_call'].includes(kind)) {
+      const lifecycle = ['task_started', 'task_finished', 'engine_failed'].includes(kind);
+      const frame = lifecycle ? event : { ...event, kind: 'engine_event', data: { ...data, event: kind === 'step' ? 'agent_step' : kind } };
+      await this.page.evaluate(({ session, frame }) => window.cloudSessionEvent(session, frame), { session, frame: this.sseFrame(frame.kind, frame) });
       if (queueAdvanced) await this.publishControl(session);
     }
     return event;
@@ -478,7 +539,7 @@ export class CloudHarness {
   async publishTaskStream(session, task, events) {
     for (let index = 0; index < events.length; index++) {
       const [kind, data] = events[index];
-      await this.emitSessionEvent(session, kind, data, { task, seq: index + 1 });
+      await this.emitSessionEvent(session, kind, data, { task });
       if (index === 0 && this.pauseStream) await this.pauseStream;
       if (this.eventPauses?.get(index)) await this.eventPauses.get(index);
       if (this.disconnectStreamAfter === index) {
@@ -486,7 +547,7 @@ export class CloudHarness {
         // this fixture's work so the history read sees the durable result.
         for (let remaining = index + 1; remaining < events.length; remaining++) {
           const [kind, data] = events[remaining];
-          await this.emitSessionEvent(session, kind, data, { task, seq: remaining + 1, silent: true });
+          await this.emitSessionEvent(session, kind, data, { task, silent: true });
         }
         await this.page.evaluate(session => {
           for (const controller of window.cloudSessionStreams.get(session) || []) controller.error(new Error('Fixture stream disconnected'));
