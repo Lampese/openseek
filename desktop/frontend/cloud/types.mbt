@@ -74,12 +74,14 @@ pub(all) struct Conversation {
   observed_task : String?
   history_required : Bool
   submission_sequence : Int32
-  // Seed the shared composer after creation assigns a remote ID. Clear only
-  // when the first prompt is admitted, not when its send fails.
+  // Seed the shared composer when recovering input or editing a queued item.
+  // Clear only when that input is admitted, not when its send fails.
   initial_submission : @composer.Draft?
   initial_attachments : Array[@protocol.AttachmentSource]
   uploads : Array[UploadedAttachment]
   pending : Submission?
+  // One command waiting for session creation or the first SSE snapshot.
+  outgoing : PendingCommand?
   stream : StreamLease?
   control : ControlState?
   control_inputs : Array[ControlInput]
@@ -122,6 +124,7 @@ fn Conversation::empty() -> Conversation {
     initial_attachments: [],
     uploads: [],
     pending: None,
+    outgoing: None,
     stream: None,
     control: None,
     control_inputs: [],
@@ -144,8 +147,23 @@ pub struct Creation {
   id : String
   request : Int32
   navigation : Int32
-  submission : @composer.Draft?
-  attachments : Array[@protocol.AttachmentSource]
+} derive(Eq)
+
+///|
+/// One unsent submission, retained on the conversation until its HTTP handoff.
+pub struct PendingCommand {
+  request : Int32
+  input : CommandInput
+} derive(Eq)
+
+///|
+pub(all) enum CommandInput {
+  Native(@wire.Command)
+  Prompt(
+    content~ : @wire.Content,
+    draft~ : @composer.Draft,
+    attachments~ : Array[@protocol.AttachmentSource]
+  )
 } derive(Eq)
 
 ///|
@@ -398,3 +416,9 @@ pub fn State::draft_identity(self : State) -> @interop.ConversationIdentity? {
     None
   }
 }
+
+///|
+pub extend PendingCommand with Eq::{equal, not_equal}
+
+///|
+pub extend CommandInput with Eq::{equal, not_equal}

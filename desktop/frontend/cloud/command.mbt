@@ -6,6 +6,7 @@ fn State::update_command(
   message : Msg,
   emit : @cmd.Emit[Msg],
   token : String?,
+  navigation : Int32,
 ) -> (State, @cmd.Cmd)? {
   let callback = match message {
     CommandFinished(epoch, session, request, command, result) =>
@@ -62,22 +63,30 @@ fn State::update_command(
     return None
   }
   guard owner is @interop.Cloud(account~, session~) &&
-    self.user_id == Some(account) &&
-    self.can_compose(session) &&
+    self.user_id == Some(account) else {
+    return Some((self, @cmd.none))
+  }
+  guard self.can_compose(session) &&
     !self.deletions.contains(session) &&
     !(self.metadata_saves.get(session) is Some({ edit: Archive(true), .. })) &&
-    self.conversations.get(session) is Some(conversation) else {
+    self.conversations.get(session) is Some(conversation) &&
+    conversation.outgoing is None else {
     return Some((self, @cmd.none))
   }
   let local_edit = action
     is (@engine_session.EditGoal | @engine_session.CloseGoal)
   guard local_edit ||
     (
-      !conversation.loading &&
-      conversation.watch_status == Watching &&
-      conversation.stream is Some({ active: true, .. }) &&
-      conversation.last_seq is Some(_) &&
-      token is Some(_)
+      token is Some(_) &&
+      (
+        self.is_draft(session) ||
+        (
+          !conversation.loading &&
+          conversation.watch_status == Watching &&
+          conversation.stream is Some({ active: true, .. }) &&
+          conversation.last_seq is Some(_)
+        )
+      )
     ) else {
     return Some((self, @cmd.none))
   }
@@ -101,26 +110,14 @@ fn State::update_command(
     notice: None,
   }
   Some(
-    (
-      { ..self.replace(session, conversation), sequence, },
-      run(emit, () => {
-        CommandFinished(
-          self.epoch,
-          session,
-          request,
-          command,
-          send_command(
-            token,
-            session,
-            command,
-            task_id?=conversation.control.bind(c => c.active_task_id),
-          ),
-        ) catch {
-          @cloud_client.RequestError(failure) =>
-            CommandFailed(self.epoch, session, request, command, failure)
-          _ => CommandFailed(self.epoch, session, request, command, Unreachable)
-        }
-      }),
+    self
+    .replace(session, conversation)
+    .submit_command(
+      session,
+      { request: sequence, input: Native(command), },
+      emit,
+      token,
+      navigation,
     ),
   )
 }
