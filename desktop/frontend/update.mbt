@@ -3769,6 +3769,7 @@ fn update_msg(
                 session,
                 workspace,
                 model=engine_model,
+                moonbit_guide=model.default_moonbit_guide,
               ),
               task: draft.task,
               mentions: draft.mentions,
@@ -3930,6 +3931,13 @@ fn update_msg(
         )
       }
     }
+    MoonBitGuideDefaultLoaded(enabled) =>
+      (@cmd.none, { ..model, default_moonbit_guide: enabled, })
+    MoonBitGuideDefaultChanged(enabled) =>
+      (
+        save_default_moonbit_guide(enabled),
+        { ..model, default_moonbit_guide: enabled, },
+      )
     MaxStepsChanged(value) => (@cmd.none, { ..model, max_steps: value, })
     SetupApiKeyChanged(value) => {
       guard model.host_settings_loaded() else { return (@cmd.none, model) }
@@ -4748,6 +4756,7 @@ fn update_msg(
             conv.session_id,
             workspace,
             approval=model.approval_for(conv.device, conv.session_id),
+            moonbit_guide=conv.moonbit_guide,
             images=conv.images.map(image => image.url),
           )
         } else {
@@ -4762,6 +4771,7 @@ fn update_msg(
             conv.session_id,
             workspace=conv.project(),
             approval=model.approval_for(conv.device, conv.session_id),
+            moonbit_guide=conv.moonbit_guide,
             images=conv.images.map(image => image.url),
           )
         }
@@ -10342,6 +10352,7 @@ fn encoded_start_workspace(conv : Conversation) -> String? {
     "test-submission",
     workspace=conv.project(),
     approval=ApprovalAsk,
+    moonbit_guide=conv.moonbit_guide,
   )
   let json = payload.to_json()
   guard json is Object(fields) else { return None }

@@ -871,6 +871,7 @@ fn start_openseek(
   session : String,
   workspace~ : @common.Uri,
   approval~ : @protocol.OpenSeekApproval,
+  moonbit_guide~ : Bool,
   images~ : Array[String] = [],
 ) -> @cmd.Cmd {
   guard @resource.belongs_to(workspace, channel) else { return @cmd.none }
@@ -883,6 +884,7 @@ fn start_openseek(
     submission_id,
     workspace~,
     approval~,
+    moonbit_guide~,
     images~,
   )
   @cmd.custom_cmd(scheduler => {
@@ -992,6 +994,7 @@ fn start_payload(
   submission_id : String,
   workspace~ : @common.Uri,
   approval~ : @protocol.OpenSeekApproval,
+  moonbit_guide~ : Bool,
   images~ : Array[String] = [],
 ) -> @protocol.StartPayload {
   let session = session.trim().to_owned()
@@ -1002,6 +1005,7 @@ fn start_payload(
     model: Some(selected_model.wire()),
     thinking: selected_model.thinking(reasoning),
     approval: Some(approval),
+    moonbit_guide: Some(moonbit_guide),
     max_steps: parsed_max_steps(max_steps),
     session,
     workspace: Some(workspace.path),
