@@ -211,6 +211,7 @@ async test "a bound session routes every start through its checkout" {
   stage_worktree_placements(ws, [("wt", "openseek/wt", Some("s-bind"), None)])
   let manager = new_engine_manager("openseek")
   let first = run_config(manager, {
+    moonbit_guide: None,
     images: [],
     task: "go",
     submission_id: None,
@@ -233,6 +234,7 @@ async test "a bound session routes every start through its checkout" {
   // A hint-less resume goes through the durable record and the mapping.
   @fsx.ensure_dir(ws.join(".openseek/sessions/s-bind").to_path())
   let resumed = run_config(manager, {
+    moonbit_guide: None,
     images: [],
     task: "resume",
     submission_id: None,
@@ -411,6 +413,7 @@ async test "a deleted checkout refuses runs and repairs to the last OpenSeek sav
   let hinted_refusal = try {
     ignore(
       run_config(manager, {
+        moonbit_guide: None,
         images: [],
         task: "continue",
         submission_id: None,
@@ -431,6 +434,7 @@ async test "a deleted checkout refuses runs and repairs to the last OpenSeek sav
   let resumed_refusal = try {
     ignore(
       run_config(manager, {
+        moonbit_guide: None,
         images: [],
         task: "resume",
         submission_id: None,
@@ -960,7 +964,7 @@ async test "deleting a live conversation skips the archive and drops its placeme
   )
   assert_true(reply is Deleted)
   assert_eq(deleted.length(), family.length())
-  assert_eq(deleted[deleted.length() - 1], "chat")
+  assert_true(deleted is [.., "chat"])
   let archived = @session_store.archived_root(store).join("sessions")
   for session_id in family {
     assert_false(@fsx.exists(live.join(session_id).to_path()))

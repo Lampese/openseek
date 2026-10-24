@@ -111,6 +111,7 @@ pub(all) enum FollowupChoice {
 ///|
 pub(all) enum PrimaryAction {
   Send(available~ : Bool)
+  SaveQueuedInput(available~ : Bool)
   Running(
     steer_available~ : Bool,
     can_stop~ : Bool,
@@ -140,7 +141,7 @@ pub(all) struct PendingSteerInput {
 ///|
 pub(all) enum QueuedInputState {
   Queueing
-  Queued(editing~ : Bool, interactive~ : Bool)
+  Queued(editing~ : Bool, interactive~ : Bool, steer_available~ : Bool)
 } derive(Eq)
 
 ///|
@@ -300,7 +301,7 @@ pub(all) struct Input {
   installed_skills : Array[@skills.InstalledItem]
   context_generation : Int32
   submission_sequence : Int32
-  retirements : Array[@interop.ConversationIdentity]
+  entry_changes : Array[EntryChange]
   file_candidates : Array[@pathx.Relative]
   open_files : Array[@pathx.Relative]
   active_file : @pathx.Relative?
@@ -321,7 +322,8 @@ pub(all) enum Action {
   FollowupSubmitted(
     identity~ : Identity,
     draft~ : Draft,
-    choice~ : FollowupChoice
+    choice~ : FollowupChoice,
+    attachments~ : Array[@protocol.AttachmentSource]
   )
   DraftPresenceChanged(
     identity~ : Identity,
@@ -558,3 +560,27 @@ pub extend FollowupChoice with Eq::{equal, not_equal}
 
 ///|
 pub extend FollowupChoice with @debug.Debug::{to_repr}
+
+///|
+/// Changes to cached editor ownership, applied in order even while hidden.
+pub(all) enum EntryChange {
+  Retire(@interop.ConversationIdentity)
+  Move(
+    from~ : @interop.ConversationIdentity,
+    to~ : @interop.ConversationIdentity
+  )
+} derive(Eq)
+
+///|
+pub fn EntryChange::retires(
+  self : EntryChange,
+  owner : @interop.ConversationIdentity,
+) -> Bool {
+  match self {
+    Retire(retired) => retired == owner
+    Move(from~, ..) => from == owner
+  }
+}
+
+///|
+pub extend EntryChange with Eq::{equal, not_equal}

@@ -853,10 +853,7 @@ fn tree_pane(
       } else {
         "file-panel-error empty"
       },
-      match visible_error {
-        Some(message) => message
-        None => ""
-      },
+      visible_error.unwrap_or(""),
     ),
   ])
 }
@@ -1226,9 +1223,7 @@ fn git_graph_placeholder(
     } else {
       ""
     }
-    let path_class = "git-graph-edge " +
-      graph_color_class(column.color) +
-      highlight_class
+    let path_class = "git-graph-edge \{graph_color_class(column.color)}\{highlight_class}"
     paths.push(
       @svg.path(
         class=path_class,
@@ -2093,8 +2088,8 @@ fn path_segments(path : @pathx.Relative) -> Array[String] {
 /// breadcrumb click.
 fn segments_prefix(segments : Array[String], count : Int32) -> @pathx.Relative {
   let mut path = @pathx.Relative::root()
-  for index in 0..<count {
-    path = child_path(path, segments[index])
+  for segment in segments[:count] {
+    path = child_path(path, segment)
   }
   path
 }
@@ -2296,6 +2291,7 @@ pub fn breadcrumb_view(
   state : State,
   ctx : Ctx,
   reveal~ : (String, @cmd.Cmd)? = None,
+  share~ : @cmd.Cmd? = None,
 ) -> @html.Html {
   if ctx.active_history_diff is Some(diff) {
     return @html.div(
@@ -2399,8 +2395,29 @@ pub fn breadcrumb_view(
   if moon_mod_view_available(state, ctx) {
     path_row.push(moon_mod_view_toolbar(locale~, dispatch, state, ctx))
   }
-  if ctx.owner is @interop.Cloud(..) && ctx.active_file is Some(_) {
-    path_row.push(download_button(locale~, dispatch, state, desktop~))
+  // Keep a fixed slot so opening the first file cannot reuse the tree toggle
+  // DOM node as a share button while a pointer action is in flight.
+  path_row.push(
+    @html.span(
+      if share is Some(command) &&
+        ctx.active_file is Some(_) &&
+        ctx.root() is Some(_) {
+        let label = ui(locale, ShareFile)
+        @html.button(
+          type_="button",
+          class="file-reveal-button",
+          title=label,
+          attrs=@html.Attrs::build().aria_label(label),
+          on_click=command,
+          [@icons.icon_link_external(), @html.text(label)],
+        )
+      } else {
+        @html.nothing
+      },
+    ),
+  )
+  if ctx.owner is @interop.Cloud(..) && ctx.active_file is Some(path) {
+    path_row.push(download_button(locale~, dispatch, state, path, desktop~))
   } else if reveal is Some((label, command)) {
     path_row.push(
       @html.button(
@@ -2778,11 +2795,11 @@ fn review_diff_mode_button(
       "review-mode-button"
     },
     title=match locale {
-      SimplifiedChinese => "使用" + mode.label(locale~) + "差异"
-      TraditionalChinese => "使用" + mode.label(locale~) + "差異"
-      Japanese => "使用" + mode.label(locale~) + "差分"
-      English => "Use " + mode.label(locale~) + " diff"
-      Spanish => "Usar diferencias de " + mode.label(locale~)
+      SimplifiedChinese => "使用\{mode.label(locale~)}差异"
+      TraditionalChinese => "使用\{mode.label(locale~)}差異"
+      Japanese => "使用\{mode.label(locale~)}差分"
+      English => "Use \{mode.label(locale~)} diff"
+      Spanish => "Usar diferencias de \{mode.label(locale~)}"
     },
     disabled=!enabled,
     on_click~,
@@ -3710,6 +3727,11 @@ fn tree_row(
   }
   let attrs = if entry.is_dir {
     attrs.aria_expanded(expanded.to_string())
+  } else if ctx.root() is Some(root) {
+    attrs.data_set(
+      "context-workspace-file",
+      @resource.join_relative(root, entry.path).to_string(),
+    )
   } else {
     attrs
   }

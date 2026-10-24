@@ -1,5 +1,5 @@
 ///|
-test "Cloud sends file mentions and restores the first submission as chips" {
+test "Cloud prepares file mentions in the same command before and after creation" {
   let model = integrated_cloud_model()
   let draft : @composer.Draft = {
     task: "",
@@ -32,10 +32,11 @@ test "Cloud sends file mentions and restores the first submission as chips" {
     ),
     creating,
   )
-  assert_true(created.composer_input().draft == draft)
-  assert_eq(
-    created.cloud.conversations["new-cloud"].pending.unwrap().content.text(),
-    draft.prompt(),
+  let submission = created.cloud.conversations["new-cloud"].outgoing.unwrap()
+  assert_true(
+    submission.input is @cloud.Prompt(content~, draft=source, ..) &&
+    source == draft &&
+    content.text() == draft.prompt(),
   )
 }
 
@@ -206,4 +207,58 @@ fn Model::routed_editor_feedback(
     ),
   )
   replies.get(0)
+}
+
+///|
+test "Cloud file menu downloads an unopened target without changing the active preview" {
+  let model = integrated_cloud_model()
+  let root = file_ctx(model).root().unwrap()
+  let target = @resource.join_relative(root, Relative("src/data.bin"))
+  let (_, pending) = update(
+    test_dispatch(),
+    DownloadFile("src/data.bin"),
+    model,
+  )
+  assert_eq(pending.file_panel.download, Some(target))
+  assert_true(pending.dock_state() == model.dock_state())
+  assert_false(pending.file_panel.docs.contains(target))
+  let (_, duplicate) = update(
+    test_dispatch(),
+    DownloadFile("other.bin"),
+    pending,
+  )
+  assert_eq(duplicate.file_panel.download, Some(target))
+  assert_eq(
+    duplicate.file_panel.download_generation,
+    pending.file_panel.download_generation,
+  )
+  let foreign = @resource.cloud_root(
+    @cloud.CloudOrigin,
+    "other-account",
+    "cloud-a",
+  ).unwrap()
+  for
+    path in [
+      "../outside.bin",
+      "/outside.bin",
+      @resource.join_relative(foreign, Relative("data.bin")).to_string(),
+    ] {
+    let (_, ignored) = update(test_dispatch(), DownloadFile(path), model)
+    assert_true(ignored.file_panel.download is None)
+    let (_, ignored) = update(test_dispatch(), ShareFile(path), model)
+    assert_false(ignored.file_share_dialog.is_open())
+  }
+}
+
+///|
+test "file sharing resolves relative and absolute paths only inside the owning checkout" {
+  let model = test_model()
+  let expected = model.test_file("src/data.bin")
+  for path in ["src/data.bin", expected.path, expected.to_string()] {
+    assert_eq(model.workspace_file(path), Some(expected))
+  }
+  for
+    path in ["../data.bin", "/other/data.bin", "https://example.test/data.bin"] {
+    assert_true(model.workspace_file(path) is None)
+  }
 }

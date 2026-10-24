@@ -1119,30 +1119,71 @@ fn remote_access_rows(
         @settings.text(model.locale, SignOut),
       ),
     ]
+  } else if model.remote_connecting {
+    [
+      @html.span(
+        class="setting-desc",
+        attrs=@html.Attrs::build().role("status"),
+        @settings.text(model.locale, WaitingBrowser),
+      ),
+    ]
   } else {
     [
       @html.button(
         class="button primary",
-        attrs=@html.Attrs::build().disabled(model.remote_connecting),
         on_click=dispatch(RemoteConnectClicked),
-        if model.remote_connecting {
-          @settings.text(model.locale, WaitingBrowser)
-        } else {
-          @settings.text(model.locale, SignIn)
-        },
+        @settings.text(model.locale, SignIn),
       ),
     ]
   }
-  rows.push(@settings.row(@settings.text(model.locale, Account), controls))
   if model.remote_connecting && model.is_desktop {
-    rows.push(
-      @settings.row("", [
-        @html.button(
-          class="button secondary",
-          on_click=dispatch(RemoteCancelClicked),
-          @settings.text(model.locale, Cancel),
+    controls.push(
+      @html.button(
+        class="button secondary",
+        on_click=dispatch(RemoteCancelClicked),
+        @settings.text(model.locale, Cancel),
+      ),
+    )
+  }
+  rows.push(@settings.row(@settings.text(model.locale, Account), controls))
+  if model.account is Some(_) {
+    let preferences = model.account_preferences
+    let controls : Array[@html.Html] = []
+    if preferences.value is Some(enabled) {
+      controls.push(
+        @settings.switch_control(
+          enabled~,
+          label=@settings.text(model.locale, HelpImproveSeekMoon),
+          disabled=preferences.pending ||
+            model.remote_connecting ||
+            model.console.busy,
+          on_click=dispatch(AccountPreferencesChanged(!enabled)),
         ),
-      ]),
+      )
+    } else if preferences.pending {
+      controls.push(@html.span(@settings.text(model.locale, LoadingSettings)))
+    }
+    if preferences.error is Some(error) {
+      controls.push(
+        @html.span(
+          attrs=@html.Attrs::build().role("alert"),
+          @settings.text(
+            model.locale,
+            if preferences.value is Some(_) {
+              PreferencesSaveFailed(error)
+            } else {
+              PreferencesReadFailed(error)
+            },
+          ),
+        ),
+      )
+    }
+    rows.push(
+      @settings.row(
+        @settings.text(model.locale, HelpImproveSeekMoon),
+        controls,
+        desc=@settings.text(model.locale, ContentImprovementDescription),
+      ),
     )
   }
   if model.is_desktop {
@@ -1162,20 +1203,13 @@ fn remote_access_rows(
           []
         } else {
           [
-            @html.button(
-              class="button secondary",
-              attrs=@html.Attrs::build()
-                .role("switch")
-                .aria_checked(enabled.to_string())
-                .disabled(
-                  model.account is None || managed || model.remote_connecting,
-                ),
+            @settings.switch_control(
+              enabled~,
+              label=@settings.text(model.locale, RemoteControl),
+              disabled=model.account is None ||
+                managed ||
+                model.remote_connecting,
               on_click=dispatch(RemoteAccessSet(!enabled)),
-              if enabled {
-                @settings.text(model.locale, On)
-              } else {
-                @settings.text(model.locale, Off)
-              },
             ),
           ]
         },
@@ -1551,6 +1585,19 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
   // the endpoint and credentials.
   let engine_rows : Array[@html.Html] = [
     @settings.row(
+      @settings.text(locale, MoonBitGuide),
+      [
+        @settings.switch_control(
+          enabled=model.default_moonbit_guide,
+          label=@settings.text(locale, MoonBitGuide),
+          on_click=dispatch(
+            MoonBitGuideDefaultChanged(!model.default_moonbit_guide),
+          ),
+        ),
+      ],
+      desc=@settings.text(locale, MoonBitGuideDescription),
+    ),
+    @settings.row(
       @settings.text(locale, MaxSteps),
       [
         @html.input(
@@ -1745,18 +1792,10 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
           @settings.row(
             @settings.text(locale, FpsOverlay),
             [
-              @html.button(
-                class="button secondary",
-                attrs=@html.Attrs::build()
-                  .role("switch")
-                  .aria_label(@settings.text(locale, FpsOverlay))
-                  .aria_checked(model.fps_overlay_enabled.to_string()),
+              @settings.switch_control(
+                enabled=model.fps_overlay_enabled,
+                label=@settings.text(locale, FpsOverlay),
                 on_click=dispatch(FpsOverlayChanged(!model.fps_overlay_enabled)),
-                if model.fps_overlay_enabled {
-                  @settings.text(locale, On)
-                } else {
-                  @settings.text(locale, Off)
-                },
               ),
             ],
             desc=@settings.text(locale, FpsDescription),
@@ -2631,6 +2670,10 @@ fn view(
       locale=model.locale,
       dispatch.map(msg => ExportDialog(msg)),
     ),
+    model.file_share_dialog.view(
+      locale=model.locale,
+      dispatch.map(msg => FileShareDialog(msg)),
+    ),
     // Authentication input is deliberately DOM-only. Keep this slot before
     // conditional overlays so resize/toasts cannot replace its input node.
     if model.ssh_ui.editor_open || model.ssh_ui.details is Some(_) {
@@ -2659,7 +2702,7 @@ fn view(
   // The toast stack floats over everything (position: fixed), so appending
   // it last never shifts the layout; skipping it entirely while empty keeps
   // the corner clickable.
-  if model.notifications.length() > 0 || model.github.checkout is Some(_) {
+  if !model.notifications.is_empty() || model.github.checkout is Some(_) {
     children.push(notifications_view(dispatch, model))
   }
   children.push(
@@ -2899,7 +2942,7 @@ test "archived families collapse while a live orphan child stays archivable" {
 test "project component receives the complete conversation list" {
   let project = @interop.ChannelId::Local.test_resource("/work/alpha")
   let sessions : Array[@transcript.SessionListItem] = []
-  for number = 1; number <= 6; number = number + 1 {
+  for number in 1..<=6 {
     sessions.push({
       id: "chat-\{number}",
       title: Some("Project chat \{number}"),
@@ -3031,7 +3074,7 @@ fn Model::cloud_chat_section(self : Model, channel : String) -> @section.Input {
     activation: self.cloud_identity().map(owner => owner.session()),
     action: Some({
       title: @sidebar_messages.text(self.locale, NewChat),
-      disabled: self.cloud.creation is Some({ submission: Some(_), .. }),
+      disabled: self.cloud.creating_session(),
     }),
     entries,
   }

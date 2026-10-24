@@ -1,4 +1,6 @@
 import {
+  "openseek_desktop/frontend/cloud_client",
+  "openseek_desktop/frontend/engine_session",
   "openseek_desktop/frontend/session_import",
   "openseek_desktop/routes",
   "openseek_desktop/frontend/office_location",

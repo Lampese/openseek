@@ -115,6 +115,7 @@ fn start_in_new_worktree(
   session : String,
   workspace : @common.Uri,
   approval~ : @protocol.OpenSeekApproval,
+  moonbit_guide~ : Bool,
   images~ : Array[String] = [],
 ) -> @cmd.Cmd {
   guard @resource.belongs_to(workspace, channel) else { return @cmd.none }
@@ -233,6 +234,7 @@ fn start_in_new_worktree(
             submission_id,
             workspace~,
             approval~,
+            moonbit_guide~,
           )
           request_agent_start(
             scheduler, dispatch, channel, start, session, submission_id,
@@ -277,19 +279,15 @@ fn Conversation::goal_creates_worktree(self : Conversation) -> @common.Uri? {
 /// silently run in the main checkout with the launch mode they chose quietly
 /// discarded. A goal is not a turn, but it is the first thing that pins the
 /// session's placement, so it has to establish the environment too.
-fn set_goal_in_new_worktree(
-  locale~ : @i18n.Locale = English,
+fn send_command_in_new_worktree(
+  locale : @i18n.Locale,
   dispatch : @cmd.Emit[Msg],
   channel : @interop.ChannelId,
-  session : String,
   workspace : @common.Uri,
-  engine_model : EngineModel,
-  reasoning : OpenSeekReasoning,
-  max_steps : String,
-  command : String,
-  text : String?,
-  approval~ : @protocol.OpenSeekApproval,
+  payload : @protocol.SessionCommandPayload,
+  id : String,
 ) -> @cmd.Cmd {
+  let session = payload.settings.session
   guard @resource.belongs_to(workspace, channel) else { return @cmd.none }
   let device_dispatch = dispatch.map((msg : DeviceMsg) => {
     FromDevice(channel, msg)
@@ -325,22 +323,25 @@ fn set_goal_in_new_worktree(
               // settle the placement (see `Model::checkout_placement`).
               scheduler.add(
                 device_dispatch(
-                  GoalRejected(
+                  SessionCommandDelivered(
                     session~,
-                    command~,
-                    draft=text,
-                    message=match locale {
-                      SimplifiedChinese =>
-                        "桌面主机未响应，无法确认工作树是否已创建。此对话可能已绑定到新工作树；目标尚未发送。"
-                      TraditionalChinese =>
-                        "桌面主機未響應，無法確認工作樹是否已建立。此對話可能已繫結到新工作樹；目標尚未傳送。"
-                      Japanese =>
-                        "デスクトップホストが応答しないため、ワークツリーの作成を確認できません。このチャットはすでに新しいワークツリーに関連付けられている可能性があります。目標は送信されていません。"
-                      English =>
-                        "Couldn’t confirm worktree creation because the desktop host did not respond. This chat may already be bound to the new worktree; the goal was not sent."
-                      Spanish =>
-                        "No se pudo confirmar la creación del worktree porque el host de escritorio no respondió. Es posible que esta conversación ya esté asociada al nuevo worktree; el objetivo no se envió."
-                    },
+                    id~,
+                    command=payload.command,
+                    delivery=@engine_session.Rejected,
+                    message=Some(
+                      match locale {
+                        SimplifiedChinese =>
+                          "桌面主机未响应，无法确认工作树是否已创建。此对话可能已绑定到新工作树；目标尚未发送。"
+                        TraditionalChinese =>
+                          "桌面主機未響應，無法確認工作樹是否已建立。此對話可能已繫結到新工作樹；目標尚未傳送。"
+                        Japanese =>
+                          "デスクトップホストが応答しないため、ワークツリーの作成を確認できません。このチャットはすでに新しいワークツリーに関連付けられている可能性があります。目標は送信されていません。"
+                        English =>
+                          "Couldn’t confirm worktree creation because the desktop host did not respond. This chat may already be bound to the new worktree; the goal was not sent."
+                        Spanish =>
+                          "No se pudo confirmar la creación del worktree porque el host de escritorio no respondió. Es posible que esta conversación ya esté asociada al nuevo worktree; el objetivo no se envió."
+                      },
+                    ),
                   ),
                 ),
               )
@@ -352,11 +353,13 @@ fn set_goal_in_new_worktree(
             @protocol.WorktreeCreateError(message) => {
               scheduler.add(
                 device_dispatch(
-                  GoalRejected(
+                  SessionCommandDelivered(
                     session~,
-                    command~,
-                    draft=text,
-                    message=(match locale {
+                    id~,
+                    command=payload.command,
+                    delivery=@engine_session.Rejected,
+                    message=Some(
+                      (match locale {
                         SimplifiedChinese => "无法创建工作树。"
                         TraditionalChinese => "無法建立工作樹。"
                         Japanese =>
@@ -365,6 +368,7 @@ fn set_goal_in_new_worktree(
                         Spanish => "No se pudo crear el worktree. "
                       }) +
                       message,
+                    ),
                   ),
                 ),
               )
@@ -374,22 +378,25 @@ fn set_goal_in_new_worktree(
           guard !reply.name.is_empty() else {
             scheduler.add(
               device_dispatch(
-                GoalRejected(
+                SessionCommandDelivered(
                   session~,
-                  command~,
-                  draft=text,
-                  message=match locale {
-                    SimplifiedChinese =>
-                      "主机返回了不完整的响应，无法创建工作树。目标尚未发送。"
-                    TraditionalChinese =>
-                      "主機返回了不完整的響應，無法建立工作樹。目標尚未傳送。"
-                    Japanese =>
-                      "ホストからの応答が不完全なため、ワークツリーを作成できません。目標は送信されていません。"
-                    English =>
-                      "Couldn’t create the worktree because the host returned an incomplete reply. The goal was not sent."
-                    Spanish =>
-                      "No se pudo crear el worktree porque el host devolvió una respuesta incompleta. El objetivo no se envió."
-                  },
+                  id~,
+                  command=payload.command,
+                  delivery=@engine_session.Rejected,
+                  message=Some(
+                    match locale {
+                      SimplifiedChinese =>
+                        "主机返回了不完整的响应，无法创建工作树。目标尚未发送。"
+                      TraditionalChinese =>
+                        "主機返回了不完整的響應，無法建立工作樹。目標尚未傳送。"
+                      Japanese =>
+                        "ホストからの応答が不完全なため、ワークツリーを作成できません。目標は送信されていません。"
+                      English =>
+                        "Couldn’t create the worktree because the host returned an incomplete reply. The goal was not sent."
+                      Spanish =>
+                        "No se pudo crear el worktree porque el host devolvió una respuesta incompleta. El objetivo no se envió."
+                    },
+                  ),
                 ),
               ),
             )
@@ -404,18 +411,7 @@ fn set_goal_in_new_worktree(
               WorktreeCreated(workspace~, name=reply.name, session~),
             ),
           )
-          let payload = goal_payload(
-            session,
-            engine_model,
-            reasoning,
-            max_steps,
-            workspace,
-            text,
-            approval~,
-          )
-          request_agent_goal(
-            scheduler, dispatch, channel, payload, session, command, text,
-          )
+          request_session_command(scheduler, dispatch, channel, payload, id)
         },
       ) catch {
         // Unreachable: the lane only ever wakes its waiters, never fails
@@ -571,18 +567,17 @@ fn worktree_rows(
   channel : @interop.ChannelId,
   infos : Array[@protocol.WorktreeInfo],
 ) -> Array[WorktreeRow] {
-  let rows : Array[WorktreeRow] = []
-  for info in infos {
-    guard !info.name.is_empty() else { continue }
-    rows.push({
-      name: info.name,
-      sessions: info.sessions.filter(id => !id.is_empty()),
-      path: @resource.of_path(channel, info.path),
-      codex_thread: info.codex_thread.filter(id => !id.is_empty()),
-      present: info.present,
-    })
-  }
-  rows
+  [
+    for info in infos if !info.name.is_empty() => {
+      {
+        name: info.name,
+        sessions: info.sessions.filter(id => !id.is_empty()),
+        path: @resource.of_path(channel, info.path),
+        codex_thread: info.codex_thread.filter(id => !id.is_empty()),
+        present: info.present,
+      }
+    }
+  ]
 }
 
 ///|
@@ -735,7 +730,7 @@ fn DeviceState::worktree_generation(
 fn Conversation::wants_fresh_worktree(self : Conversation) -> Bool {
   self.worktree_mode &&
   self.workspace is Project(..) &&
-  self.messages.length() == 0
+  self.messages.is_empty()
 }
 
 ///|
@@ -757,9 +752,9 @@ fn Model::can_choose_launch_mode(self : Model, conv : Conversation) -> Bool {
     return false
   }
   guard conv.workspace is Project(root~) &&
-    conv.messages.length() == 0 &&
+    conv.messages.is_empty() &&
     conv.run is NoRun(..) &&
-    conv.goal_pending is None &&
+    conv.controls.pending is None &&
     conv.shell_commands.is_empty() else {
     return false
   }
@@ -785,7 +780,7 @@ fn Model::worktree_control(
   self : Model,
   conv : Conversation,
 ) -> @composer.WorktreeControl? {
-  guard conv.messages.length() == 0 else { return None }
+  guard conv.messages.is_empty() else { return None }
   if self.device_state(conv.device) is Some(dev) &&
     dev.is_chat_workspace(conv.project()) {
     return None
@@ -977,7 +972,10 @@ test "the launch mode stops being a choice once a placement is in flight" {
     pinned in [
       {
         ..composing,
-        goal_pending: Some({ id: "goal-1", request: Clearing, since: 0, }),
+        controls: {
+          ..composing.controls,
+          pending: Some({ id: "goal-1", request: Clearing, since: 0, }),
+        },
       },
       { ..composing, run: Starting(submission_id="s-1"), },
     ] {
@@ -1913,7 +1911,7 @@ test "a dirty archive stages the discard dialog and confirm retries forced" {
 }
 
 ///|
-test "a start payload never names a worktree" {
+test "a start payload keeps launch choices without naming a worktree" {
   // Creation is the binding; the host routes a bound session's cwd through
   // its registry, so the start wire shape has no worktree field to leak.
   let workspace = @interop.ChannelId::Local.test_resource("/proj")
@@ -1926,6 +1924,7 @@ test "a start payload never names a worktree" {
     "sub-1",
     workspace~,
     approval=ApprovalReview,
+    moonbit_guide=false,
   )
   // The typed wire shape has no worktree field at all; the workspace hint
   // is the only placement the start carries.
@@ -1935,6 +1934,7 @@ test "a start payload never names a worktree" {
   assert_eq(payload.workspace, Some("/proj"))
   assert_eq(payload.thinking, Some(ThinkingMax))
   assert_eq(payload.approval, Some(ApprovalReview))
+  assert_eq(payload.moonbit_guide, Some(false))
   let unknown_model = start_payload(
     "go",
     Other("kimi-k2.5"),
@@ -1944,6 +1944,8 @@ test "a start payload never names a worktree" {
     "sub-2",
     workspace~,
     approval=ApprovalAsk,
+    moonbit_guide=true,
   )
   assert_true(unknown_model.thinking is None)
+  assert_eq(unknown_model.moonbit_guide, Some(true))
 }

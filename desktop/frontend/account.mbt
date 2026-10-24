@@ -113,11 +113,15 @@ fn account_loaded(
       let (command, export_dialog) = model.export_dialog.account_changed(
         Err(message),
       )
+      let (file_command, file_share_dialog) = model.file_share_dialog.account_changed(
+        Err(message),
+      )
       return (
-        command,
+        @cmd.batch([command, file_command]),
         {
           ..model,
           export_dialog,
+          file_share_dialog,
           remote_connecting: false,
           account_login_create: None,
           remote_error: Some(message),
@@ -138,10 +142,16 @@ fn account_loaded(
   } else {
     (@cmd.none, model.export_dialog)
   }
+  let (file_command, file_share_dialog) = if changed {
+    model.file_share_dialog.account_changed(Ok(()))
+  } else {
+    (@cmd.none, model.file_share_dialog)
+  }
   let next = {
     ..model,
     account,
     export_dialog,
+    file_share_dialog,
     account_login_create: None,
     remote_connecting: false,
     remote_error: None,
@@ -195,7 +205,8 @@ fn account_loaded(
     @cmd.none
   }
   let command = @cmd.batch([
-    export_command, retire_command, command, persistence, console_command, remote_status,
+    export_command, file_command, retire_command, command, persistence, console_command,
+    remote_status,
   ])
   if account is Some(_) && intent == Some(model.chat_navigation_generation) {
     let (create, next) = update_cloud(dispatch, @cloud.Create, next)
@@ -213,7 +224,13 @@ fn sign_out_account(
     guard !model.console.busy else { return (@cmd.none, model) }
     return (
       sign_out(dispatch, token?=model.account.map(account => account.token)),
-      { ..model, console: { ..model.console, busy: true, notice: None, }, },
+      {
+        ..model,
+        console: { ..model.console, busy: true, notice: None, },
+        account_preferences: AccountPreferences::empty(
+          request=model.account_preferences.request + 1,
+        ),
+      },
     )
   }
   let epoch = model.account_epoch + 1
