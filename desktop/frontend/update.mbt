@@ -258,15 +258,18 @@ fn open_session_on(
     guard model.session_project(channel, session_id) is Some(project) else {
       return (@cmd.none, model)
     }
+    let engine_model = model
+      .remembered_model(channel, session_id)
+      .unwrap_or(model.default_model)
     let conversation = empty_conversation(
       channel,
       session_id,
       project,
       // Reopening a stored conversation recovers the tier it was left on,
       // not whatever was picked last in some other chat.
-      model=model
-        .remembered_model(channel, session_id)
-        .unwrap_or(model.default_model),
+      model=engine_model,
+      // A listed directory may still be an unsent draft with no transcript.
+      system_prompt?=model.draft_system_prompt(channel, engine_model),
     )
     let conversation = if model.device_state(channel) is Some(dev) {
       {
@@ -2577,7 +2580,15 @@ fn update_msg(
             @composer.WorktreeModeToggled(..) =>
               update_msg(dispatch, ToggleWorktreeMode, model)
             @composer.ApiSetupRequested(..) =>
-              update_msg(dispatch, OpenApiSetup, model)
+              update_msg(
+                dispatch,
+                if conv.prompt_ready() {
+                  OpenApiSetup
+                } else {
+                  OpenSetup
+                },
+                model,
+              )
             @composer.QueuedInputEditRequested(id~, ..) => {
               // The composer is frozen while a large semantic selection is
               // written for a submitted draft; loading a queued message over
@@ -3774,7 +3785,10 @@ fn update_msg(
                 session,
                 workspace,
                 model=engine_model,
-                moonbit_guide=model.default_moonbit_guide,
+                system_prompt?=model.draft_system_prompt(
+                  model.focused,
+                  engine_model,
+                ),
               ),
               task: draft.task,
               mentions: draft.mentions,
@@ -3936,13 +3950,58 @@ fn update_msg(
         )
       }
     }
-    MoonBitGuideDefaultLoaded(enabled) =>
-      (@cmd.none, { ..model, default_moonbit_guide: enabled, })
-    MoonBitGuideDefaultChanged(enabled) =>
+    RetryHostSettings =>
       (
-        save_default_moonbit_guide(enabled),
-        { ..model, default_moonbit_guide: enabled, },
+        fetch_host_settings(
+          dispatch,
+          model.focused,
+          model.focused_connection_generation(),
+        ),
+        { ..model, host_settings_error: None, },
       )
+    Prompt(msg) => {
+      guard model.host_settings_loaded() && model.settings_saves == 0 else {
+        return (@cmd.none, model)
+      }
+      if msg is @prompt.Edited(_) {
+        let (command, default_prompt) = model.default_prompt.update(msg)
+        return (command, { ..model, default_prompt, })
+      }
+      let (source, text) = match msg {
+        @prompt.Selected(source) if source == "custom" ||
+          source == "builtin_moonbit_guide" => (Some(source), None)
+        @prompt.Save => {
+          guard model.default_prompt.draft_text() is Some(text) else {
+            return (@cmd.none, model)
+          }
+          (None, Some(text))
+        }
+        _ => return (@cmd.none, model)
+      }
+      let patch : @protocol.SettingsSetPayload = {
+        provider: None,
+        custom_api_url: None,
+        deepseek_api_key: None,
+        glm_api_key: None,
+        custom_api_key: None,
+        followup_behavior: None,
+        prompt_source: source,
+        custom_prompt: text,
+      }
+      (
+        push_host_settings(
+          dispatch,
+          model.focused,
+          patch,
+          model.focused_connection_generation(),
+        ),
+        {
+          ..model,
+          settings_saves: model.settings_saves + 1,
+          select_menu: None,
+        },
+      )
+    }
     MaxStepsChanged(value) => (@cmd.none, { ..model, max_steps: value, })
     SetupApiKeyChanged(value) => {
       guard model.host_settings_loaded() else { return (@cmd.none, model) }
@@ -4584,7 +4643,8 @@ fn update_msg(
         .prompt()
         .trim()
         .to_owned()
-      let sendable = conv.draft_sendable() &&
+      let sendable = conv.prompt_ready() &&
+        conv.draft_sendable() &&
         model.bridge_state() is Connected &&
         model.api_ready() &&
         checkout is Some(placement) &&
@@ -4751,37 +4811,33 @@ fn update_msg(
         // (the host names it, binds this conversation) and starts inside
         // it, as one command; every other submit is a plain start — a
         // bound session's cwd comes from the host's registry.
+        let payload = start_payload(
+          task,
+          conv.engine_model,
+          model.reasoning_for(conv.engine_model),
+          model.max_steps,
+          conv.session_id,
+          submission_id,
+          workspace=conv.project(),
+          approval=model.approval_for(conv.device, conv.session_id),
+          system_prompt?=conv.system_prompt,
+          images=conv.images.map(image => image.url),
+        )
         let start_cmd = if fresh_worktree &&
           conv.workspace is Project(root=workspace) {
           start_in_new_worktree(
             locale=model.locale,
             dispatch,
             model.focused,
-            task,
-            submission_id,
-            conv.engine_model,
-            model.reasoning_for(conv.engine_model),
-            model.max_steps,
-            conv.session_id,
+            payload,
             workspace,
-            approval=model.approval_for(conv.device, conv.session_id),
-            moonbit_guide=conv.moonbit_guide,
-            images=conv.images.map(image => image.url),
           )
         } else {
           start_openseek(
             dispatch,
             model.focused,
-            task,
-            submission_id,
-            conv.engine_model,
-            model.reasoning_for(conv.engine_model),
-            model.max_steps,
-            conv.session_id,
+            payload,
             workspace=conv.project(),
-            approval=model.approval_for(conv.device, conv.session_id),
-            moonbit_guide=conv.moonbit_guide,
-            images=conv.images.map(image => image.url),
           )
         }
         // Re-pin now, before the durable User item arrives, so the early
@@ -7444,6 +7500,13 @@ fn update_device_msg(
       guard channel == model.focused else { return (@cmd.none, model) }
       update_msg(dispatch, FileEditor(msg), model)
     }
+    HostSettingsLoadFailed(message, connection_generation~) => {
+      guard channel == model.focused &&
+        connection_generation == dev.connection_generation else {
+        return (@cmd.none, model)
+      }
+      (@cmd.none, { ..model, host_settings_error: Some(message), })
+    }
     HostSettingsLoaded(settings, connection_generation~) => {
       guard connection_generation is None ||
         (connection_generation is Some(gen) && gen == dev.connection_generation) else {
@@ -10100,6 +10163,7 @@ fn test_conversation() -> Conversation {
     @interop.ChannelId::Local,
     "desktop-test",
     @interop.ChannelId::Local.test_project(),
+    system_prompt=@prompt.Model::new().text(Deepseek(V4Pro)),
   )
 }
 
@@ -10390,7 +10454,7 @@ fn encoded_start_workspace(conv : Conversation) -> String? {
     "test-submission",
     workspace=conv.project(),
     approval=ApprovalAsk,
-    moonbit_guide=conv.moonbit_guide,
+    system_prompt?=conv.system_prompt,
   )
   let json = payload.to_json()
   guard json is Object(fields) else { return None }
@@ -16182,6 +16246,8 @@ fn host_settings(
     has_glm_key,
     has_custom_key,
     followup_behavior: "steer",
+    prompt_source: "builtin_moonbit_guide",
+    custom_prompt: "",
   }
 }
 

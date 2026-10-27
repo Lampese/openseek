@@ -238,9 +238,6 @@ const AppFontSizeStorageKey : String = "openseek.font_size"
 const ModelStorageKey : String = "openseek.model"
 
 ///|
-const MoonBitGuideStorageKey : String = "openseek.moonbit_guide"
-
-///|
 /// The agent the next "New chat" starts with — whichever provider group the
 /// unified model chip was last picked from.
 const AgentStorageKey : String = "openseek.agent"
@@ -706,8 +703,9 @@ priv struct Conversation {
   // afterwards: a start is always older than the composer, so echoing one
   // back would undo a choice the user has already made for the next turn.
   engine_model : @deepseek.Model
-  // Creation default for this draft; stored chats keep their saved system prompt.
-  moonbit_guide : Bool
+  // Complete base prompt captured for this draft; stored chats keep their prompt.
+  // None while a new draft awaits its host's first settings snapshot.
+  system_prompt : String?
   // Root-authored prompt snapshot for submission and delivery recovery. The
   // live textarea value is component-local and is copied here atomically only
   // when the user submits; a rejection may write recovered text back here.
@@ -1169,6 +1167,7 @@ priv enum SelectMenu {
   CodexModelMenu
   CodexReasoningMenu
   ApiProviderMenu
+  PromptMenu
   FollowupBehaviorMenu
   ThemeMenu
   LanguageMenu
@@ -1252,8 +1251,8 @@ priv struct Model {
   // stays on an inert `Local` default until the roster verifies and connects
   // the device required by its `?device=` query.
   focused : @interop.ChannelId
-  // Copied into each new OpenSeek conversation, persisted page-locally.
-  default_moonbit_guide : Bool
+  // The focused host's committed prompt default and its unsaved editor buffer.
+  default_prompt : @prompt.Model
   // The tier a new conversation is born with: whatever was last picked in
   // the composer, persisted page-locally. The model a turn actually runs
   // with is the conversation's own `engine_model`, never this.
@@ -1301,6 +1300,7 @@ priv struct Model {
   // orders concurrent clients' broadcasts and RPC replies; -1 means this
   // bridge generation has not accepted an authoritative status yet.
   host_settings_revision : Int32
+  host_settings_error : String?
   deferred_host_settings : HostSettings?
   // Whether the API-setup modal is up. Every settled settings snapshot
   // decides it through `settle_api_setup` — the one place that opens it —
@@ -1625,6 +1625,8 @@ priv struct HostSettings {
   has_glm_key : Bool
   has_custom_key : Bool
   followup_behavior : String
+  prompt_source : String
+  custom_prompt : String
 } derive(Eq)
 
 ///|
@@ -1703,8 +1705,8 @@ priv enum Msg {
   // OpenSeek's fixed `no`/`high`/`max` choice. It shares the composer control
   // with Codex but remains a separate typed value at the request boundary.
   OpenSeekEffortPicked(String)
-  MoonBitGuideDefaultLoaded(Bool)
-  MoonBitGuideDefaultChanged(Bool)
+  Prompt(@prompt.Msg)
+  RetryHostSettings
   MaxStepsChanged(String)
   SetupApiKeyChanged(String)
   ProviderChanged(String)
@@ -2143,6 +2145,7 @@ priv enum DeviceMsg {
   // edit broadcast as `settings.changed`. Applied only while no local write
   // is in flight — see `Model::settings_saves`.
   HostSettingsLoaded(HostSettings, connection_generation~ : Int32?)
+  HostSettingsLoadFailed(String, connection_generation~ : Int32)
   // A `settings.set` this client sent came back with the post-write state.
   HostSettingsApplied(HostSettings, connection_generation~ : Int32)
   // A `settings.set` this client sent failed; the message pops as a toast.
@@ -2531,7 +2534,7 @@ fn empty_conversation(
   session_id : String,
   project : @common.Uri,
   model~ : @deepseek.Model = Deepseek(V4Pro),
-  moonbit_guide~ : Bool = true,
+  system_prompt? : String,
 ) -> Conversation {
   {
     device: channel,
@@ -2540,7 +2543,7 @@ fn empty_conversation(
     workspace: Project(root=project),
     worktree_mode: false,
     engine_model: model,
-    moonbit_guide,
+    system_prompt,
     task: "",
     images: [],
     mentions: [],
@@ -2643,7 +2646,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     websocket_epoch: 0,
     focused: @interop.ChannelId::Local,
     default_model: Deepseek(V4Flash),
-    default_moonbit_guide: true,
+    default_prompt: @prompt.Model::new(),
     default_agent: OpenSeekAgent,
     conversation_models: [],
     reviewed_conversations: [],
@@ -2659,6 +2662,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     followup_behavior: FollowupSteer,
     settings_saves: 0,
     host_settings_revision: -1,
+    host_settings_error: None,
     deferred_host_settings: None,
     is_desktop: desktop,
     window_focused: !desktop || @interop.page_has_focus(),
@@ -2897,8 +2901,10 @@ fn Model::clear_host_settings(self : Model) -> Model {
     glm_key_saved: false,
     custom_key_saved: false,
     setup_api_key: "",
+    default_prompt: @prompt.Model::new(),
     settings_saves: 0,
     host_settings_revision: -1,
+    host_settings_error: None,
     deferred_host_settings: None,
   }
 }
@@ -2919,6 +2925,11 @@ fn Model::apply_host_settings(self : Model, settings : HostSettings) -> Model {
   let next = {
     ..self,
     host_settings_revision: settings.revision,
+    host_settings_error: None,
+    default_prompt: self.default_prompt.receive(
+      settings.prompt_source,
+      settings.custom_prompt,
+    ),
     deferred_host_settings: None,
     api_provider: provider,
     custom_api_url: settings.custom_api_url,
@@ -2927,7 +2938,43 @@ fn Model::apply_host_settings(self : Model, settings : HostSettings) -> Model {
     glm_key_saved: settings.has_glm_key,
     custom_key_saved: settings.has_custom_key,
   }
-  next.align_fresh_conversation_with_provider()
+  let next = next.align_fresh_conversation_with_provider()
+  {
+    ..next,
+    conversations: next.conversations.map(conv => {
+      if conv.device == next.focused &&
+        conv.system_prompt is None &&
+        conv.durable_frontier() == 0 &&
+        !conv.is_running() {
+        {
+          ..conv,
+          system_prompt: Some(next.default_prompt.text(conv.engine_model)),
+        }
+      } else {
+        conv
+      }
+    }),
+  }
+}
+
+///|
+fn Model::draft_system_prompt(
+  self : Model,
+  channel : @interop.ChannelId,
+  model : @deepseek.Model,
+) -> String? {
+  if channel == self.focused && self.host_settings_loaded() {
+    Some(self.default_prompt.text(model))
+  } else {
+    None
+  }
+}
+
+///|
+fn Conversation::prompt_ready(self : Conversation) -> Bool {
+  self.system_prompt is Some(_) ||
+  self.durable_frontier() > 0 ||
+  self.is_running()
 }
 
 ///|
@@ -3791,15 +3838,16 @@ fn Model::activate(
     }
   }
   if !found {
+    let model = self
+      .remembered_model(channel, session_id)
+      .unwrap_or(self.default_model)
     conversations.push(
       empty_conversation(
         channel,
         session_id,
         project,
-        moonbit_guide=self.default_moonbit_guide,
-        model=self
-          .remembered_model(channel, session_id)
-          .unwrap_or(self.default_model),
+        system_prompt?=self.draft_system_prompt(channel, model),
+        model~,
       ),
     )
   }

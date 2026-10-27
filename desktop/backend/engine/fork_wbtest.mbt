@@ -1,5 +1,39 @@
 ///|
 #cfg(not(platform="windows"))
+async test "failed source prompt reads leave edits and forks uncreated" {
+  with_worktree_fork_fixture((manager, repo, store, _) => {
+    let source = @agent_session.SessionId("s-src")
+    @fs.mkdir(session_prompt_path(store, source).to_string())
+    let created : Array[String] = []
+    for through in [None, Some(2)] {
+      let failed = try {
+        ignore(
+          prepare_session_edit(
+            manager,
+            {
+              session: "s-src",
+              workspace: repo.resource_path(),
+              through,
+              model: "edit-model",
+              source_title: "Original",
+            },
+            on_created=id => created.push(id),
+            on_worktree_changed=(_, _) => (),
+          ),
+        )
+        false
+      } catch {
+        _ => true
+      }
+      assert_true(failed)
+      assert_true(created.is_empty())
+      assert_true(store.exists(source))
+    }
+  })
+}
+
+///|
+#cfg(not(platform="windows"))
 async test "a committed fork succeeds even when its title cannot be saved" {
   ambient_env_test_lock.acquire()
   defer ambient_env_test_lock.release()
@@ -87,8 +121,14 @@ fn worktree_fork_engine_script() -> String {
     $|source="$3"
     $|shift 3
     $|notice=""
-    $|while [ "$#" -gt 1 ]; do
+    $|prompt=""
+    $|while [ "$#" -gt 0 ]; do
     $|  case "$1" in
+    $|    --system-prompt-file=*)
+    $|      prompt="${1#--system-prompt-file=}"
+    $|      shift
+    $|      continue
+    $|      ;;
     $|    --notice=*)
     $|      notice="${1#--notice=}"
     $|      shift
@@ -107,8 +147,10 @@ fn worktree_fork_engine_script() -> String {
     $|  exit 1
     $|fi
     $|to="$root/sessions/$fork"
-    $|mkdir "$to" || exit 1
+    $|mkdir -p "$to" || exit 1
     $|record="$to/openseek_session-$fork.jsonl"
+    $|test ! -f "$record" || exit 1
+    $|if [ -n "$prompt" ]; then cp "$prompt" "$root/base-$fork"; fi
     $|printf '{"version":1,"id":"%s","system_prompt":"dir=%s model=%s through=%s"}\{newline}' "$fork" "$dir" "$model" "$through" > "$record"
     $|if [ -n "$notice" ]; then
     $|  printf '%s' "$notice" > "$root/notice-$fork"
@@ -180,6 +222,11 @@ async fn with_worktree_fork_fixture(
 #cfg(not(platform="windows"))
 async test "a fork of a worktree conversation works in a checkout of its own" {
   with_worktree_fork_fixture((manager, repo, store, checkout) => {
+    let prompt = "  Project rules\n中文\n"
+    @fsx.write_text_atomic(
+      session_prompt_path(store, SessionId("s-src")),
+      prompt,
+    )
     @fsx.write_text(checkout.join("draft.txt").to_path(), "uncommitted")
     let placements : Array[Array[WorktreeInfo]] = []
     let created : Array[String] = []
@@ -195,6 +242,16 @@ async test "a fork of a worktree conversation works in a checkout of its own" {
       },
       on_created=session => created.push(session),
       on_worktree_changed=(_, rows) => placements.push(rows),
+    )
+    assert_eq(
+      saved_session_prompt(store, SessionId(reply.session)),
+      Some(prompt),
+    )
+    assert_eq(
+      @fsx.read_text(
+        @workspaces.store_root(repo).join("base-\{reply.session}").to_path(),
+      ),
+      prompt,
     )
     assert_eq(created, [reply.session])
     guard placements is [[source, own]] else {
@@ -232,6 +289,7 @@ async test "a fork of a worktree conversation works in a checkout of its own" {
 #cfg(not(platform="windows"))
 async test "a later-message edit takes over its source's checkout" {
   with_worktree_fork_fixture((manager, repo, store, checkout) => {
+    @fsx.write_text_atomic(session_prompt_path(store, SessionId("s-src")), "")
     let placements : Array[Array[WorktreeInfo]] = []
     let reply = prepare_session_edit(
       manager,
@@ -244,6 +302,13 @@ async test "a later-message edit takes over its source's checkout" {
       },
       on_created=_ => (),
       on_worktree_changed=(_, rows) => placements.push(rows),
+    )
+    assert_eq(saved_session_prompt(store, SessionId(reply.session)), Some(""))
+    assert_eq(
+      @fsx.read_text(
+        @workspaces.store_root(repo).join("base-\{reply.session}").to_path(),
+      ),
+      "",
     )
     assert_eq(
       store.load(SessionId(reply.session)).system_prompt(),
@@ -386,6 +451,11 @@ async test "a fork cancelled after its record was written keeps its worktree and
 #cfg(not(platform="windows"))
 async test "a side chat is a numbered member of its conversation's family" {
   with_worktree_fork_fixture((manager, repo, store, checkout) => {
+    let prompt = "Side chat instructions"
+    @fsx.write_text_atomic(
+      session_prompt_path(store, SessionId("s-src")),
+      prompt,
+    )
     let placements : Array[Array[WorktreeInfo]] = []
     let created : Array[String] = []
     async fn side_chat_of(session : String) -> @protocol.SessionForkReply {
@@ -407,6 +477,16 @@ async test "a side chat is a numbered member of its conversation's family" {
     // Side chats are named beside their conversation, each its own, and
     // work in the conversation's checkout.
     let first = side_chat_of("s-src")
+    assert_eq(
+      saved_session_prompt(store, SessionId(first.session)),
+      Some(prompt),
+    )
+    assert_eq(
+      @fsx.read_text(
+        @workspaces.store_root(repo).join("base-\{first.session}").to_path(),
+      ),
+      prompt,
+    )
     let second = side_chat_of("s-src")
     assert_eq(@protocol.split_side_chat_id(first.session), Some("s-src"))
     assert_eq(@protocol.split_side_chat_id(second.session), Some("s-src"))
