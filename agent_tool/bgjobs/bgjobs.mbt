@@ -96,6 +96,7 @@ struct BgJobRuntime {
     Int32,
     String?,
     &@process.ProcessInput?,
+    Map[String, String]?,
   ) -> @shell_exec.ShellExecution
   // Spawn a per-job watcher task on that same group.
   spawn_watcher : (async () -> Unit) -> Unit
@@ -276,6 +277,7 @@ pub fn[X] BgJobRuntime::BgJobRuntime(
       max_output_chars,
       spill_path,
       stdin,
+      extra_env,
     ) => {
       // kill_at_hard_cap so that once detached (kill_when_full cleared by
       // `background()`), the job is still bounded in output like any other.
@@ -285,6 +287,8 @@ pub fn[X] BgJobRuntime::BgJobRuntime(
         args~,
         cwd?,
         stdin?,
+        extra_env?,
+        inherit_env=extra_env is None,
         inline_cap=max_output_chars,
         hard_cap=hard_output_cap,
         spill_path?,
@@ -328,6 +332,7 @@ pub async fn BgJobRuntime::spawn_foreground_retained(
   cwd : String?,
   max_output_chars : Int32,
   stdin? : &@process.ProcessInput,
+  extra_env? : Map[String, String],
 ) -> @shell_exec.ShellExecution {
   self.prepare_output()
   let spill_path = self.spill_dir.map(dir => {
@@ -336,7 +341,7 @@ pub async fn BgJobRuntime::spawn_foreground_retained(
     "\{dir}/fg-\{index}.out"
   })
   (self.spawn_foreground_retained_exec)(
-    program, args, cwd, max_output_chars, spill_path, stdin,
+    program, args, cwd, max_output_chars, spill_path, stdin, extra_env,
   )
 }
 

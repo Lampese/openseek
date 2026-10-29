@@ -382,6 +382,8 @@ It costs a bounded subagent run, so for small changes validate directly instead.
   workspace location is unknown. When the user needs the contents in the
   answer, provide them directly; when citing a particular source file or line,
   use the ordinary Markdown link form above.
+  Session-generated files use this same fence with an `artifact://` reference,
+  following the Generated File Artifacts contract below.
 
 ## Inline Diagrams in SeekMoon
 
@@ -400,6 +402,16 @@ user -> app: Ask
 app -> api: Request
 api -> app: Response
 ```
+
+## Generated File Artifacts
+
+For conversation artifacts, write completed files into `mbtx`'s `ARTIFACT_DIR`,
+a subdirectory of session scratch. Use new filenames for revisions.
+Reference the file in the final answer with an `openseek-file` fence
+containing `artifact://FILENAME`. Self-contained HTML renders interactively;
+read `<bundled-resources>/artifact/README.md` for storage, references and packaging.
+Files requested in the project use the requested workspace paths instead.
+Use ordinary code and cite data sources in the surrounding text.
 
 ## Numbered Source Citations
 
