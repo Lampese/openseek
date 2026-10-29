@@ -72,3 +72,9 @@ Run `npm run test:artifact-offline` to build the production frontend and exercis
 self-contained HTML previews with fixture transport in a headless browser.
 Set `OPENSEEK_UI_CAPTURE_DIR` for local captures. From the repository root, run
 `node desktop/e2e/run-artifact-offline.mjs`.
+
+## Offline charts
+
+Run `npm run test:chart-offline` or `just desktop-test-charts` to compile the
+chart example with its own HTML template and exercise file previews and
+saved-chart compatibility through fixture transport in a headless browser.

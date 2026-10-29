@@ -388,37 +388,66 @@ pub fn component(
     actions,
     unpin=emit(Pinned(false)),
   )
-  let rows = blocks.map2(editors, (blocks, editors) => {
-    blocks.map(pair => (pair.0, pair.1, editors.for_block(pair.1)))
+  let artifacts = input
+    .map(input => input.items)
+    .map(items => {
+      // Other live input (typing, scrolling, prose deltas) does not rebuild the
+      // catalog; artifact payloads change only with the durable transcript.
+      let results : Array[Json?] = []
+      fn collect(call : @transcript.ToolCall) {
+        if call.outcome is Done(is_error=false, data~, ..) {
+          results.push(data)
+        }
+        for child in call.children {
+          collect(child)
+        }
+      }
+      for row in items {
+        if row.item.kind is Assistant(calls~, ..) {
+          for call in calls {
+            collect(call)
+          }
+        }
+      }
+      @plot.Catalog::from_tool_data(results)
+    })
+  let rows = blocks.map3(editors, artifacts, (blocks, editors, artifacts) => {
+    blocks.map(pair => (pair.0, pair.1, editors.for_block(pair.1), artifacts))
   })
   let rows = rows.map2(input.map(input => input.artifact_owner()), (rows, owner) => {
-    rows.map(row => (row.0, row.1, row.2, owner))
+    rows.map(row => (row.0, row.1, row.2, row.3, owner))
   })
   let rendered = rows.assoc_by(
     (key, row) => {
       let renders = Ref(0)
+      let plots = @plot.renderer()
       let (changes, changes_emit) = message_changes_state(
         row.map(row => row.1),
         actions,
       )
       let editor_emit = edit_emit.map(msg => (key, msg))
-      changes.map2(row, (changes, row) => {
-        let (locale, block, editor, owner) = row
+      changes.map3(row, plots, (changes, row, plots) => {
+        let (locale, block, editor, artifacts, owner) = row
         renders.val += 1
         let html = @html.memo_by(
           block,
           block => {
+            let legacy_plot = plots.begin(artifacts, locale~)
             block.render(
               locale~,
               actions,
               artifact_view=(reference, title) => {
-                artifact_file_view(
-                  reference,
-                  title,
-                  locale,
-                  actions.open,
-                  owner,
-                )
+                if reference.has_prefix("artifact://") {
+                  artifact_file_view(
+                    reference,
+                    title,
+                    locale,
+                    actions.open,
+                    owner,
+                  )
+                } else {
+                  legacy_plot(reference, title)
+                }
               },
               changes?=changes.control(block, changes_emit),
               editor?=editor.view(block, locale~, editor_emit),

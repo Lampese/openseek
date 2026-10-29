@@ -68,3 +68,20 @@ Run the application's relevant tests before publishing.
 
 Every mbtx script compiles to Wasm before its entry point runs. The HTML
 application compiles separately for JavaScript and runs inside the preview.
+
+## Interactive charts
+
+Charts use the `Lampese/mathplotlib` and Rabbita APIs to produce interactive HTML.
+
+Copy all four inputs from `example/`: `moon.mod`, `moon.pkg`, `main.mbt` and
+`index.html`. The example's own HTML template supplies the `chart` mount and
+inline chart styles. Edit the MoonBit application for the actual data, check it
+with `moon -C PROJECT check --target js --deny-warn`, run relevant tests, and use
+the generic `build.mbtx` recipe described above.
+
+The example includes hover values, click selection and legend toggles. Keep
+these interactions in local Rabbita state. Cite data sources in the surrounding
+answer.
+
+Previously saved structured chart artifacts remain supported by the Desktop
+chart renderer. New file artifacts use the ordinary `openseek-file` reference.

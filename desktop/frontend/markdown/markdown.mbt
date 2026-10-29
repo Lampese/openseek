@@ -86,7 +86,7 @@ fn MarkdownRender::push_block(
       for child in node.v.iter() {
         self.push_block(out, child)
       }
-    Paragraph(node) => out.push(@html.p(self.inline_nodes(node.v.inline)))
+    Paragraph(node) => self.paragraph(out, node.v.inline)
     Heading(node) => out.push(self.heading(node.v))
     BlockQuote(node) =>
       out.push(@html.blockquote(self.block_nodes(node.v.block)))
@@ -467,14 +467,20 @@ fn MarkdownRender::push_inline(
   linkify_urls~ : Bool,
 ) -> Unit {
   match inline {
-    Text(node) =>
+    Text(node) => {
+      let text = if self.defer_artifacts {
+        pending_embed_text(node.v)
+      } else {
+        node.v
+      }
       if linkify_urls {
-        for child in self.prose_nodes(node.v) {
+        for child in self.prose_nodes(text) {
           out.push(child)
         }
       } else {
-        out.push(@html.text(node.v))
+        out.push(@html.text(text))
       }
+    }
     Inlines(node) =>
       for child in node.v.iter() {
         self.push_inline(out, child, linkify_urls~)
@@ -534,7 +540,11 @@ fn MarkdownRender::push_inline(
     // from destinations that pass the same safety filter as links.
     Image(node) => {
       let alt = plain_text(node.v.text)
-      if self.local_image_destination(node.v) is Some(path) {
+      if self.artifact_destination(node.v) is Some(_) {
+        // Charts are flow content, lifted out of paragraphs below. Nested
+        // images inside inline formatting keep their alt text as prose.
+        out.push(@html.text(alt))
+      } else if self.local_image_destination(node.v) is Some(path) {
         // Local paths must not resolve against the page's `proton://app/`
         // origin. Leave `src` empty and let the transcript's viewport observer
         // read bounded bytes from the owning host only when this node is seen.

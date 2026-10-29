@@ -503,7 +503,7 @@ fn tool_result_view(
     Pending(output~) =>
       (true, false, None, output.map(text => @deepseek.Content([Text(text)])))
     // An empty result still gets its row; it just has nothing to expand.
-    Done(content~, is_error~, brief~) =>
+    Done(content~, is_error~, brief~, ..) =>
       (
         false,
         is_error,
