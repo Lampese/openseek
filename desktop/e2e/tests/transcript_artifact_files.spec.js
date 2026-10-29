@@ -2,9 +2,8 @@ import { test, expect } from '@playwright/test';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { DesktopBrowserHarness } from './support/desktop_browser_harness.js';
 
-// The browser suite can run in a container without MoonBit. Its small HTML
-// application exercises the generic artifact runtime; local acceptance also
-// runs these checks with the real compiled mathplotlib example via this env.
+// Use a small HTML fixture by default. OPENSEEK_ARTIFACT_HTML supplies a compiled
+// application for the same preview checks.
 const sample = process.env.OPENSEEK_ARTIFACT_HTML
   ? readFileSync(process.env.OPENSEEK_ARTIFACT_HTML, 'utf8')
   : `<!doctype html><html><head><style>body{margin:0;font:14px system-ui}svg{width:100%;height:auto}button{padding:8px}[role=tooltip]{position:absolute;top:20px;left:100px;background:white}</style></head><body>

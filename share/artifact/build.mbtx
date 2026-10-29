@@ -26,8 +26,8 @@ async fn executable_scripts(
 }
 
 ///|
-// A revision keeps the inputs needed to edit it, not dependencies or build
-// caches. Refuse links just as the session fork's artifact copier does.
+// Retain editable source inputs, skipping dependency/build caches and rejecting
+// links as the session fork's artifact copier does.
 async fn copy_sources(source : String, destination : String) -> Unit {
   @fs.mkdir(destination)
   copy_source_files(source, destination)
@@ -109,8 +109,8 @@ async fn main {
   guard !@fs.exists(output) && !@fs.exists(sources) else {
     fail("artifact already exists; choose a new filename")
   }
-  // Compile a snapshot, so later edits to the working project cannot change
-  // the sources associated with the HTML. All compiler output is disposable.
+  // Compile a snapshot to keep the HTML and its retained sources consistent.
+  // Compiler output lives in the temporary build directory.
   let temporary = @fs.realpath(@fs.tmpdir(prefix="artifact-build-"))
   defer (@fs.rmdir(temporary, recursive=true) catch { _ => () })
   let snapshot = temporary + "/source"

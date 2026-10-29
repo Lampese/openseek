@@ -109,7 +109,7 @@ editor-test-browser:
 desktop-test-browser:
     just --justfile desktop/justfile test-browser
 
-# Build and exercise generated interactive answers without starting a server.
+# Build the frontend and exercise file artifact previews with fixture transport.
 desktop-test-artifacts:
     node desktop/e2e/run-artifact-offline.mjs
 

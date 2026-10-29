@@ -1,6 +1,6 @@
 ///|
 /// A file reference is scoped by its owning conversation and registered
-/// workspace. It never carries a browser-selected absolute output path.
+/// workspace. The host resolves its relative artifact path.
 pub(all) struct ArtifactFilePayload {
   session : String
   workspace : String

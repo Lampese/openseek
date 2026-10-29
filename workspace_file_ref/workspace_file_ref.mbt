@@ -1,6 +1,5 @@
 ///|
-/// The fence language emitted by a model when it wants to reference one
-/// workspace file or session artifact without embedding its source text.
+/// The fence language for referencing a workspace file or session artifact.
 pub const FenceLanguage : String = "openseek-file"
 
 ///|
@@ -27,8 +26,7 @@ pub extend FileKind with Debug::{to_repr}
 
 ///|
 /// A workspace-relative path or an `artifact://` reference extracted from a
-/// fenced block. The owning host resolves session artifacts independently of
-/// the workspace. This package never resolves or reads either kind of file.
+/// fenced block. Path resolution and file reads belong to the owning host.
 pub struct WorkspaceFileRef {
   path : String
   name : String
@@ -127,8 +125,8 @@ pub fn parse(
 }
 
 ///|
-/// Decode the file portion of a session-owned artifact reference. The
-/// reference never chooses a host, workspace, or another conversation.
+/// Decode the relative file path of an artifact reference. The caller supplies
+/// the owning host, workspace and conversation for resolution.
 pub fn artifact_path(reference : String) -> String? {
   guard parse(FenceLanguage, reference, closed=true) is Some(file) &&
     file.artifact else {

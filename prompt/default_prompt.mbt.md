@@ -411,7 +411,7 @@ to scripts. Use new filenames for revisions.
 Reference the file in the final answer with an `openseek-file` fence
 containing `artifact://FILENAME`. Self-contained HTML renders interactively;
 read `<bundled-resources>/artifact/README.md` for storage, references and packaging.
-Files requested in the project use the requested workspace paths instead.
+Save user-requested project files at the requested workspace paths.
 Use ordinary code and cite data sources in the surrounding text.
 
 ## Numbered Source Citations

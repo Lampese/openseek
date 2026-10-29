@@ -1,7 +1,6 @@
 ///|
 /// Prospective output path inside the session's existing scratch directory.
-/// No extra storage root or session-directory mapping is required. Reads do
-/// not create it; writers create it when publishing files.
+/// Writers create the directory when publishing files.
 pub async fn SessionStore::artifact_dir(
   self : SessionStore,
   id : @agent_session.SessionId,
@@ -21,8 +20,8 @@ async fn validate_artifact_directory(
 }
 
 ///|
-/// Resolve only a regular file inside this session's scratch/artifact subtree.
-/// A symlink cannot redirect a reference into another conversation's files.
+/// Resolve a regular file within this session's scratch/artifact subtree,
+/// checking canonical containment after resolving symlinks.
 pub async fn SessionStore::artifact_file(
   self : SessionStore,
   id : @agent_session.SessionId,

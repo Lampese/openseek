@@ -1,7 +1,6 @@
 import { defineConfig } from '@playwright/test';
 
-// Requests for assets are fulfilled by DesktopBrowserHarness. There is no
-// webServer entry, so this suite never starts an app, backend or HTTP server.
+// DesktopBrowserHarness fulfills asset and transport requests in the browser.
 export default defineConfig({
   testDir: './tests',
   testMatch: ['transcript_artifact_files.spec.js'],

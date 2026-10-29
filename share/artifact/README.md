@@ -1,14 +1,12 @@
 # Session file artifacts
 
 Write a completed file with ordinary code, then reference it in the final answer.
-This contract does not prescribe a chart or component library.
 
 ## Storage and references
 
 Write completed files under `<session scratch>/artifact/`, using the actual
 scratch path shown in Environment and its existing write permissions. Pass
-paths explicitly to scripts; no additional environment variable is needed.
-Create the directory when needed. Do not invent an absolute session path.
+paths explicitly to scripts and create the directory when needed.
 User-requested project files still belong at the requested workspace paths.
 
 Use a new descriptive filename for every revision. Insert the finished file
@@ -20,9 +18,9 @@ artifact://answer-v1.html
 ```
 ````
 
-The URI is relative to the owning session's artifact directory: no host, session
-identifier, absolute path or traversal. HTML and SVG render in an isolated iframe
-only after the final answer is confirmed. Other types use ordinary file cards.
+The URI contains a relative file path within the owning session's artifact
+directory. HTML and SVG render in an isolated iframe after the final answer is
+confirmed. Other types use ordinary file cards.
 
 The artifact subtree is retained across calls, saved-session restarts and
 archive/restore. A fork copies it into its own scratch directory; working
@@ -49,8 +47,7 @@ symlink there. Keep working projects and build caches outside `scratch/artifact/
 Use IIFE executable output. An optional `index.html` contains inline styles,
 the application's mount element and exactly one `<!-- openseek:script -->`
 marker. The recipe replaces that marker with the compiled executable.
-Without a template it supplies a minimal document with an `app` mount; it does
-not select or configure a UI or chart library.
+The default template supplies a minimal document with an `app` mount.
 
 The recipe snapshots regular source files, checks that exact snapshot with
 `moon check --target js --deny-warn`, builds it, escapes embedded script text,
@@ -69,6 +66,5 @@ files. Copy that source into a fresh working directory before editing a revision
 then publish a new filename. Both outputs follow the existing session lifecycle.
 Run the application's relevant tests before publishing.
 
-Every mbtx script itself compiles to Wasm before its entry point runs. Script
-compile errors execute none of the script's file writes. The HTML application
-is separately compiled for JavaScript and runs inside the preview.
+Every mbtx script compiles to Wasm before its entry point runs. The HTML
+application compiles separately for JavaScript and runs inside the preview.

@@ -68,4 +68,7 @@ checks tied to observable behavior such as clipping, reachability, or scrolling.
 
 ## Offline file artifacts
 
-Run `npm run test:artifact-offline` to build the production frontend and exercise self-contained HTML previews with fixture transport. No application, backend or HTTP server starts. The fixture is independent of a plotting or component library. Set `OPENSEEK_UI_CAPTURE_DIR` for local captures. From the repository root, run `node desktop/e2e/run-artifact-offline.mjs`.
+Run `npm run test:artifact-offline` to build the production frontend and exercise
+self-contained HTML previews with fixture transport in a headless browser.
+Set `OPENSEEK_UI_CAPTURE_DIR` for local captures. From the repository root, run
+`node desktop/e2e/run-artifact-offline.mjs`.
