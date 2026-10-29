@@ -1,6 +1,6 @@
 ---
 // Package a standalone MoonBit JavaScript application and its editable sources.
-// Usage: build.mbtx PROJECT_DIRECTORY NEW_OUTPUT_FILENAME.html
+// Usage: build.mbtx PROJECT_DIRECTORY OUTPUT_DIRECTORY NEW_OUTPUT_FILENAME.html
 import {
   "moonbitlang/async",
   "moonbitlang/async/fs",
@@ -79,8 +79,10 @@ fn inline_script(source : String) -> String {
 
 ///|
 async fn main {
-  guard @env.args()[1:] is [project, filename] else {
-    fail("Usage: build.mbtx PROJECT_DIRECTORY NEW_OUTPUT_FILENAME.html")
+  guard @env.args()[1:] is [project, directory, filename] else {
+    fail(
+      "Usage: build.mbtx PROJECT_DIRECTORY OUTPUT_DIRECTORY NEW_OUTPUT_FILENAME.html",
+    )
   }
   guard !filename.is_empty() &&
     !filename.contains("/") &&
@@ -93,10 +95,14 @@ async fn main {
     filename.to_lower().has_suffix(".html") else {
     fail("choose one new .html filename, without a directory")
   }
-  guard @env.get_env_var("ARTIFACT_DIR") is Some(directory) &&
-    !directory.is_empty() else {
-    fail("ARTIFACT_DIR is unavailable in this execution")
+  guard !directory.is_empty() else {
+    fail("output directory must not be empty")
   }
+  @fs.mkdir(directory, recursive=true, allow_exist=true)
+  guard @fs.kind(directory, follow_symlink=false) is Directory else {
+    fail("output directory must be a regular directory")
+  }
+  let directory = @fs.realpath(directory)
   let project = @fs.realpath(project)
   let output = directory + "/" + filename
   let sources = output + ".source"

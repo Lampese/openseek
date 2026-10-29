@@ -5,10 +5,11 @@ This contract does not prescribe a chart or component library.
 
 ## Storage and references
 
-Read `ARTIFACT_DIR` in mbtx. It is the `artifact/` subdirectory of the current
-session scratch directory and uses its existing write permissions. Do not invent
-an absolute session path. User-requested project files still belong at the
-requested workspace paths.
+Write completed files under `<session scratch>/artifact/`, using the actual
+scratch path shown in Environment and its existing write permissions. Pass
+paths explicitly to scripts; no additional environment variable is needed.
+Create the directory when needed. Do not invent an absolute session path.
+User-requested project files still belong at the requested workspace paths.
 
 Use a new descriptive filename for every revision. Insert the finished file
 where it belongs in the answer:
@@ -38,11 +39,12 @@ content security policy. The inline preview limit is 8 MiB.
 The optional `build.mbtx` recipe packages an ordinary MoonBit JS application:
 
 ```text
-args=[PROJECT_DIRECTORY, "answer-v1.html"]
+args=[PROJECT_DIRECTORY, "<session scratch>/artifact", "answer-v1.html"]
 ```
 
 Run the installed script by its absolute `filename` with `args`, omitting mbtx's
-`source` field. Keep working projects and build caches outside `ARTIFACT_DIR`.
+`source` field. The recipe creates the output directory if needed and refuses a
+symlink there. Keep working projects and build caches outside `scratch/artifact/`.
 
 Use IIFE executable output. An optional `index.html` contains inline styles,
 the application's mount element and exactly one `<!-- openseek:script -->`

@@ -1,7 +1,7 @@
 ///|
 /// Prospective output path inside the session's existing scratch directory.
 /// No extra storage root or session-directory mapping is required. Reads do
-/// not create it; mbtx creates it when preparing an execution environment.
+/// not create it; writers create it when publishing files.
 pub async fn SessionStore::artifact_dir(
   self : SessionStore,
   id : @agent_session.SessionId,

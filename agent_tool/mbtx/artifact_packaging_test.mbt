@@ -31,7 +31,7 @@ async test "generic file packaging retains editable sources without a UI library
     let recipe = @fs.realpath("share/artifact/build.mbtx")
     let arguments : Json = {
       "filename": recipe,
-      "args": [project, "answer-v1.html"],
+      "args": [project, output, "answer-v1.html"],
       "ptc": false,
     }
     let result = dispatch(tool, arguments)
@@ -57,13 +57,41 @@ async test "generic file packaging retains editable sources without a UI library
     @fs.rmdir(project, recursive=true)
     let rebuilt = dispatch(tool, {
       "filename": recipe,
-      "args": [retained, "answer-v2.html"],
+      "args": [retained, output, "answer-v2.html"],
       "ptc": false,
     })
     assert_false(rebuilt.is_error, msg=rebuilt.content)
     assert_true(@fs.exists(output + "/answer-v2.html.source/main.mbt"))
     assert_false(@fs.exists(retained + "/_build"))
     assert_false(@fs.exists(retained + "/.mooncakes"))
+  })
+}
+
+///|
+#cfg(not(platform="windows"))
+async test "packaging refuses a symlink as its explicit output directory" {
+  @vfs.with_tmpdir(root => {
+    let workspace = root + "/workspace"
+    let scratch = root + "/scratch"
+    let real_output = scratch + "/real-output"
+    let linked_output = scratch + "/artifact"
+    @fs.mkdir(workspace)
+    @fs.mkdir(real_output, recursive=true)
+    @fs.symlink(target=real_output, linked_output)
+    let result = dispatch(
+      @mbtx.definition(workspace_root=workspace, scratch_dir=scratch),
+      {
+        "filename": @fs.realpath("share/artifact/build.mbtx"),
+        "args": [workspace, linked_output, "answer.html"],
+        "ptc": false,
+      },
+    )
+    assert_true(result.is_error)
+    assert_true(
+      result.content.contains("output directory must be a regular directory"),
+      msg=result.content,
+    )
+    assert_eq(@fs.readdir(real_output).length(), 0)
   })
 }
 
@@ -88,7 +116,7 @@ async test "component source links are rejected before publishing a revision" {
     )
     let result = dispatch(tool, {
       "filename": @fs.realpath("share/artifact/build.mbtx"),
-      "args": [project, "linked.html"],
+      "args": [project, scratch + "/artifact", "linked.html"],
       "ptc": false,
     })
     assert_true(result.is_error)

@@ -795,7 +795,7 @@ fn default_prompt_zh() -> String {
     #|
     #|## 生成文件产物
     #|
-    #|用于会话展示的产物写入 `mbtx` 的 `ARTIFACT_DIR` 环境变量指向的 scratch 子目录；修改产物时使用新文件名。
+    #|用于会话展示的产物写入 `<会话 scratch>/artifact/`。使用 Environment 中给出的实际 scratch 路径，并通过脚本参数显式传入输出路径；修改产物时使用新文件名。
     #|在最终回答需要的位置使用 `openseek-file` 代码块，内容为 `artifact://文件名`。自包含 HTML 会显示为交互页面；存储、引用和通用打包方式见 `<bundled-resources>/artifact/README.md`。
     #|用户要求保存在项目中的文件使用指定的工作区路径。
     #|使用正常代码生成文件，在周围正文引用数据来源。

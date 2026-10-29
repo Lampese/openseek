@@ -1,5 +1,5 @@
 ///|
-async test "ARTIFACT_DIR uses existing scratch permissions without granting workspace or other session writes" {
+async test "explicit artifact paths use existing scratch permissions without granting workspace or other session writes" {
   @vfs.with_tmpdir(root => {
     let workspace = root + "/project"
     let first_scratch = root + "/sessions/first/scratch"
@@ -13,18 +13,19 @@ async test "ARTIFACT_DIR uses existing scratch permissions without granting work
       #|import { "moonbitlang/async", "moonbitlang/async/fs", "moonbitlang/core/env" }
       #|---
       #|async fn main {
-      #|  let dir = @env.get_env_var("ARTIFACT_DIR").unwrap()
-      #|  let value = @env.args()[1]
+      #|  let dir = @env.args()[1]
+      #|  let value = @env.args()[2]
+      #|  @fs.mkdir(dir, recursive=true, allow_exist=true)
       #|  @fs.write_file(dir + "/chart.html", value, create_mode=CreateNew)
       #|  println("artifact://chart.html")
       #|}
     let one = dispatch(
       @mbtx.definition(workspace_root=workspace, scratch_dir=first_scratch),
-      { "source": source, "args": ["first"], "ptc": false },
+      { "source": source, "args": [first, "first"], "ptc": false },
     )
     let two = dispatch(
       @mbtx.definition(workspace_root=workspace, scratch_dir=second_scratch),
-      { "source": source, "args": ["second"], "ptc": false },
+      { "source": source, "args": [second, "second"], "ptc": false },
     )
     assert_false(one.is_error, msg=one.content)
     assert_false(two.is_error, msg=two.content)
@@ -64,8 +65,9 @@ async test "ARTIFACT_DIR uses existing scratch permissions without granting work
           #|---
           #|import { "moonbitlang/async", "moonbitlang/async/fs", "moonbitlang/core/env" }
           #|---
-          #|async fn main { println(@fs.read_file(@env.get_env_var("ARTIFACT_DIR").unwrap() + "/chart.html").text()) }
+          #|async fn main { println(@fs.read_file(@env.args()[1] + "/chart.html").text()) }
         ),
+        "args": [first],
         "ptc": false,
       },
     )

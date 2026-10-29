@@ -157,7 +157,7 @@ pub fn definition(
         build_timeout_ms~,
       ) +
       (if scratch_dir is Some(_) {
-        "\nFile artifacts: ARTIFACT_DIR points to the artifact subdirectory of this conversation's existing scratch directory. Read it from the snippet environment; write complete files with new filenames, then reference artifact://FILENAME in an openseek-file fence in the final answer. Read <bundled-resources>/artifact/README.md for normal MoonBit/Rabbita interactive HTML generation."
+        "\nFile artifacts: write completed files under the artifact/ subdirectory of the session scratch path shown in Environment. Use that actual path as an explicit script argument and new filenames for revisions, then reference artifact://FILENAME in an openseek-file fence in the final answer. Read <bundled-resources>/artifact/README.md for normal MoonBit/Rabbita interactive HTML generation."
       } else {
         ""
       }),
@@ -181,7 +181,7 @@ pub fn definition(
         compatible && program_service is Some(_),
       )
       async fn run(program : @ptc.Program?) -> @agent_tool.ToolAction {
-        let action = execute(
+        execute(
           workspace_root,
           input,
           read_only~,
@@ -200,7 +200,6 @@ pub fn definition(
           program?,
           mcp_service?,
         )
-        action
       }
       let action = if enabled {
         guard compatible else {
@@ -363,16 +362,6 @@ async fn execute(
     }
     guard @fs.kind(dir, follow_symlink=false) is Directory else {
       fail("scratch directory must not be a symlink")
-    }
-  }
-  let artifact_dir = scratch_dir.map(dir => dir + "/artifact")
-  if artifact_dir is Some(dir) {
-    @fs.mkdir(dir, permission=0o700) catch {
-      @os_error.OSError(_) as error if error.is_EEXIST() => ()
-      error => raise error
-    }
-    guard @fs.kind(dir, follow_symlink=false) is Directory else {
-      fail("artifact directory must not be a symlink")
     }
   }
   // Read once, before validation/approval, then compile this same snapshot.
@@ -669,9 +658,6 @@ async fn execute(
   // not also grant writing there, and reads are open, so a snippet can still
   // work in a directory it may not modify.
   let injected : Map[String, String] = Map([])
-  // Always override an inherited value: a resumed or child conversation must
-  // never inherit another conversation's writable output directory.
-  injected["ARTIFACT_DIR"] = artifact_dir.unwrap_or("")
   if mcp_service is Some(service) {
     for key, value in service.env() {
       injected[key] = value
@@ -830,8 +816,6 @@ async fn execute(
     Some(command) => (command.program(), command.args())
     None => ("moonrun", run_argv)
   }
-  let execution_env = @env.get_env_vars()
-  execution_env["ARTIFACT_DIR"] = artifact_dir.unwrap_or("")
   // With a job runtime wired the foreground run happens ON it, so the
   // deadline can DETACH the still-running program as a background job rather
   // than killing it: a long `moon test` that outlives the bound is then still
@@ -847,7 +831,6 @@ async fn execute(
       // Same EOF-on-stdin contract as every other path here: never hand the
       // snippet the engine's fd 0.
       stdin=@process.redirect_from_file(empty_stdin),
-      extra_env=execution_env,
     )
     if program is Some(program) {
       exec.on_ending(() => program.stop())
@@ -992,8 +975,7 @@ async fn execute(
       prog,
       argv,
       cwd=run_cwd.unwrap_or("."),
-      inherit_env=false,
-      extra_env=execution_env,
+      inherit_env=true,
       stdin=@process.redirect_from_file(empty_stdin),
       stdout=@process.redirect_to_file(log, append=true),
       stderr=@process.redirect_to_file(log, append=true),
