@@ -277,13 +277,15 @@ const SidebarModeStorageKey : String = "openseek.sidebar_mode"
 const ConversationModelsStorageKey : String = "openseek.conversation_models"
 
 ///|
-/// Every conversation switched to Approve for me, so reopening one keeps its
-/// reviewer. Only that choice is stored: a conversation missing here asks,
-/// which is also what a new conversation does — the reviewer is opted into
-/// per conversation, never inherited from an unrelated one. Rows are keys
-/// (`conversation_model_key`), newest first, capped at
-/// `ConversationModelsLimit`.
-const ConversationApprovalsStorageKey : String = "openseek.conversation_approvals"
+/// Every conversation set to request approval, so reopening one keeps
+/// asking. Only that choice is stored: a conversation missing here is
+/// auto-reviewed, which is also what a new conversation does — asking is
+/// opted into per conversation, never inherited from an unrelated one. Rows
+/// are keys (`conversation_model_key`), newest first, capped at
+/// `ConversationModelsLimit`. Builds that asked by default stored the opposite
+/// list under `openseek.conversation_approvals`; it is no longer read, since
+/// every conversation it held is auto-reviewed now anyway.
+const ConversationApprovalsStorageKey : String = "openseek.conversation_asks"
 
 ///|
 /// How many conversations remember their tier. Conversations are unbounded
@@ -1164,8 +1166,10 @@ type ComposerActionIdentity = @composer.Identity
 priv enum SelectMenu {
   OpenSeekModelMenu
   OpenSeekReasoningMenu
+  OpenSeekApprovalMenu
   CodexModelMenu
   CodexReasoningMenu
+  CodexPermissionMenu
   ApiProviderMenu
   PromptMenu
   FollowupBehaviorMenu
@@ -1268,9 +1272,9 @@ priv struct Model {
   // default an unrelated chat has moved to since. Reopening recovers from
   // here; `default_model` is only for conversations this list has never held.
   conversation_models : Array[StoredConversationModel]
-  // The conversations whose permission questions a reviewer answers (see
-  // `ConversationApprovalsStorageKey`); every other conversation asks.
-  reviewed_conversations : Array[String]
+  // The conversations whose permission questions the person answers (see
+  // `ConversationApprovalsStorageKey`); a reviewer answers every other one.
+  asking_conversations : Array[String]
   // The DeepSeek (and non-GLM custom-model) reasoning choice sent on the next
   // OpenSeek operation. GLM keeps a separate preference below because its
   // forced-thinking low mode is the useful default for ordinary tasks.
@@ -2649,7 +2653,7 @@ fn initial_model(desktop~ : Bool) -> Model {
     default_prompt: @prompt.Model::new(),
     default_agent: OpenSeekAgent,
     conversation_models: [],
-    reviewed_conversations: [],
+    asking_conversations: [],
     openseek_reasoning: ReasoningHigh,
     glm_reasoning: ReasoningOff,
     max_steps: DefaultMaxSteps,
@@ -3469,10 +3473,10 @@ fn Model::approval_for(
   session : String,
 ) -> @protocol.OpenSeekApproval {
   let key = conversation_model_key(channel, session)
-  if self.reviewed_conversations.contains(key) {
-    ApprovalReview
-  } else {
+  if self.asking_conversations.contains(key) {
     ApprovalAsk
+  } else {
+    ApprovalReview
   }
 }
 
@@ -3486,8 +3490,8 @@ fn Model::with_approval(
 ) -> Model {
   {
     ..self,
-    reviewed_conversations: approvals_with(
-      self.reviewed_conversations,
+    asking_conversations: approvals_with(
+      self.asking_conversations,
       conversation_model_key(channel, session),
       approval,
     ),
@@ -3495,19 +3499,15 @@ fn Model::with_approval(
 }
 
 ///|
-/// Fold one conversation's approval choice into the reviewed list: a review
-/// moves the key to the front (dropping the oldest past the cap), an ask
+/// Fold one conversation's approval choice into the asking list: an ask
+/// moves the key to the front (dropping the oldest past the cap), a review
 /// removes it. Free-standing for the same reason as `remembered_with`.
 fn approvals_with(
   keys : Array[String],
   key : String,
   approval : @protocol.OpenSeekApproval,
 ) -> Array[String] {
-  let merged : Array[String] = if approval is ApprovalReview {
-    [key]
-  } else {
-    []
-  }
+  let merged : Array[String] = if approval is ApprovalAsk { [key] } else { [] }
   for existing in keys {
     if existing != key && merged.length() < ConversationModelsLimit {
       merged.push(existing)
@@ -3663,17 +3663,28 @@ fn Model::conversation_is_new_chat(self : Model, conv : Conversation) -> Bool {
 
 ///|
 /// Replace (or add) the entry sharing `conv`'s session id, copy-on-write —
-/// prior model snapshots keep their own conversations array.
+/// prior model snapshots keep their own conversations array. A turn that
+/// starts in the conversation on screen, from this client or another, locks
+/// its approval mode, so the approval menu closes with it.
 fn Model::replace_conversation(self : Model, conv : Conversation) -> Model {
+  let select_menu = if self.select_menu is Some(OpenSeekApprovalMenu) &&
+    conv.is_running() &&
+    self.active_conversation() is Some(active) &&
+    active.device == conv.device &&
+    active.session_id == conv.session_id {
+    None
+  } else {
+    self.select_menu
+  }
   let conversations = self.conversations.copy()
   for index, existing in conversations {
     if existing.device == conv.device && existing.session_id == conv.session_id {
       conversations[index] = conv
-      return { ..self, conversations, }
+      return { ..self, conversations, select_menu, }
     }
   }
   conversations.push(conv)
-  { ..self, conversations, }
+  { ..self, conversations, select_menu, }
 }
 
 ///|

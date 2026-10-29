@@ -334,27 +334,28 @@ fn Entry::view(
     !input.presentation.disabled &&
     !goal_mode &&
     shell_command is None
-  // Keep a permanent first slot so hiding the attachment button does not
-  // rebuild the model and workspace controls that follow it.
-  let status : Array[@html.Html] = [
-    @html.div(
-      class="composer-add",
-      if can_attach {
-        [
-          @html.button(
-            class="composer-attach",
-            type_="button",
-            title=ui(locale, AttachHint),
-            on_click=pick_attachments(locale, input, image_emit),
-            attrs=@html.Attrs::build().aria_label(ui(locale, AttachImages)),
-            @icons.icon(@icons.icon_add),
-          ),
-        ]
-      } else {
-        ([] : Array[@html.Html])
-      },
-    ),
-  ]
+  // A permanent slot, so hiding the attachment button does not shift the
+  // input wrapper that follows it.
+  let attach = @html.div(
+    class="composer-add",
+    if can_attach {
+      [
+        @html.button(
+          class="composer-attach",
+          type_="button",
+          title=ui(locale, AttachHint),
+          on_click=pick_attachments(locale, input, image_emit),
+          attrs=@html.Attrs::build().aria_label(ui(locale, AttachImages)),
+          @icons.icon(@icons.icon_add),
+        ),
+      ]
+    } else {
+      ([] : Array[@html.Html])
+    },
+  )
+  // How the turn may act leads the toolbar; which model runs it trails.
+  let leading : Array[@html.Html] = []
+  let trailing : Array[@html.Html] = []
   for component in input.presentation.status {
     // A transfer snapshots completed content. Let attachment reads/uploads
     // finish before the user can move their owner to another agent.
@@ -364,9 +365,16 @@ fn Entry::view(
         ModelStatus({ ..control, disabled: true, })
       other => other
     }
-    status.push(
-      component.render(locale~, self.identity(), self.draft, action_emit),
+    let rendered = component.render(
+      locale~,
+      self.identity(),
+      self.draft,
+      action_emit,
     )
+    match component {
+      ModelStatus(_) | ReasoningStatus(_) => trailing.push(rendered)
+      _ => leading.push(rendered)
+    }
   }
   if self.image_reads > 0 {
     context["image-reading"] = @html.div(
@@ -441,7 +449,9 @@ fn Entry::view(
         None
       },
     },
-    status,
+    attach,
+    leading,
+    trailing,
     actions,
     // A command is not a follow-up: it never steers or queues behind the turn.
     followup_menu: if shell_command is Some(_) {
@@ -498,29 +508,35 @@ fn Entry::followup_menu(
     return None
   }
   Some(
-    @select_control.Control::{
-      id: "composer-followup-select",
-      groups: [
+    @select_control.Control(
+      id="composer-followup-select",
+      groups=[
         {
           label: ui(locale, ThisMessage),
           options: [
-            { value: "steer", label: ui(locale, SteerNowLabel), },
-            { value: "queue", label: ui(locale, QueueNextLabel), },
+            @select_control.ViewOption(
+              value="steer",
+              label=ui(locale, SteerNowLabel),
+            ),
+            @select_control.ViewOption(
+              value="queue",
+              label=ui(locale, QueueNextLabel),
+            ),
           ],
         },
       ],
-      selected: match choice {
+      selected=match choice {
         SteerNow => "steer"
         QueueNext => "queue"
       },
-      disabled: !steer_available || self.image_reads > 0,
-      open: self.followup_menu_open,
-      toggle: emit(FollowupMenuToggled),
-      dismiss: emit(FollowupMenuDismissed),
-      change: emit.map(value => FollowupSelected(value)),
-      title: ui(locale, FollowupHint),
-      aria_label: ui(locale, FollowupAction),
-      presentation: Composer(@icons.icon(@icons.icon_indent), true),
-    }.render(),
+      disabled=!steer_available || self.image_reads > 0,
+      open=self.followup_menu_open,
+      toggle=emit(FollowupMenuToggled),
+      dismiss=emit(FollowupMenuDismissed),
+      change=emit.map(value => FollowupSelected(value)),
+      title=ui(locale, FollowupHint),
+      aria_label=ui(locale, FollowupAction),
+      presentation=Composer(@icons.icon(@icons.icon_indent), true),
+    ).render(),
   )
 }

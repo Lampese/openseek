@@ -2127,6 +2127,40 @@ fn close_dock_tabs(
 }
 
 ///|
+/// Hand a Codex composer action the shell does not own to the Codex package.
+fn codex_composer_action(
+  dispatch : @cmd.Emit[Msg],
+  model : Model,
+  action : @composer.Action,
+) -> (@cmd.Cmd, Model) {
+  let channel = model.focused
+  let (command, codex) = @codex.update(
+    locale=model.locale,
+    dispatch.map(next => Codex(channel~, next)),
+    @codex.Msg::composer_action(action),
+    model.codex,
+    channel,
+    url => open_external_link(dispatch, url),
+  )
+  (command, model.with_codex(codex))
+}
+
+///|
+/// Take Codex's next state. The shell owns its approval menu's open state,
+/// so the menu closes here once the mode can no longer change — a turn
+/// started, from this page or another client — rather than staying open
+/// behind a disabled trigger.
+fn Model::with_codex(self : Model, codex : @codex.State) -> Model {
+  let select_menu = if self.select_menu is Some(CodexPermissionMenu) &&
+    !codex.can_choose_permission() {
+    None
+  } else {
+    self.select_menu
+  }
+  { ..self, codex, select_menu, }
+}
+
+///|
 fn update_msg(
   dispatch : @cmd.Emit[Msg],
   msg : Msg,
@@ -2337,7 +2371,7 @@ fn update_msg(
         conversation_models: remembered
         .map(parse_conversation_models)
         .unwrap_or([]),
-        reviewed_conversations: conversation_approvals
+        asking_conversations: conversation_approvals
         .map(parse_conversation_approvals)
         .unwrap_or([]),
         openseek_reasoning,
@@ -2407,6 +2441,31 @@ fn update_msg(
           }
           update_msg(dispatch, CodexEffortPicked(value), model)
         }
+        @composer.PermissionMenuToggled(identity~) => {
+          guard model.screen is Codex &&
+            model.codex.accepts_composer_identity(identity, model.focused) &&
+            model.codex.can_open_permission_menu() else {
+            return (@cmd.none, model)
+          }
+          update_msg(dispatch, ToggleSelectMenu(CodexPermissionMenu), model)
+        }
+        @composer.PermissionMenuDismissed(identity~) => {
+          guard model.screen is Codex &&
+            model.codex.accepts_composer_identity(identity, model.focused) else {
+            return (@cmd.none, model)
+          }
+          update_msg(dispatch, CloseSelectMenu, model)
+        }
+        @composer.PermissionSelected(identity~, ..) => {
+          guard model.screen is Codex &&
+            model.codex.accepts_composer_identity(identity, model.focused) else {
+            return (@cmd.none, model)
+          }
+          // The menu closes with the choice; Codex applies it, or asks to
+          // confirm Full access first.
+          let (_, closed) = update_msg(dispatch, CloseSelectMenu, model)
+          codex_composer_action(dispatch, closed, action)
+        }
         @composer.ReviewChangesOpened(identity~, selection~) => {
           guard model.screen is Codex &&
             model.codex.accepts_composer_identity(identity, model.focused) else {
@@ -2445,18 +2504,7 @@ fn update_msg(
           }
           update_msg(dispatch, FileEditor(@fileeditor.EnsureFileIndex), model)
         }
-        _ => {
-          let channel = model.focused
-          let (command, codex) = @codex.update(
-            locale=model.locale,
-            dispatch.map(next => Codex(channel~, next)),
-            @codex.Msg::composer_action(action),
-            model.codex,
-            channel,
-            url => open_external_link(dispatch, url),
-          )
-          (command, { ..model, codex, })
-        }
+        _ => codex_composer_action(dispatch, model, action)
       }
     ComposerAction(action) => {
       if action.identity().owner is @interop.Cloud(..) {
@@ -2543,7 +2591,8 @@ fn update_msg(
         | @composer.PermissionSelected(..)
         | @composer.GitDetailsToggled(..)
         | @composer.WorktreeModeToggled(..)
-        | @composer.ApprovalModeToggled(..)
+        | @composer.ApprovalMenuToggled(..)
+        | @composer.ApprovalSelected(..)
         | @composer.ApiSetupRequested(..)
         | @composer.QueuedInputEditRequested(..)
         | @composer.QueuedInputSteerRequested(..)
@@ -2691,27 +2740,29 @@ fn update_msg(
                 ArchiveSession(conv.device, conv.session_id),
                 model,
               )
-            @composer.ApprovalModeToggled(..) => {
-              // A running turn keeps the policy its engine started with; the
-              // switch is locked meanwhile, so a late click changes nothing.
-              guard !conv.is_running() else { return (@cmd.none, model) }
+            // A running turn keeps the policy its engine started with; the
+            // menu is locked meanwhile, so a late click changes nothing.
+            @composer.ApprovalMenuToggled(..) =>
+              if conv.is_running() {
+                (@cmd.none, model)
+              } else {
+                update_msg(
+                  dispatch,
+                  ToggleSelectMenu(OpenSeekApprovalMenu),
+                  model,
+                )
+              }
+            @composer.ApprovalSelected(mode=approval, ..) => {
+              let (_, closed) = update_msg(dispatch, CloseSelectMenu, model)
+              guard !conv.is_running() else { return (@cmd.none, closed) }
               // The next start, compaction, or goal carries the choice, and
               // the host gives the conversation a new engine when it differs.
-              let approval : @protocol.OpenSeekApproval = if model.approval_for(
-                  conv.device,
-                  conv.session_id,
-                )
-                is ApprovalReview {
-                ApprovalAsk
-              } else {
-                ApprovalReview
-              }
               (
                 save_conversation_approval(
                   conversation_model_key(conv.device, conv.session_id),
                   approval,
                 ),
-                model.with_approval(conv.device, conv.session_id, approval),
+                closed.with_approval(conv.device, conv.session_id, approval),
               )
             }
             @composer.PermissionMenuToggled(..)
@@ -4469,7 +4520,7 @@ fn update_msg(
         channel,
         url => open_external_link(dispatch, url),
       )
-      (cmd, { ..model, codex, })
+      (cmd, model.with_codex(codex))
     }
     ToggleSidebar =>
       (@cmd.none, { ..model, sidebar_open: !model.sidebar_open, })
@@ -15514,10 +15565,10 @@ test "loaded UI preferences parse their wire names" {
   // Its stored approval choice comes back too; a malformed row is skipped.
   assert_true(
     restored.approval_for(@interop.ChannelId::Local, "desktop-test")
-    is ApprovalReview,
+    is ApprovalAsk,
   )
   assert_true(
-    restored.approval_for(@interop.ChannelId::Local, "other") is ApprovalAsk,
+    restored.approval_for(@interop.ChannelId::Local, "other") is ApprovalReview,
   )
   // Unknown stored values fall back to the defaults.
   let (_, unknown) = update(

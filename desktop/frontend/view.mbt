@@ -23,19 +23,19 @@ fn SelectMenu::setting_control(
   change~ : @cmd.Emit[String],
   disabled~ : Bool = false,
 ) -> @html.Html {
-  @select_control.Control::{
-    id,
-    groups: [{ label: aria_label, options, }],
-    selected,
-    disabled,
-    open: model.select_menu is Some(menu) && menu == self,
-    toggle: dispatch(ToggleSelectMenu(self)),
-    dismiss: dispatch(CloseSelectMenu),
-    change,
-    title: aria_label,
-    aria_label,
-    presentation: Setting,
-  }.render()
+  @select_control.Control(
+    id~,
+    groups=[{ label: aria_label, options, }],
+    selected~,
+    disabled~,
+    open=model.select_menu is Some(menu) && menu == self,
+    toggle=dispatch(ToggleSelectMenu(self)),
+    dismiss=dispatch(CloseSelectMenu),
+    change~,
+    title=aria_label,
+    aria_label~,
+    presentation=Setting,
+  ).render()
 }
 
 ///|
@@ -1486,13 +1486,19 @@ fn api_settings_rows(
           model,
           id="api-provider-select",
           options=[
-            {
-              value: "deepseek",
-              label: @settings.text(model.locale, DeepseekOfficial),
-            },
-            { value: "glm", label: @settings.text(model.locale, GlmOfficial), },
-            { value: "openrouter", label: "OpenRouter", },
-            { value: "custom", label: @settings.text(model.locale, CustomUrl), },
+            @select_control.ViewOption(
+              value="deepseek",
+              label=@settings.text(model.locale, DeepseekOfficial),
+            ),
+            @select_control.ViewOption(
+              value="glm",
+              label=@settings.text(model.locale, GlmOfficial),
+            ),
+            @select_control.ViewOption(value="openrouter", label="OpenRouter"),
+            @select_control.ViewOption(
+              value="custom",
+              label=@settings.text(model.locale, CustomUrl),
+            ),
           ],
           selected=model.api_provider.wire(),
           aria_label=@settings.text(model.locale, ApiEndpoint),
@@ -1655,12 +1661,15 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
             model,
             id="language-select",
             options=[
-              { value: "system", label: @settings.text(locale, System), },
-              { value: "en", label: "English", },
-              { value: "zh-Hans", label: "简体中文", },
-              { value: "zh-Hant", label: "繁體中文", },
-              { value: "ja", label: "日本語", },
-              { value: "es", label: "Español", },
+              @select_control.ViewOption(
+                value="system",
+                label=@settings.text(locale, System),
+              ),
+              @select_control.ViewOption(value="en", label="English"),
+              @select_control.ViewOption(value="zh-Hans", label="简体中文"),
+              @select_control.ViewOption(value="zh-Hant", label="繁體中文"),
+              @select_control.ViewOption(value="ja", label="日本語"),
+              @select_control.ViewOption(value="es", label="Español"),
             ],
             selected=model.language.wire(),
             aria_label=@settings.text(locale, Language),
@@ -1679,8 +1688,14 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
             model,
             id="followup-behavior-select",
             options=[
-              { value: "steer", label: @settings.text(locale, Steer), },
-              { value: "queue", label: @settings.text(locale, Queue), },
+              @select_control.ViewOption(
+                value="steer",
+                label=@settings.text(locale, Steer),
+              ),
+              @select_control.ViewOption(
+                value="queue",
+                label=@settings.text(locale, Queue),
+              ),
             ],
             selected=model.followup_behavior.wire(),
             aria_label=@settings.text(locale, Followup),
@@ -1698,9 +1713,18 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
             model,
             id="theme-select",
             options=[
-              { value: "system", label: @settings.text(locale, System), },
-              { value: "light", label: @settings.text(locale, Light), },
-              { value: "dark", label: @settings.text(locale, Dark), },
+              @select_control.ViewOption(
+                value="system",
+                label=@settings.text(locale, System),
+              ),
+              @select_control.ViewOption(
+                value="light",
+                label=@settings.text(locale, Light),
+              ),
+              @select_control.ViewOption(
+                value="dark",
+                label=@settings.text(locale, Dark),
+              ),
             ],
             selected=model.theme.wire(),
             aria_label=@settings.text(locale, Theme),
@@ -1748,16 +1772,22 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
             model,
             id="notification-corner-select",
             options=[
-              {
-                value: "bottom-right",
-                label: @settings.text(locale, BottomRight),
-              },
-              {
-                value: "bottom-left",
-                label: @settings.text(locale, BottomLeft),
-              },
-              { value: "top-right", label: @settings.text(locale, TopRight), },
-              { value: "top-left", label: @settings.text(locale, TopLeft), },
+              @select_control.ViewOption(
+                value="bottom-right",
+                label=@settings.text(locale, BottomRight),
+              ),
+              @select_control.ViewOption(
+                value="bottom-left",
+                label=@settings.text(locale, BottomLeft),
+              ),
+              @select_control.ViewOption(
+                value="top-right",
+                label=@settings.text(locale, TopRight),
+              ),
+              @select_control.ViewOption(
+                value="top-left",
+                label=@settings.text(locale, TopLeft),
+              ),
             ],
             selected=model.notification_corner.wire(),
             aria_label=@settings.text(locale, NotificationCorner),
@@ -1774,14 +1804,14 @@ fn settings_page(dispatch : @cmd.Emit[Msg], model : Model) -> @html.Html {
             model,
             id="tree-layout-select",
             options=[
-              {
-                value: "right-sidebar",
-                label: @settings.text(locale, RightSidebar),
-              },
-              {
-                value: "bottom-panel",
-                label: @settings.text(locale, BottomPanel),
-              },
+              @select_control.ViewOption(
+                value="right-sidebar",
+                label=@settings.text(locale, RightSidebar),
+              ),
+              @select_control.ViewOption(
+                value="bottom-panel",
+                label=@settings.text(locale, BottomPanel),
+              ),
             ],
             selected=model.tree_layout.wire(),
             aria_label=@settings.text(locale, FileTreeLayout),

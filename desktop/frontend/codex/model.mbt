@@ -19,12 +19,12 @@ priv enum CodexAccount {
 } derive(Eq)
 
 ///|
-/// The permission picker keeps its current choice inside every transient UI
-/// state. Full access cannot become active until the explicit confirmation
-/// transition completes.
+/// The permission picker keeps its current choice while Full access waits for
+/// confirmation; it cannot become active until that transition completes.
+/// Whether the menu is open belongs to the shell, like every other composer
+/// select, so one menu is open at a time and overlays close it.
 priv enum CodexPermissionPicker {
   CodexPermissionClosed(@protocol.CodexPermissionMode)
-  CodexPermissionOpen(@protocol.CodexPermissionMode)
   CodexPermissionConfirmingFullAccess(@protocol.CodexPermissionMode)
 } derive(Eq)
 
@@ -33,25 +33,8 @@ fn CodexPermissionPicker::mode(
   self : CodexPermissionPicker,
 ) -> @protocol.CodexPermissionMode {
   match self {
-    CodexPermissionClosed(mode)
-    | CodexPermissionOpen(mode)
-    | CodexPermissionConfirmingFullAccess(mode) => mode
-  }
-}
-
-///|
-fn CodexPermissionPicker::is_open(self : CodexPermissionPicker) -> Bool {
-  self is CodexPermissionOpen(_)
-}
-
-///|
-fn CodexPermissionPicker::toggle(
-  self : CodexPermissionPicker,
-) -> CodexPermissionPicker {
-  match self {
-    CodexPermissionClosed(mode) => CodexPermissionOpen(mode)
-    CodexPermissionOpen(mode) => CodexPermissionClosed(mode)
-    CodexPermissionConfirmingFullAccess(_) => self
+    CodexPermissionClosed(mode) | CodexPermissionConfirmingFullAccess(mode) =>
+      mode
   }
 }
 
@@ -60,7 +43,6 @@ fn CodexPermissionPicker::close(
   self : CodexPermissionPicker,
 ) -> CodexPermissionPicker {
   match self {
-    CodexPermissionOpen(mode) => CodexPermissionClosed(mode)
     CodexPermissionConfirmingFullAccess(previous) =>
       CodexPermissionClosed(previous)
     CodexPermissionClosed(_) => self
@@ -371,8 +353,6 @@ enum Msg {
   SkillsFailed(cwd~ : String)
   ModelChanged(String)
   EffortChanged(String)
-  TogglePermissionMenu
-  DismissPermissionMenu
   ChoosePermission(@protocol.CodexPermissionMode)
   ConfirmFullAccess
   CancelFullAccess
@@ -734,8 +714,16 @@ fn State::registry_turn_cwd(self : State) -> String? {
 ///|
 /// Permission changes are frozen while an operation is being accepted or a
 /// turn is active, so the visible choice always describes the next request.
-fn State::can_choose_permission(self : State) -> Bool {
+pub fn State::can_choose_permission(self : State) -> Bool {
   self.foreground is None && self.active_turn_id() is None
+}
+
+///|
+/// The permission menu stays shut while Full access awaits confirmation: the
+/// trigger keeps focus behind the dialog, and the dialog owns the choice.
+pub fn State::can_open_permission_menu(self : State) -> Bool {
+  self.can_choose_permission() &&
+  self.permission_picker is CodexPermissionClosed(_)
 }
 
 ///|
