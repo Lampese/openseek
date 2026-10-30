@@ -2,9 +2,9 @@
 // Package a standalone MoonBit JavaScript application and its editable sources.
 // Usage: build.mbtx PROJECT_DIRECTORY OUTPUT_DIRECTORY NEW_OUTPUT_FILENAME.html
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/fs",
-  "moonbitlang/async/shell",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/shell",
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
 }
@@ -49,7 +49,8 @@ async fn copy_source_files(source : String, destination : String) -> Unit {
     let to = destination + "/" + name
     match @fs.kind(from, follow_symlink=false) {
       Directory => copy_sources(from, to)
-      Regular => @fs.write_file(to, @fs.read_file(from), create_mode=CreateNew)
+      Regular =>
+        @fs.write_binary(to, @fs.read_binary(from), create_mode=CreateNew)
       _ =>
         fail("component sources must be regular files or directories: \{from}")
     }
@@ -149,7 +150,7 @@ async fn main {
   guard artifacts is [script] && script.has_suffix(".js") else {
     fail("build must select exactly one JavaScript executable")
   }
-  let code = inline_script(@fs.read_file(script).text())
+  let code = inline_script(@fs.read_text(script))
   let default_html =
     $|<!doctype html><html><head><meta charset="utf-8">
     $|<meta name="viewport" content="width=device-width,initial-scale=1">
@@ -157,7 +158,7 @@ async fn main {
     $|</head><body><div id="app"></div><script>\{code}</script></body></html>
   let template = snapshot + "/index.html"
   let html = if @fs.exists(template) {
-    let page = @fs.read_file(template).text()
+    let page = @fs.read_text(template)
     let marker = "<!-- openseek:script -->"
     guard page.split(marker).collect().length() == 2 else {
       fail(
@@ -176,6 +177,6 @@ async fn main {
   @fs.mkdir(sources)
   errdefer @fs.rmdir(sources, recursive=true)
   copy_source_files(snapshot, sources)
-  @fs.write_file(output, html, create_mode=CreateNew)
+  @fs.write_text(output, html, create_mode=CreateNew)
   println("```openseek-file\nartifact://\{filename}\n```")
 }

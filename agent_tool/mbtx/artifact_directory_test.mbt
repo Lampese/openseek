@@ -10,13 +10,13 @@ async test "explicit artifact paths use existing scratch permissions without gra
     @fs.mkdir(second, recursive=true)
     let source =
       #|---
-      #|import { "moonbitlang/async", "moonbitlang/async/fs", "moonbitlang/core/env" }
+      #|import { "moonbitlang/core/async", "moonbitlang/core/async/fs", "moonbitlang/core/env" }
       #|---
       #|async fn main {
       #|  let dir = @env.args()[1]
       #|  let value = @env.args()[2]
       #|  @fs.mkdir(dir, recursive=true, allow_exist=true)
-      #|  @fs.write_file(dir + "/chart.html", value, create_mode=CreateNew)
+      #|  @fs.write_text(dir + "/chart.html", value, create_mode=CreateNew)
       #|  println("artifact://chart.html")
       #|}
     let one = dispatch(
@@ -36,11 +36,11 @@ async test "explicit artifact paths use existing scratch permissions without gra
       {
         "source": (
           #|---
-          #|import { "moonbitlang/async", "moonbitlang/async/fs", "moonbitlang/core/env" }
+          #|import { "moonbitlang/core/async", "moonbitlang/core/async/fs", "moonbitlang/core/env" }
           #|---
           #|async fn main {
           #|  for path in @env.args()[1:] {
-          #|    try @fs.write_file(path, "overwrite") catch {
+          #|    try @fs.write_text(path, "overwrite") catch {
           #|      _ => ()
           #|    } noraise { _ => fail("unexpected write permission") }
           #|  }
@@ -63,9 +63,9 @@ async test "explicit artifact paths use existing scratch permissions without gra
       {
         "source": (
           #|---
-          #|import { "moonbitlang/async", "moonbitlang/async/fs", "moonbitlang/core/env" }
+          #|import { "moonbitlang/core/async", "moonbitlang/core/async/fs", "moonbitlang/core/env" }
           #|---
-          #|async fn main { println(@fs.read_file(@env.args()[1] + "/chart.html").text()) }
+          #|async fn main { println(@fs.read_text(@env.args()[1] + "/chart.html")) }
         ),
         "args": [first],
         "ptc": false,

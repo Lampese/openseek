@@ -277,14 +277,14 @@ $ cp "$OUTPUT/answer-v2.html.source/main.mbt" "$PROJECT/main.mbt"
 ```mooncram
 $ cat > make-large.mbtx <<'EOF'
 > ---
-> import { "moonbitlang/async", "moonbitlang/async/fs", "moonbitlang/core/env" }
+> import { "moonbitlang/core/async", "moonbitlang/core/async/fs", "moonbitlang/core/env" }
 > ---
 > async fn main {
 >   let page = StringBuilder()
 >   page.write_string("<!doctype html><p>")
 >   for _ in 0..<3_000_000 { page.write_string("界") }
 >   page.write_string("</p><!-- openseek:script -->")
->   @fs.write_file(@env.args()[1], page.to_string(), create_mode=CreateOrTruncate)
+>   @fs.write_text(@env.args()[1], page.to_string(), create_mode=CreateOrTruncate)
 > }
 > EOF
 ```
